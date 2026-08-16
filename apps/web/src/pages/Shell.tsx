@@ -1559,6 +1559,11 @@ function BotSettings({
         <button
           type="button"
           disabled={saving}
+          // This panel has no instructions editor, so it must not write instructions.
+          // Copying the description field into the instructions field here overwrote
+          // each seat's full persona with whatever short text sat in the Description
+          // box; botSettingsPatch makes that unrepresentable rather than relying on
+          // this call site staying correct. Guarded by bot-fields.test.ts.
           onClick={() => {
             setSaving(true);
             setError(null);
