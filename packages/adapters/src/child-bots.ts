@@ -147,8 +147,8 @@ async function ensureSpawnRun(
     return await prisma.$transaction(async (tx) => {
       await createThreadMessageInTransaction(tx, {
         threadId: input.threadId,
-        role: "user",
-        blocks: [{ kind: "text", text: input.prompt }],
+        role: "system",
+        blocks: [{ kind: "meta", text: input.prompt }],
         runId: input.sourceRunId,
       });
       const task = await tx.task.create({

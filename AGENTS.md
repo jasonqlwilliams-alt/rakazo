@@ -5,6 +5,7 @@
 - Prefer shared packages for domain logic, contracts, API behavior, and reusable UI. Keep genuinely native navigation, storage, permissions, and interactions platform-specific.
 - Treat auth, secret handling, sandbox boundaries, host commands, and integrations as security-sensitive. Keep tests deterministic and offline by default.
 - Memory document paths are scope-free relative paths; scope is a separate field. Every path reaching the store goes through `resolveMemoryPath` in `packages/adapter-kit/src/memory-path.ts`, and `remember` appends while `replace_memory_document` overwrites. Never render a memory path concatenated with its scope, and never pass a model-supplied path straight to `commit`.
+- A thread message the product writes on a bot's behalf (spawn and seed openers) must be `role: "system"` with a `kind: "meta"` block. `kind: "text"` + `role: "user"` is the one combination that renders in the human's own chat bubble (`MessageView` in `apps/web/src/pages/Shell.tsx`), so a user/text opener shows the user a turn they never typed; `role: "system"` alone still leaves a bot bubble. Guarded by `apps/web/src/pages/message-view.test.tsx`.
 
 ## Maintaining this file
 

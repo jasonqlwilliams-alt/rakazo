@@ -1104,7 +1104,7 @@ function latestAnswerableAskMessageId(snapshot: ThreadSnapshot | null): string |
   return null;
 }
 
-function MessageView({
+export function MessageView({
   canAnswer,
   message,
   onAnswer,
