@@ -230,7 +230,7 @@ export function inferScript(
     return [
       {
         assistant: "noted — i will keep that in memory.",
-        memory: [{ scope: "bot", path: "MEMORY.md", content: `# Memory\n\n- ${prompt}\n` }],
+        memory: [{ scope: "bot", path: "MEMORY.md", content: `- ${prompt}`, mode: "append" }],
         complete: true,
       },
     ];

@@ -9,6 +9,7 @@ import type {
   AgentToolExecutionResult,
   ConnectorTool,
 } from "@rakazo/adapter-kit";
+import { DEFAULT_MEMORY_PATH, resolveMemoryPath } from "@rakazo/adapter-kit";
 import { builtinAgentTools, DELEGATION_TOOL_NAMES } from "./builtin-tools.js";
 import { PiRuntimeCredentialStore, toOAuthCredential } from "./pi-credentials.js";
 
@@ -278,8 +279,16 @@ function toAgentTool(tool: ConnectorTool, host: ToolHost, exposedName: string): 
           body: String(raw.body ?? ""),
         };
       }
-      if (tool.name === "remember") {
-        return { content: String(raw.content ?? ""), path: String(raw.path ?? "MEMORY.md") };
+      if (tool.name === "remember" || tool.name === "replace_memory_document") {
+        // Never forward the model's path verbatim: a rendered scope prefix would otherwise
+        // reach the store and fork a second document. Malformed paths that cannot be
+        // normalised are passed through unchanged so the tool reports the rejection.
+        const requested = raw.path === undefined ? "" : String(raw.path);
+        const resolved = resolveMemoryPath(requested);
+        return {
+          content: String(raw.content ?? ""),
+          path: resolved.ok ? resolved.path : requested,
+        };
       }
       if (tool.name === "request_takeover") {
         return { reason: String(raw.reason ?? "I need you on the screen.") };
@@ -506,6 +515,16 @@ async function executeSubagent(host: ToolHost, executionId: string, args: Record
   }
 }
 
+/** Reuse the tool's own documented `path` shape so the model sees one description. */
+function memoryPathDescription(tool: ConnectorTool): string {
+  const properties = (tool.inputSchema as { properties?: Record<string, unknown> } | undefined)
+    ?.properties;
+  const described = (properties?.path as { description?: unknown } | undefined)?.description;
+  return typeof described === "string"
+    ? described
+    : `Relative path of the memory document, defaulting to "${DEFAULT_MEMORY_PATH}". No scope prefix, spaces, or colons.`;
+}
+
 function parametersFor(tool: ConnectorTool) {
   if (tool.name === "write_file") {
     return Type.Object({ path: Type.String(), content: Type.String() });
@@ -520,8 +539,15 @@ function parametersFor(tool: ConnectorTool) {
   if (tool.name === "request_takeover") {
     return Type.Object({ reason: Type.String() });
   }
-  if (tool.name === "remember") {
-    return Type.Object({ content: Type.String(), path: Type.String() });
+  if (tool.name === "remember" || tool.name === "replace_memory_document") {
+    return Type.Object({
+      content: Type.String(),
+      path: Type.String({
+        description: memoryPathDescription(tool),
+        default: DEFAULT_MEMORY_PATH,
+        examples: [DEFAULT_MEMORY_PATH, "profile.md", "history/digest.md"],
+      }),
+    });
   }
   if (tool.name === "shell") {
     return Type.Object({

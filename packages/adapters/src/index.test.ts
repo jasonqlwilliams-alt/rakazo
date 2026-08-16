@@ -104,12 +104,36 @@ describe("builtin tools", () => {
         "write_file",
         "shell",
         "remember",
+        "replace_memory_document",
         "request_takeover",
         "run_subagent",
         "spawn_bot",
         "archive_bot",
       ]),
     );
+  });
+
+  it("documents the memory path instead of leaving it a bare string", async () => {
+    const { builtinAgentTools } = await import("./builtin-tools.js");
+    for (const name of ["remember", "replace_memory_document"]) {
+      const tool = builtinAgentTools.find((t) => t.name === name);
+      const path = (tool?.inputSchema as { properties?: Record<string, never> } | undefined)
+        ?.properties?.path as
+        | { description?: string; examples?: string[]; default?: string }
+        | undefined;
+      expect(path?.description, name).toEqual(expect.stringContaining("no scope prefix"));
+      expect(path?.examples, name).toEqual(expect.arrayContaining(["history/digest.md"]));
+      expect(path?.default, name).toBe("MEMORY.md");
+    }
+  });
+
+  it("separates storing one fact from replacing a whole document", async () => {
+    const { builtinAgentTools } = await import("./builtin-tools.js");
+    const remember = builtinAgentTools.find((t) => t.name === "remember");
+    const replace = builtinAgentTools.find((t) => t.name === "replace_memory_document");
+    expect(remember?.description).toMatch(/appended/i);
+    expect(remember?.description).not.toMatch(/overwrit/i);
+    expect(replace?.description).toMatch(/discarded|overwrite/i);
   });
 });
 

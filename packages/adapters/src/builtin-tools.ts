@@ -1,4 +1,16 @@
-import type { ConnectorTool } from "@rakazo/adapter-kit";
+import { type ConnectorTool, DEFAULT_MEMORY_PATH } from "@rakazo/adapter-kit";
+
+/**
+ * Memory is rendered to the model under a scope, and models copy that scope back into the
+ * path. Naming the shape explicitly, with examples and a stated default, keeps `path` from
+ * being a bare pass-through string.
+ */
+const MEMORY_PATH_SCHEMA = {
+  type: "string",
+  description: `Relative path of the memory document, defaulting to "${DEFAULT_MEMORY_PATH}". Use the path exactly as it appears in the memory heading, with no scope prefix and no spaces or colons.`,
+  examples: [DEFAULT_MEMORY_PATH, "profile.md", "history/digest.md", "relationships.md"],
+  default: DEFAULT_MEMORY_PATH,
+} as const;
 
 export const DELEGATION_TOOL_NAMES = new Set([
   "run_subagent",
@@ -130,14 +142,35 @@ export const builtinAgentTools: ConnectorTool[] = [
   },
   {
     name: "remember",
-    description: "Store a durable fact in this bot's explicit memory.",
+    description:
+      "Add one durable fact to this bot's explicit memory. The fact is appended to the document and everything already stored there is kept, so send only the new fact, never the whole document. An exact repeat of a fact already stored is ignored. To correct or rewrite a document as a whole, use replace_memory_document instead.",
     inputSchema: {
       type: "object",
       properties: {
-        content: { type: "string" },
-        path: { type: "string" },
+        content: {
+          type: "string",
+          description: "The single new fact to store, as plain text or one markdown bullet.",
+        },
+        path: MEMORY_PATH_SCHEMA,
       },
       required: ["content"],
+    },
+  },
+  {
+    name: "replace_memory_document",
+    description:
+      "Overwrite an entire memory document with new content. Everything currently stored at that path is discarded, so send the complete document, not one fact. Use this only to rewrite or correct memory as a whole; to store a newly-learned fact use remember.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        content: {
+          type: "string",
+          description:
+            "The complete replacement document. Any existing fact you still want kept must appear here.",
+        },
+        path: MEMORY_PATH_SCHEMA,
+      },
+      required: ["content", "path"],
     },
   },
   {

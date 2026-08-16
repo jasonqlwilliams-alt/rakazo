@@ -203,11 +203,20 @@ export interface MemorySearchResult {
   score: number;
 }
 
+/**
+ * `append` adds `content` to the document and keeps everything already stored there.
+ * `replace` overwrites the whole document. Callers that store a single fact must use
+ * `append`; only an explicit whole-document rewrite may use `replace`.
+ */
+export type MemoryCommitMode = "append" | "replace";
+
 export interface MemoryCommitRequest {
   scope: "bot" | "user";
   botId?: string;
   path: string;
   content: string;
+  /** Defaults to `replace` for whole-document callers such as import. */
+  mode?: MemoryCommitMode;
   sourceRunId?: string;
   sourceThreadId?: string;
 }
@@ -263,7 +272,12 @@ export interface ScriptedTurn {
   ask?: { text: string; detail?: string };
   takeover?: { reason: string };
   files?: Array<{ path: string; content: string }>;
-  memory?: Array<{ scope: "bot" | "user"; path: string; content: string }>;
+  memory?: Array<{
+    scope: "bot" | "user";
+    path: string;
+    content: string;
+    mode?: MemoryCommitMode;
+  }>;
   complete?: boolean;
 }
 

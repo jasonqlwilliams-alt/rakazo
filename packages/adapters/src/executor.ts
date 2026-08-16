@@ -10,7 +10,7 @@ import type {
   NotificationProvider,
   SandboxProvider,
 } from "@rakazo/adapter-kit";
-import { routineWakeupJob, runContinueJob } from "@rakazo/adapter-kit";
+import { resolveMemoryPath, routineWakeupJob, runContinueJob } from "@rakazo/adapter-kit";
 import type { MessageBlock, RunStatus } from "@rakazo/contracts";
 import {
   assertTransition,
@@ -534,19 +534,24 @@ export function createRunExecutor(deps: ExecutorDeps) {
                 : { ok: true },
             );
           }
-          if (name === "remember") {
+          if (name === "remember" || name === "replace_memory_document") {
+            const resolvedPath = resolveMemoryPath(
+              args.path === undefined ? "" : String(args.path),
+            );
+            if (!resolvedPath.ok) return finish({ error: resolvedPath.reason });
             await deps.memory.commit(
               {
                 scope: "bot",
                 botId: bot.id,
-                path: String(args.path ?? "MEMORY.md"),
+                path: resolvedPath.path,
                 content: String(args.content ?? ""),
+                mode: name === "remember" ? "append" : "replace",
                 sourceRunId: runId,
                 sourceThreadId: thread.id,
               },
               context,
             );
-            return finish({ ok: true });
+            return finish({ ok: true, path: resolvedPath.path });
           }
           if (name === "request_takeover") return { ok: true };
           if (name === "run_subagent") {
@@ -906,6 +911,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
                   botId: mem.scope === "bot" ? bot.id : undefined,
                   path: mem.path,
                   content: mem.content,
+                  mode: mem.mode,
                   sourceRunId: runId,
                   sourceThreadId: thread.id,
                 },

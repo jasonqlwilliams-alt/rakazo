@@ -10,6 +10,7 @@ import type {
   MemoryStore,
   PortableFile,
 } from "@rakazo/adapter-kit";
+import { requireMemoryPath } from "@rakazo/adapter-kit";
 import type { PrismaClient } from "@rakazo/db";
 
 export class MarkdownMemoryStore implements MemoryStore {
@@ -69,19 +70,26 @@ export class MarkdownMemoryStore implements MemoryStore {
   }
 
   async commit(request: MemoryCommitRequest, context: AdapterContext): Promise<MemoryRevision> {
+    // Normalise before the lookup: an unnormalised path such as "bot: history/digest.md"
+    // matches no document and would otherwise fork a second copy of a real document.
+    const path = requireMemoryPath(request.path);
     const existing = await this.prisma.memoryDocument.findFirst({
       where: {
         workspaceId: context.workspaceId,
         userId: context.userId,
         scope: request.scope,
         botId: request.botId ?? null,
-        path: request.path,
+        path,
       },
     });
+    const content =
+      existing && request.mode === "append"
+        ? appendMemoryContent(existing.content, request.content)
+        : request.content;
     const doc = existing
       ? await this.prisma.memoryDocument.update({
           where: { id: existing.id },
-          data: { content: request.content, revision: existing.revision + 1 },
+          data: { content, revision: existing.revision + 1 },
         })
       : await this.prisma.memoryDocument.create({
           data: {
@@ -89,15 +97,15 @@ export class MarkdownMemoryStore implements MemoryStore {
             userId: context.userId,
             botId: request.botId,
             scope: request.scope,
-            path: request.path,
-            content: request.content,
+            path,
+            content,
           },
         });
     await this.prisma.memoryRevision.create({
       data: {
         documentId: doc.id,
         revision: doc.revision,
-        content: request.content,
+        content,
         sourceRunId: request.sourceRunId,
         sourceThreadId: request.sourceThreadId,
       },
@@ -136,6 +144,22 @@ export class MarkdownMemoryStore implements MemoryStore {
     if (!last) throw new Error("No memory files to import");
     return last;
   }
+}
+
+/**
+ * Add a fact to a document without disturbing what is already stored there. An exact
+ * repeat of an existing line is dropped so repeated `remember` calls do not accumulate
+ * duplicates. Reconciling a fact that contradicts an existing one is a judgment call, not
+ * a merge: the caller rewrites the document explicitly with `mode: "replace"`.
+ */
+export function appendMemoryContent(existing: string, addition: string): string {
+  const fact = addition.trim();
+  if (fact === "") return existing;
+  const lines = existing.split("\n").map((line) => line.trim());
+  const factLines = fact.split("\n").map((line) => line.trim());
+  if (factLines.every((line) => line === "" || lines.includes(line))) return existing;
+  const base = existing.replace(/\s+$/, "");
+  return base === "" ? `${fact}\n` : `${base}\n\n${fact}\n`;
 }
 
 function snippet(content: string, q: string): string {
