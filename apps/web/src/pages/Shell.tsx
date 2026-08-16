@@ -28,6 +28,7 @@ import {
 } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { authClient } from "../lib/auth";
+import { botCreateInput, botSettingsPatch } from "../lib/bot-fields";
 import { rpc } from "../lib/rpc";
 import {
   isComputerStatusEvent,
@@ -306,14 +307,7 @@ export function ShellPage() {
     description: string;
     computerMode: ComputerMode;
   }) {
-    const bot = await rpc.bots.create({
-      name: input.name.trim(),
-      title: input.title,
-      description: input.description,
-      instructions: input.description,
-      notifyOnFinish: true,
-      computerMode: input.computerMode,
-    });
+    const bot = await rpc.bots.create(botCreateInput(input));
     await refreshBots();
     navigate(`/app/${bot.id}`);
     setPanel(null);
@@ -1484,11 +1478,12 @@ function BotSettings({
   onDelete,
 }: {
   bot: Bot;
+  // No instructions field: this panel has no instructions editor, and accepting one here is
+  // what let the description be saved over each seat's persona.
   onSave: (patch: {
     name?: string;
     title?: string;
     description?: string;
-    instructions?: string;
     computerMode: ComputerMode;
   }) => Promise<void>;
   onExport: () => Promise<void>;
@@ -1542,13 +1537,7 @@ function BotSettings({
           onClick={() => {
             setSaving(true);
             setError(null);
-            void onSave({
-              name,
-              title,
-              description,
-              instructions: description,
-              computerMode,
-            })
+            void onSave({ ...botSettingsPatch({ name, title, description }), computerMode })
               .catch((err) => setError(err instanceof Error ? err.message : "Could not save"))
               .finally(() => setSaving(false));
           }}
