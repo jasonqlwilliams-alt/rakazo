@@ -47,6 +47,8 @@ type Panel = "computer" | "settings" | "routine" | "create" | null;
 
 export function ShellPage() {
   const { botId } = useParams();
+  const botIdRef = useRef(botId);
+  botIdRef.current = botId;
   const navigate = useNavigate();
   const session = authClient.useSession();
   const [bots, setBots] = useState<Bot[]>([]);
@@ -145,7 +147,10 @@ export function ShellPage() {
       navigate("/onboarding", { replace: true });
       return;
     }
-    if (!botId || !list.some((bot) => bot.id === botId)) {
+    // The 4s poll below holds the first render's closure, so read the open bot
+    // from a ref. Reading `botId` directly sends every poll back to list[0].
+    const openBotId = botIdRef.current;
+    if (!openBotId || !list.some((bot) => bot.id === openBotId)) {
       navigate(list[0] ? `/app/${list[0].id}` : "/app", { replace: true });
     }
   }
