@@ -1,5 +1,6 @@
 {
   "$schema": "https://turbo.build/schema.json",
+  "globalPassThroughEnv": ["RAKAZO_API_URL", "RAKAZO_SESSION_TOKEN"],
   "tasks": {
     "generate": {
       "cache": false
