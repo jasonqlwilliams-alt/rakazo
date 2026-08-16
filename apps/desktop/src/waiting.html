@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Rakazo</title>
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        background: #050506;
+        color: #dfdfe2;
+        display: grid;
+        place-items: center;
+        font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+        text-align: center;
+      }
+      .w {
+        max-width: 34rem;
+        padding: 2rem;
+      }
+      h1 {
+        font-size: 1.15rem;
+        font-weight: 600;
+        margin: 0 0 0.75rem;
+      }
+      p {
+        margin: 0.4rem 0;
+        color: #9a9aa0;
+      }
+      code {
+        background: #141416;
+        border: 1px solid #26262a;
+        border-radius: 6px;
+        padding: 0.15rem 0.4rem;
+        color: #c9c9ce;
+      }
+      .reason {
+        margin-top: 1.25rem;
+        color: #6c6c70;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="w">
+      <h1>Waiting for the Rakazo stack</h1>
+      <p>Cannot reach <code id="url">the web app</code> yet.</p>
+      <p>Start it with <code>local/start.sh</code>, or leave <code>pnpm dev</code> running.</p>
+      <p>This window retries on its own, and loads the moment the stack answers.</p>
+      <p class="reason" id="reason"></p>
+    </div>
+    <script>
+      const params = new URLSearchParams(location.search);
+      const url = params.get("url");
+      const reason = params.get("reason");
+      if (url) document.getElementById("url").textContent = url;
+      if (reason) document.getElementById("reason").textContent = reason;
+    </script>
+  </body>
+</html>

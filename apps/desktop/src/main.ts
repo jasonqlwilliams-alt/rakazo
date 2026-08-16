@@ -15,6 +15,18 @@ function developmentIcon() {
   return existsSync(icon) ? icon : undefined;
 }
 
+// Shown instead of a black window when the local stack is not up yet. A packaged
+// file rather than a data: URL, because Chromium blocks top-level data:
+// navigation and the load silently does nothing.
+function showWaitingPage(win: BrowserWindow, reason: string) {
+  // The title is set first and independently: it is the one signal that survives
+  // even if the page itself will not load, so the window is never anonymously black.
+  win.setTitle("Rakazo — waiting for the stack");
+  return win.loadFile(path.join(import.meta.dirname, "waiting.html"), {
+    query: { url: WEB_URL, reason },
+  });
+}
+
 function createWindow() {
   const icon = developmentIcon();
   const win = new BrowserWindow({
@@ -27,7 +39,37 @@ function createWindow() {
       sandbox: true,
     },
   });
-  void win.loadURL(WEB_URL);
+
+  // A single loadURL leaves a black window whenever the stack is down, with no
+  // way to tell "not started" from "broken". Say so, and keep retrying.
+  let retrying = false;
+  win.webContents.on(
+    "did-fail-load",
+    (_event, errorCode, errorDescription, _validatedURL, isMainFrame) => {
+      if (win.isDestroyed()) return;
+      // Sub-frame loads and aborted (-3) navigations are not the page failing to
+      // open. Do not compare the URL here: Chromium normalises it, so an origin
+      // without a trailing slash never matches what it reports back.
+      if (retrying || !isMainFrame || errorCode === -3) return;
+      retrying = true;
+      void showWaitingPage(win, `${errorDescription} (${errorCode})`).catch(() => undefined);
+      const timer = setInterval(() => {
+        if (win.isDestroyed()) {
+          clearInterval(timer);
+          return;
+        }
+        void win
+          .loadURL(WEB_URL)
+          .then(() => {
+            clearInterval(timer);
+            retrying = false;
+          })
+          .catch(() => undefined);
+      }, 3000);
+    },
+  );
+
+  void win.loadURL(WEB_URL).catch(() => undefined);
 }
 
 app.whenReady().then(() => {
