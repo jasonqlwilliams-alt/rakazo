@@ -702,6 +702,84 @@ describeJourneys("required product journeys", () => {
     expect(await rpc<Bot[]>(app, cookie, "bots/list")).toHaveLength(before);
   });
 
+  it("13b: one bot notes another and both seats show it without merging the chats", async () => {
+    const cookie = await signup(app, `peer-j-${stamp}@rakazo.test`, "Peer");
+    const make = (name: string) =>
+      rpc<Bot>(app, cookie, "bots/create", {
+        name,
+        title: "",
+        description: "",
+        instructions: "",
+        notifyOnFinish: true,
+      });
+    const eleusis = await make("Eleusis");
+    const thor = await make("Thor");
+
+    // Give each seat private history, so a merge would be obvious.
+    await sendAndWait(app, cookie, thor.id, "remember THOR-ONLY-SECRET for later");
+    await sendAndWait(app, cookie, eleusis.id, "remember ELEUSIS-ONLY-SECRET for later");
+    const eleusisBefore = (await rpc<Snap>(app, cookie, "threads/get", { botId: eleusis.id }))
+      .messages.length;
+
+    await sendAndWait(
+      app,
+      cookie,
+      eleusis.id,
+      "send a note to the bot named Thor saying CROSSCHAT-PROOF hold the venue list",
+    );
+    const thorSnap = await waitFor(
+      app,
+      cookie,
+      thor.id,
+      (snap) => !snap.run || ["completed", "failed", "cancelled"].includes(snap.run.status),
+    );
+    const eleusisSnap = await rpc<Snap>(app, cookie, "threads/get", { botId: eleusis.id });
+
+    const noteOn = (snap: Snap, direction: string) =>
+      snap.messages.flatMap((message) =>
+        message.blocks.filter(
+          (block) =>
+            (block as { kind?: string }).kind === "agent_note" &&
+            (block as { direction?: string }).direction === direction,
+        ),
+      );
+
+    // The same note, one line, on both seats.
+    const sent = noteOn(eleusisSnap, "sent");
+    const received = noteOn(thorSnap, "received");
+    expect(sent).toHaveLength(1);
+    expect(received).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ toBotId: thor.id, toName: "Thor", fromName: "Eleusis" });
+    expect(received[0]).toMatchObject({ fromBotId: eleusis.id, fromName: "Eleusis" });
+    expect((sent[0] as { text: string }).text).toContain("CROSSCHAT-PROOF");
+    expect((received[0] as { text: string }).text).toBe((sent[0] as { text: string }).text);
+
+    // Neither seat swallowed the other's chat.
+    expect(JSON.stringify(eleusisSnap.messages)).not.toContain("THOR-ONLY-SECRET");
+    expect(JSON.stringify(thorSnap.messages)).not.toContain("ELEUSIS-ONLY-SECRET");
+    expect(eleusisSnap.messages.length).toBeLessThanOrEqual(eleusisBefore + 3);
+
+    // Thor woke on a peer trigger — not as if the user had typed it, not as a spawn.
+    const thorRuns = await prisma.run.findMany({ where: { botId: thor.id } });
+    expect(thorRuns.some((run) => run.trigger === "peer")).toBe(true);
+    expect(JSON.stringify(thorSnap.messages)).toContain("CROSSCHAT-PROOF");
+    expect(
+      thorSnap.messages.some(
+        (message) =>
+          message.role === "user" && JSON.stringify(message.blocks).includes("CROSSCHAT-PROOF"),
+      ),
+    ).toBe(false);
+
+    // No tenth seat, and peers stay peers.
+    const listed = await rpc<Bot[]>(app, cookie, "bots/list");
+    expect(listed.map((bot) => bot.name).sort()).toEqual(["Eleusis", "Thor"]);
+    expect(
+      (await prisma.bot.findMany({ where: { id: { in: [eleusis.id, thor.id] } } })).every(
+        (bot) => bot.parentBotId === null,
+      ),
+    ).toBe(true);
+  });
+
   it("11: compose backup docs and dump tooling exist", async () => {
     expect(existsSync(path.resolve("docs/self-host.md"))).toBe(true);
     expect(existsSync(path.resolve("infra/compose/docker-compose.yml"))).toBe(true);

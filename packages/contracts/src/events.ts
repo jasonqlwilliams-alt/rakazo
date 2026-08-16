@@ -87,6 +87,19 @@ export const MessageBlock = z.discriminatedUnion("kind", [
     title: z.string().optional(),
     status: z.enum(["created", "archived", "deleted"]),
   }),
+  /**
+   * A note one bot sent directly to an existing peer bot. It is a compact log line
+   * on both threads — never a copy of the other bot's conversation.
+   */
+  z.object({
+    kind: z.literal("agent_note"),
+    fromBotId: z.string(),
+    fromName: z.string(),
+    toBotId: z.string(),
+    toName: z.string(),
+    text: z.string(),
+    direction: z.enum(["sent", "received"]).optional(),
+  }),
 ]);
 export type MessageBlock = z.infer<typeof MessageBlock>;
 

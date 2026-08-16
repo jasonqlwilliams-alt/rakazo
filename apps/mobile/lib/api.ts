@@ -165,6 +165,11 @@ export type MobileMessage = {
     botId?: string;
     title?: string;
     agentId?: string;
+    fromBotId?: string;
+    fromName?: string;
+    toBotId?: string;
+    toName?: string;
+    direction?: string;
   }>;
 };
 
@@ -209,6 +214,11 @@ export function blockText(message: MobileMessage) {
       }
       if (block.kind === "child_bot") {
         return `${block.status === "archived" ? "Archived" : block.status === "deleted" ? "Deleted" : "Bot"} ${block.name ?? ""}`;
+      }
+      if (block.kind === "agent_note") {
+        const peer =
+          block.direction === "received" ? `from ${block.fromName}` : `sent to ${block.toName}`;
+        return `[agent] ${peer}: ${block.text ?? ""}`;
       }
       return block.text ?? block.state ?? "";
     })

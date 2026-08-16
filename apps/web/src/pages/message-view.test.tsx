@@ -20,9 +20,9 @@ function message(role: ThreadMessage["role"], blocks: MessageBlock[]): ThreadMes
   };
 }
 
-function render(message: ThreadMessage) {
+function render(message: ThreadMessage, onOpenBot = vi.fn()) {
   return renderToStaticMarkup(
-    <MessageView canAnswer={false} message={message} onAnswer={vi.fn()} onOpenBot={vi.fn()} />,
+    <MessageView canAnswer={false} message={message} onAnswer={vi.fn()} onOpenBot={onOpenBot} />,
   );
 }
 
@@ -65,3 +65,78 @@ describe("the spawn opener in a child bot's thread", () => {
     expect(asSystemMeta).not.toContain("rounded-[20px]");
   });
 });
+
+const note = {
+  kind: "agent_note",
+  fromBotId: "bot-eleusis",
+  fromName: "Eleusis",
+  toBotId: "bot-thor",
+  toName: "Thor",
+  text: "CROSSCHAT-PROOF hold the venue list",
+} as const;
+
+function noteMessage(direction: "sent" | "received", role: ThreadMessage["role"]): ThreadMessage {
+  return {
+    id: "message-1",
+    threadId: "thread-1",
+    seq: 4,
+    role,
+    blocks: [{ ...note, direction }],
+    createdAt: new Date(0).toISOString(),
+  };
+}
+
+describe("agent note in the thread", () => {
+  it("renders the sender's seat as a from/to log line, not a chat bubble", () => {
+    const html = render(noteMessage("sent", "bot"));
+
+    expect(html).toContain("[agent]");
+    expect(html).toContain("sent to Thor");
+    expect(html).toContain("CROSSCHAT-PROOF hold the venue list");
+    // A log line, closer to `meta` than to a bubble: centered, muted, no bubble chrome.
+    expect(html).toContain("justify-center");
+    expect(html).toContain("#85858A");
+    expect(html).not.toContain("rounded-[20px]");
+  });
+
+  it("renders the receiver's seat with the same note text, marked inbound", () => {
+    const html = render(noteMessage("received", "system"));
+
+    expect(html).toContain("[agent]");
+    expect(html).toContain("from Eleusis");
+    expect(html).toContain("CROSSCHAT-PROOF hold the venue list");
+  });
+
+  it("does not show the other bot's conversation", () => {
+    const html = render(noteMessage("received", "system"));
+
+    expect(html).not.toContain("thread-1");
+    // Only the note text is present — the block carries nothing else to leak.
+    expect(html.match(/CROSSCHAT-PROOF/g)).toHaveLength(1);
+  });
+
+  it("jumps to the other bot: the peer on each side, never itself", () => {
+    // renderToStaticMarkup does not fire handlers, so assert the wiring by invoking the
+    // rendered element's own onClick.
+    const fromSender = vi.fn();
+    elementFor(noteMessage("sent", "bot"), fromSender)?.props.onClick?.();
+    expect(fromSender).toHaveBeenCalledWith("bot-thor");
+
+    const fromReceiver = vi.fn();
+    elementFor(noteMessage("received", "system"), fromReceiver)?.props.onClick?.();
+    expect(fromReceiver).toHaveBeenCalledWith("bot-eleusis");
+  });
+});
+
+/** The single block element MessageView produces, so its click wiring can be checked. */
+function elementFor(message: ThreadMessage, onOpenBot: () => void) {
+  const rendered = MessageView({
+    canAnswer: false,
+    message,
+    onAnswer: vi.fn(),
+    onOpenBot,
+  }) as {
+    props: { children: Array<{ props: { onClick?: () => void } }> };
+  };
+  return rendered.props.children[0];
+}

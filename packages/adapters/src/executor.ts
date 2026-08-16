@@ -50,6 +50,7 @@ import {
 import { observationToolResult, parseComputerActions } from "./computer-tools.js";
 import { checkpointAndRecordComputerWorkspace } from "./computer-workspace.js";
 import { loadAgentMemoryContext } from "./memory-context.js";
+import { sendPeerMessage } from "./peer-message.js";
 import { toOAuthCredential } from "./pi-credentials.js";
 import {
   parseModelSecret,
@@ -600,6 +601,27 @@ export function createRunExecutor(deps: ExecutorDeps) {
             }
             return spawned;
           }
+          if (name === "send_to_bot") {
+            const sent = await sendPeerMessage(deps, {
+              sender: {
+                id: bot.id,
+                name: bot.name,
+                threadId: thread.id,
+                workspaceId: bot.workspaceId,
+                userId: run.userId,
+              },
+              runId,
+              messageKey: executionId,
+              botId: args.bot_id
+                ? String(args.bot_id)
+                : args.botId
+                  ? String(args.botId)
+                  : undefined,
+              name: args.name ? String(args.name) : undefined,
+              text: String(args.text ?? ""),
+            });
+            return finish(sent);
+          }
           if (name === "archive_bot" || name === "delete_bot") {
             const archived = await archiveSpawnedBot(
               deps,
@@ -688,6 +710,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
                 "spawn_bot creates a lasting regular bot (own chat, computer, memory) that appears in the user's bot list. If the user asked to create a bot, call spawn_bot once and stop. Do not run_subagent to demo it.",
                 "run_subagent is a short helper inside this turn only. It is not a bot, has no thread, and does not show in the list. Use it for parallel work you will summarize here.",
                 "archive_bot safely archives a bot this bot created, and only that bot. Use it when the user asks to remove that bot or when it is finished and unused. The user can restore it or permanently delete it later. confirm_name must exactly match its name.",
+                "send_to_bot messages a bot that already exists, by bot_id or exact name. Use it to hand work to a peer or answer a note one sent you. It creates nothing — never call spawn_bot to reach a bot that already exists. Both chats show the note as one line; you still cannot read the other bot's conversation, so never claim you can.",
                 pluginLine,
                 "Never print API keys, access tokens, or secret values. Prefer tools over claiming you already did the work.",
               ]
@@ -1296,9 +1319,16 @@ async function withModelCredentialLock<T>(key: string, fn: () => Promise<T>): Pr
   }
 }
 
-function blocksToText(blocks: MessageBlock[]): string {
+export function blocksToText(blocks: MessageBlock[]): string {
   return blocks
     .map((block) => {
+      // A peer note carries who it is between. Without that, the bare text would read
+      // as if the user had said it.
+      if (block.kind === "agent_note") {
+        return block.direction === "sent"
+          ? `[agent] note sent to ${block.toName}: ${block.text}`
+          : `[agent] note from peer bot ${block.fromName}: ${block.text}`;
+      }
       if ("text" in block && block.text) return block.text;
       return JSON.stringify(block);
     })

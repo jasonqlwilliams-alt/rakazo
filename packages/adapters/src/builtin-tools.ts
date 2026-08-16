@@ -19,6 +19,15 @@ export const DELEGATION_TOOL_NAMES = new Set([
   "delete_bot",
 ]);
 
+/**
+ * Tools an in-turn subagent must not have. Delegation is excluded because a helper
+ * that dies with the turn should not create or destroy bots; `send_to_bot` is excluded
+ * because a note it sent would be attributed to the bot that hosts it, not to the
+ * helper. `send_to_bot` is deliberately not a delegation tool: it messages an existing
+ * peer and never spawns anything.
+ */
+export const SUBAGENT_EXCLUDED_TOOL_NAMES = new Set([...DELEGATION_TOOL_NAMES, "send_to_bot"]);
+
 export const builtinAgentTools: ConnectorTool[] = [
   {
     name: "computer_observe",
@@ -209,6 +218,31 @@ export const builtinAgentTools: ConnectorTool[] = [
         },
       },
       required: ["name"],
+    },
+  },
+  {
+    name: "send_to_bot",
+    description:
+      "Send a short note to a bot that already exists, by bot_id or exact name. The note appears as one line in both chats and the other bot wakes up on its own thread to read it. This never creates a bot — that is spawn_bot — and it does not show you the other bot's conversation.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        bot_id: {
+          type: "string",
+          description: "Id of the bot to notify. Use this when you have it.",
+        },
+        name: {
+          type: "string",
+          description:
+            "Exact, case-sensitive name of the bot to notify. Used only when bot_id is omitted.",
+        },
+        text: {
+          type: "string",
+          description:
+            "The note. Keep it to what the other bot needs — this is a line, not a transcript.",
+        },
+      },
+      required: ["text"],
     },
   },
   {

@@ -10,7 +10,7 @@ import type {
   ConnectorTool,
 } from "@rakazo/adapter-kit";
 import { DEFAULT_MEMORY_PATH, resolveMemoryPath } from "@rakazo/adapter-kit";
-import { builtinAgentTools, DELEGATION_TOOL_NAMES } from "./builtin-tools.js";
+import { builtinAgentTools, SUBAGENT_EXCLUDED_TOOL_NAMES } from "./builtin-tools.js";
 import { PiRuntimeCredentialStore, toOAuthCredential } from "./pi-credentials.js";
 
 const running = new Map<string, AbortController>();
@@ -340,6 +340,13 @@ function toAgentTool(tool: ConnectorTool, host: ToolHost, exposedName: string): 
           bot_id: raw.bot_id ? String(raw.bot_id) : raw.botId ? String(raw.botId) : "",
         };
       }
+      if (tool.name === "send_to_bot") {
+        return {
+          bot_id: raw.bot_id ? String(raw.bot_id) : raw.botId ? String(raw.botId) : "",
+          name: raw.name ? String(raw.name) : "",
+          text: String(raw.text ?? ""),
+        };
+      }
       return raw as never;
     },
     execute: async (toolCallId, params) => {
@@ -400,7 +407,7 @@ async function executeSubagent(host: ToolHost, executionId: string, args: Record
   });
 
   const childDefs = (host.request.tools.length ? host.request.tools : builtinAgentTools).filter(
-    (tool) => !DELEGATION_TOOL_NAMES.has(tool.name),
+    (tool) => !SUBAGENT_EXCLUDED_TOOL_NAMES.has(tool.name),
   );
   const nestedHost: ToolHost = { ...host, depth: 1 };
   const nested = new Agent({
@@ -574,6 +581,13 @@ function parametersFor(tool: ConnectorTool) {
     return Type.Object({
       confirm_name: Type.String(),
       bot_id: Type.Optional(Type.String()),
+    });
+  }
+  if (tool.name === "send_to_bot") {
+    return Type.Object({
+      text: Type.String(),
+      bot_id: Type.Optional(Type.String()),
+      name: Type.Optional(Type.String()),
     });
   }
   return jsonSchemaParameters(tool.inputSchema);

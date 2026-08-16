@@ -148,6 +148,17 @@ export function inferScript(
       { takeover: { reason: "Sign in to continue. Protected input stays off the thread." } },
     ];
   }
+  if (lower.includes("send a note to") || lower.includes("send a peer note")) {
+    const name = namedBot(prompt) ?? "Peer";
+    const text = /saying\s+(.+)$/i.exec(prompt)?.[1]?.replace(/[.]+$/, "") ?? prompt;
+    return [
+      {
+        assistant: "sending that note to the other bot.",
+        toolCalls: [{ name: "send_to_bot", args: { name, text: text.trim() } }],
+        complete: true,
+      },
+    ];
+  }
   if (
     lower.includes("delete the bot named") ||
     lower.includes("delete the child bot") ||

@@ -270,8 +270,28 @@ function MessageBubble({
   onOpenBot: (botId: string, name: string) => void;
 }) {
   const special = message.blocks.find(
-    (block) => block.kind === "subagent" || block.kind === "child_bot",
+    (block) =>
+      block.kind === "subagent" || block.kind === "child_bot" || block.kind === "agent_note",
   );
+  if (special?.kind === "agent_note") {
+    const received = special.direction === "received";
+    const otherBotId = (received ? special.fromBotId : special.toBotId) ?? "";
+    const otherName = (received ? special.fromName : special.toName) ?? "Bot";
+    return (
+      <Pressable
+        onPress={() => onOpenBot(otherBotId, otherName)}
+        style={{ flexShrink: 1, minWidth: 0, width: "100%", paddingVertical: 4 }}
+      >
+        <Text style={{ color: "#85858A", fontSize: 13.5, textAlign: "center" }}>
+          <Text style={{ color: "#E65707" }}>[agent] </Text>
+          <Text style={{ color: "#A8A8AD" }}>
+            {received ? `from ${special.fromName} ` : `sent to ${special.toName} `}
+          </Text>
+          {special.text}
+        </Text>
+      </Pressable>
+    );
+  }
   if (special?.kind === "subagent") {
     const running = special.status === "running";
     const failed = special.status === "failed";

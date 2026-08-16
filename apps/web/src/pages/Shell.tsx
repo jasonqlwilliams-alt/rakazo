@@ -1129,6 +1129,26 @@ export function MessageView({
             </div>
           );
         }
+        if (block.kind === "agent_note") {
+          const received = block.direction === "received";
+          const otherBotId = received ? block.fromBotId : block.toBotId;
+          const otherName = received ? block.fromName : block.toName;
+          return (
+            <button
+              key={i}
+              type="button"
+              onClick={() => onOpenBot(otherBotId)}
+              title={`Open ${otherName}`}
+              className="flex w-full items-baseline justify-center gap-2 py-1 text-center text-[13.5px] text-[#85858A] hover:text-[#DFDFE2]"
+            >
+              <span className="shrink-0 text-[#E65707]">[agent]</span>
+              <span className="shrink-0 text-[#A8A8AD]">
+                {received ? `from ${block.fromName}` : `sent to ${block.toName}`}
+              </span>
+              <span className="min-w-0 truncate">{block.text}</span>
+            </button>
+          );
+        }
         if (block.kind === "progress") {
           return (
             <div key={i} className="flex justify-start">
