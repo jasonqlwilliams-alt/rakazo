@@ -4,3 +4,11 @@
 - Rakazo targets web, Electron desktop, and Expo mobile; Electron hosts the web UI. Consider every surface when changing features or contracts.
 - Prefer shared packages for domain logic, contracts, API behavior, and reusable UI. Keep genuinely native navigation, storage, permissions, and interactions platform-specific.
 - Treat auth, secret handling, sandbox boundaries, host commands, and integrations as security-sensitive. Keep tests deterministic and offline by default.
+- Memory document paths are scope-free relative paths; scope is a separate field. Every path reaching the store goes through `resolveMemoryPath` in `packages/adapter-kit/src/memory-path.ts`, and `remember` appends while `replace_memory_document` overwrites. Never render a memory path concatenated with its scope, and never pass a model-supplied path straight to `commit`.
+
+## Maintaining this file
+
+Keep this file for knowledge useful to almost every future agent session in this project.
+Do not repeat what the codebase already shows; point to the authoritative file or command instead.
+Prefer rewriting or pruning existing entries over appending new ones.
+When updating this file, preserve this bar for all agents and keep entries concise.
