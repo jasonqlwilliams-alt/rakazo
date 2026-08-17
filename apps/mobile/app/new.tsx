@@ -31,11 +31,14 @@ export default function NewBot() {
     setPending(true);
     setError(null);
     try {
+      // `description` is the short blurb; `instructions` is the persona. Sending the
+      // blurb as the persona is what cost eight seats theirs on web — see
+      // apps/web/src/lib/bot-fields.ts. A new bot gets no instructions here and falls
+      // back to its name, title, and description when a run is built.
       const bot = await rpc<MobileBot>("bots/create", {
         name: name.trim(),
         title,
         description,
-        instructions: description,
         notifyOnFinish: true,
         computerMode,
       });
