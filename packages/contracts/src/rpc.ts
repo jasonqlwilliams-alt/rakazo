@@ -15,6 +15,7 @@ import {
   ExportManifestSchema,
   MemoryDocumentSchema,
   MeSchema,
+  ModelCatalogEntrySchema,
   ModelCredentialSchema,
   RoutineSchema,
   ThreadMessagePageSchema,
@@ -44,21 +45,7 @@ export const appContract = {
       .output(DeploymentSettingsSchema),
   },
   models: {
-    list: oc.output(
-      z.array(
-        z.object({
-          provider: z.string(),
-          providerName: z.string().optional(),
-          id: z.string(),
-          label: z.string(),
-          billing: z.string(),
-          auth: z.enum(["api-key", "oauth", "both"]).optional(),
-          oauthLabel: z.string().optional(),
-          subscription: z.boolean().optional(),
-          signIn: z.enum(["device-code"]).optional(),
-        }),
-      ),
-    ),
+    list: oc.output(z.array(ModelCatalogEntrySchema)),
     credentials: oc.output(z.array(ModelCredentialSchema)),
     connect: oc
       .input(
@@ -91,10 +78,14 @@ export const appContract = {
       .output(
         z.discriminatedUnion("status", [
           z.object({ status: z.literal("pending") }),
-          z.object({ status: z.literal("connected"), credential: ModelCredentialSchema }),
+          z.object({ status: z.literal("ready") }),
           z.object({ status: z.literal("error"), error: z.string() }),
         ]),
       ),
+    finishOAuth: oc.input(z.object({ loginId: z.string() })).output(ModelCredentialSchema),
+    cancelOAuth: oc
+      .input(z.object({ loginId: z.string() }))
+      .output(z.object({ ok: z.literal(true) })),
     setDefault: oc
       .input(z.object({ provider: z.string(), modelId: z.string() }))
       .output(z.object({ ok: z.literal(true) })),

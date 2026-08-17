@@ -52,6 +52,9 @@ import { WindowChrome } from "./WindowChrome";
 const BotContextMenu = lazy(() =>
   import("./BotContextMenu").then((module) => ({ default: module.BotContextMenu })),
 );
+const ModelSettingsOverlay = lazy(() =>
+  import("./ModelSettingsOverlay").then((module) => ({ default: module.ModelSettingsOverlay })),
+);
 const PluginsOverlay = lazy(() =>
   import("./PluginsOverlay").then((module) => ({ default: module.PluginsOverlay })),
 );
@@ -74,6 +77,7 @@ export function ShellPage() {
   const [routines, setRoutines] = useState<Routine[]>([]);
   const [computer, setComputer] = useState<ComputerStatus | null>(null);
   const [pluginsOpen, setPluginsOpen] = useState(false);
+  const [modelsOpen, setModelsOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [botMenu, setBotMenu] = useState<{
     botId: string;
@@ -667,6 +671,17 @@ export function ShellPage() {
             <div className="absolute bottom-14 left-3 right-3 rounded-2xl border border-[#2A2A2F] bg-[#1A1A1D] p-2 shadow-[0_22px_50px_rgba(0,0,0,.55)]">
               <button
                 type="button"
+                onClick={() => {
+                  setMenuOpen(false);
+                  setModelsOpen(true);
+                }}
+                className="flex w-full items-center gap-3 rounded-[11px] px-3 py-2.5 hover:bg-[#232327]"
+              >
+                <span className="text-[#9A9AA0]">⌁</span>
+                <span className="flex-1 text-left text-[14.5px] text-[#ECECEE]">Models</span>
+              </button>
+              <button
+                type="button"
                 className="flex w-full items-center gap-3 rounded-[11px] px-3 py-2.5 hover:bg-[#232327]"
                 onClick={async () => {
                   setUsage(await rpc.usage.summary());
@@ -1065,6 +1080,10 @@ export function ShellPage() {
         ) : null}
 
         {pluginsOpen ? <PluginsOverlay onClose={() => setPluginsOpen(false)} /> : null}
+      </Suspense>
+
+      <Suspense fallback={null}>
+        {modelsOpen ? <ModelSettingsOverlay onClose={() => setModelsOpen(false)} /> : null}
       </Suspense>
 
       {booting ? (

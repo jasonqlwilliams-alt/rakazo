@@ -50,13 +50,16 @@ import { ACTIVE_RUN_STATUSES, nextCronDate, projectMessages } from "@rakazo/core
 import {
   createRepos,
   createThreadMessage,
+  findDefaultModelCredential,
   IsolationError,
-  type Prisma,
+  newestModelCredentialOrder,
+  Prisma,
   type PrismaClient,
   parseComputerMode,
   type ThreadEvents,
 } from "@rakazo/db";
 import { addScreenProxyCapability } from "./screen-proxy.js";
+import { withSerializableRetry } from "./serializable-retry.js";
 import { loadAllMessages, loadMessagePage } from "./thread-message-pages.js";
 
 const MAX_COMPUTER_TEXT_FILE_BYTES = 2 * 1024 * 1024;
@@ -102,7 +105,7 @@ export function createRouter(deps: RouterDeps) {
 
   const authed = os.use(async ({ context, next }) => {
     if (!context.actor) throw new ORPCError("UNAUTHORIZED");
-    return next({ context: { actor: context.actor } });
+    return next({ context: { ...context, actor: context.actor } });
   });
 
   return os.router({
@@ -160,6 +163,7 @@ export function createRouter(deps: RouterDeps) {
       credentials: authed.models.credentials.handler(async ({ context }) => {
         const rows = await deps.prisma.userModelCredential.findMany({
           where: { userId: context.actor.userId, workspaceId: context.actor.workspaceId },
+          orderBy: newestModelCredentialOrder,
         });
         return rows.map((row) => ({
           id: row.id,
@@ -175,6 +179,7 @@ export function createRouter(deps: RouterDeps) {
           plaintext: input.apiKey,
           label: input.label,
           modelId: input.modelId,
+          signal: context.signal,
         });
       }),
       beginOAuth: authed.models.beginOAuth.handler(async ({ context, input }) => {
@@ -184,6 +189,7 @@ export function createRouter(deps: RouterDeps) {
           provider: input.provider,
           modelId: input.modelId,
           label: input.label,
+          signal: context.signal,
         });
       }),
       completeOAuth: authed.models.completeOAuth.handler(async ({ context, input }) => {
@@ -191,21 +197,67 @@ export function createRouter(deps: RouterDeps) {
           userId: context.actor.userId,
           workspaceId: context.actor.workspaceId,
         });
-        if (result.status !== "connected") return result;
-        const credential = await persistModelCredential(deps, context.actor, {
-          provider: result.provider,
-          plaintext: serializeModelSecret({ kind: "oauth", credential: result.credential }),
-          label: result.label ?? "ChatGPT Plus/Pro",
-          modelId: result.modelId,
-        });
-        deps.oauthLogins.consume(input.loginId);
-        return { status: "connected" as const, credential };
+        return result.status === "connected" ? { status: "ready" as const } : result;
+      }),
+      finishOAuth: authed.models.finishOAuth.handler(async ({ context, input }) => {
+        throwIfAborted(context.signal);
+        const result = await deps.oauthLogins.finish(
+          input.loginId,
+          context.actor,
+          async (login) => {
+            return persistModelCredential(deps, context.actor, {
+              provider: login.provider,
+              plaintext: serializeModelSecret({ kind: "oauth", credential: login.credential }),
+              label: login.label ?? "ChatGPT Plus/Pro",
+              modelId: login.modelId,
+              signal: login.signal,
+            });
+          },
+        );
+        if (result.status === "pending") {
+          throw new ORPCError("CONFLICT", { message: "Sign-in has not finished yet." });
+        }
+        if (result.status === "error") {
+          throw new ORPCError("NOT_FOUND", { message: result.error });
+        }
+        return result.value;
+      }),
+      cancelOAuth: authed.models.cancelOAuth.handler(async ({ context, input }) => {
+        await deps.oauthLogins.cancel(input.loginId, context.actor);
+        return { ok: true as const };
       }),
       setDefault: authed.models.setDefault.handler(async ({ context, input }) => {
-        await deps.prisma.userModelCredential.updateMany({
-          where: { userId: context.actor.userId, provider: input.provider },
-          data: { defaultModel: input.modelId, isDefault: true },
-        });
+        await withSerializableRetry(() =>
+          deps.prisma.$transaction(
+            async (tx) => {
+              const credential = await tx.userModelCredential.findFirst({
+                where: {
+                  userId: context.actor.userId,
+                  workspaceId: context.actor.workspaceId,
+                  provider: input.provider,
+                },
+                orderBy: newestModelCredentialOrder,
+              });
+              if (!credential) {
+                throw new ORPCError("NOT_FOUND", {
+                  message: `No model credential is connected for ${input.provider} in this workspace.`,
+                });
+              }
+              await tx.userModelCredential.updateMany({
+                where: {
+                  userId: context.actor.userId,
+                  workspaceId: context.actor.workspaceId,
+                },
+                data: { isDefault: false },
+              });
+              await tx.userModelCredential.update({
+                where: { id: credential.id },
+                data: { defaultModel: input.modelId, isDefault: true },
+              });
+            },
+            { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+          ),
+        );
         return { ok: true as const };
       }),
     },
@@ -1457,9 +1509,7 @@ async function snapshot(deps: RouterDeps, actor: Actor, botId: string): Promise<
 async function meDto(deps: RouterDeps, actor: Actor): Promise<Me> {
   const [user, cred, settings] = await Promise.all([
     deps.prisma.user.findUniqueOrThrow({ where: { id: actor.userId } }),
-    deps.prisma.userModelCredential.findFirst({
-      where: { userId: actor.userId, isDefault: true },
-    }),
+    findDefaultModelCredential(deps.prisma, actor),
     deps.prisma.deploymentSettings.findUnique({ where: { id: "default" } }),
   ]);
   const hasDeployment = Boolean(
@@ -1609,39 +1659,89 @@ function computerHostFor(
 async function persistModelCredential(
   deps: RouterDeps,
   actor: Actor,
-  input: { provider: string; plaintext: string; label?: string; modelId?: string },
+  input: {
+    provider: string;
+    plaintext: string;
+    label?: string;
+    modelId?: string;
+    signal?: AbortSignal;
+  },
 ) {
+  throwIfAborted(input.signal);
   const stored = await deps.secrets.put(input.plaintext, {
     operationId: "cred",
     traceId: "cred",
     workspaceId: actor.workspaceId,
     userId: actor.userId,
-    signal: new AbortController().signal,
+    signal: input.signal ?? new AbortController().signal,
   });
-  const secret = await deps.prisma.secret.create({
-    data: {
-      id: stored.id,
-      userId: actor.userId,
-      workspaceId: actor.workspaceId,
-      kind: "model",
-      ciphertext: stored.ciphertext,
-    },
-  });
-  await deps.prisma.userModelCredential.updateMany({
-    where: { userId: actor.userId },
-    data: { isDefault: false },
-  });
-  const cred = await deps.prisma.userModelCredential.create({
-    data: {
-      userId: actor.userId,
-      workspaceId: actor.workspaceId,
-      provider: input.provider,
-      label: input.label ?? input.provider,
-      secretId: secret.id,
-      isDefault: true,
-      defaultModel: input.modelId ?? deps.env.defaultModel,
-    },
-  });
+  throwIfAborted(input.signal);
+  const cred = await withSerializableRetry(() =>
+    deps.prisma.$transaction(
+      async (tx) => {
+        throwIfAborted(input.signal);
+        const existing = await tx.userModelCredential.findFirst({
+          where: {
+            userId: actor.userId,
+            workspaceId: actor.workspaceId,
+            provider: input.provider,
+          },
+          orderBy: newestModelCredentialOrder,
+        });
+        throwIfAborted(input.signal);
+        const secret = await tx.secret.create({
+          data: {
+            id: stored.id,
+            userId: actor.userId,
+            workspaceId: actor.workspaceId,
+            kind: "model",
+            ciphertext: stored.ciphertext,
+          },
+        });
+        throwIfAborted(input.signal);
+        await tx.userModelCredential.updateMany({
+          where: { userId: actor.userId, workspaceId: actor.workspaceId },
+          data: { isDefault: false },
+        });
+        throwIfAborted(input.signal);
+        if (!existing) {
+          const created = await tx.userModelCredential.create({
+            data: {
+              userId: actor.userId,
+              workspaceId: actor.workspaceId,
+              provider: input.provider,
+              label: input.label ?? input.provider,
+              secretId: secret.id,
+              isDefault: true,
+              defaultModel: input.modelId ?? deps.env.defaultModel,
+            },
+          });
+          throwIfAborted(input.signal);
+          return created;
+        }
+        const updated = await tx.userModelCredential.update({
+          where: { id: existing.id },
+          data: {
+            label: input.label ?? input.provider,
+            secretId: secret.id,
+            isDefault: true,
+            defaultModel: input.modelId ?? deps.env.defaultModel,
+          },
+        });
+        throwIfAborted(input.signal);
+        const sharedSecret = await tx.userModelCredential.count({
+          where: { id: { not: existing.id }, secretId: existing.secretId },
+        });
+        throwIfAborted(input.signal);
+        if (sharedSecret === 0) {
+          await tx.secret.deleteMany({ where: { id: existing.secretId } });
+          throwIfAborted(input.signal);
+        }
+        return updated;
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    ),
+  );
   return {
     id: cred.id,
     provider: cred.provider,
@@ -1649,6 +1749,10 @@ async function persistModelCredential(
     hasKey: true,
     isDefault: true,
   };
+}
+
+function throwIfAborted(signal?: AbortSignal) {
+  if (signal?.aborted) throw signal.reason ?? new Error("Request cancelled");
 }
 
 function mapRoutine(row: {
