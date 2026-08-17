@@ -1,6 +1,26 @@
 import type { AdapterContext, MemorySnapshot, MemoryStore } from "@rakazo/adapter-kit";
 
-const MAX_AGENT_MEMORY_BYTES = 32 * 1024;
+/**
+ * How much of a bot's durable memory is allowed into one run's prompt.
+ *
+ * 32 KiB was too small for a real memory set: an imported profile of 37,662 bytes
+ * overflowed the whole window on its own, so the bot was answering from a truncated
+ * profile and every other document was named as omitted. Memory that cannot reach the
+ * model is memory the bot does not have, so the default is the size of the memory a
+ * seat actually carries, not a round number.
+ *
+ * Set `AGENT_MEMORY_MAX_BYTES` to raise or lower it per deployment without a code change.
+ */
+const DEFAULT_MAX_AGENT_MEMORY_BYTES = 128 * 1024;
+
+/** Reads the window at call time so a deployment can retune it without a rebuild. */
+export function agentMemoryMaxBytes(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.AGENT_MEMORY_MAX_BYTES;
+  if (raw === undefined || raw.trim() === "") return DEFAULT_MAX_AGENT_MEMORY_BYTES;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_MAX_AGENT_MEMORY_BYTES;
+  return Math.floor(parsed);
+}
 
 /** A section shorter than this carries no useful fact, so the document is named as omitted instead. */
 const MIN_SECTION_CONTENT_BYTES = 64;
@@ -20,7 +40,7 @@ export async function loadAgentMemoryContext(
   memory: MemoryStore,
   botId: string,
   context: AdapterContext,
-  maxBytes = MAX_AGENT_MEMORY_BYTES,
+  maxBytes = agentMemoryMaxBytes(),
 ): Promise<string | undefined> {
   const [botMemory, userMemory] = await Promise.all([
     memory.read({ scope: "bot", botId }, context),
