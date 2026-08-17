@@ -281,6 +281,10 @@ export function createRunExecutor(deps: ExecutorDeps) {
             }),
             deps.prisma.userModelCredential.findFirst({
               where: { userId: run.userId, workspaceId: run.workspaceId, isDefault: true },
+              // A deployment that already has two rows flagged default from before the
+              // selector became exclusive must not pick between them at random: the most
+              // recently touched credential is the one the user last chose.
+              orderBy: { updatedAt: "desc" },
             }),
             deps.prisma.deploymentSettings.findUnique({ where: { id: "default" } }),
           ]);

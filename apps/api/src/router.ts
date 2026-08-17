@@ -122,8 +122,11 @@ export function createRouter(deps: RouterDeps) {
     me: authed.me.handler(async ({ context }): Promise<Me> => {
       const actor = context.actor;
       const user = await deps.prisma.user.findUniqueOrThrow({ where: { id: actor.userId } });
+      // Same workspace scope the run uses to pick a credential, so the account cannot
+      // report a model that no run in this workspace can actually reach.
       const cred = await deps.prisma.userModelCredential.findFirst({
-        where: { userId: actor.userId, isDefault: true },
+        where: { userId: actor.userId, workspaceId: actor.workspaceId, isDefault: true },
+        orderBy: { updatedAt: "desc" },
       });
       const settings = await deps.prisma.deploymentSettings.findUnique({
         where: { id: "default" },
@@ -222,11 +225,28 @@ export function createRouter(deps: RouterDeps) {
         deps.oauthLogins.consume(input.loginId);
         return { status: "connected" as const, credential };
       }),
+      // Choosing a default has to unchoose the previous one, and only inside the
+      // workspace the choice belongs to. Setting the flag without clearing it left two
+      // providers marked default at once and run setup picked between them with an
+      // unordered findFirst, so a fleet could sit on a provider nobody selected and
+      // re-picking the working one changed nothing. Clearing it across every workspace
+      // is the opposite failure: a run reads its default scoped by workspace, so a
+      // choice made in one workspace would leave another with no default at all.
       setDefault: authed.models.setDefault.handler(async ({ context, input }) => {
-        await deps.prisma.userModelCredential.updateMany({
-          where: { userId: context.actor.userId, provider: input.provider },
-          data: { defaultModel: input.modelId, isDefault: true },
-        });
+        const workspace = {
+          userId: context.actor.userId,
+          workspaceId: context.actor.workspaceId,
+        };
+        await deps.prisma.$transaction([
+          deps.prisma.userModelCredential.updateMany({
+            where: { ...workspace, isDefault: true },
+            data: { isDefault: false },
+          }),
+          deps.prisma.userModelCredential.updateMany({
+            where: { ...workspace, provider: input.provider },
+            data: { defaultModel: input.modelId, isDefault: true },
+          }),
+        ]);
         return { ok: true as const };
       }),
     },
@@ -1626,8 +1646,11 @@ async function persistModelCredential(
       ciphertext: stored.ciphertext,
     },
   });
+  // Scoped to this workspace for the same reason as models.setDefault: a run resolves
+  // its default credential by workspace, so clearing the flag user-wide would leave
+  // every other workspace of this user with no default and no model.
   await deps.prisma.userModelCredential.updateMany({
-    where: { userId: actor.userId },
+    where: { userId: actor.userId, workspaceId: actor.workspaceId },
     data: { isDefault: false },
   });
   const cred = await deps.prisma.userModelCredential.create({
