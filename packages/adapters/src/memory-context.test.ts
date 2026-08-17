@@ -1,6 +1,6 @@
 import type { AdapterContext, MemorySnapshot, MemoryStore } from "@rakazo/adapter-kit";
 import { describe, expect, it, vi } from "vitest";
-import { loadAgentMemoryContext } from "./memory-context.js";
+import { agentMemoryMaxBytes, loadAgentMemoryContext } from "./memory-context.js";
 
 const context: AdapterContext = {
   operationId: "run-1",
@@ -127,6 +127,43 @@ describe("agent memory context", () => {
 
     expect(Buffer.byteLength(result ?? "", "utf8")).toBeLessThanOrEqual(700);
     expect(result).toContain("[omitted, no room in the memory window:");
+  });
+
+  it("fits a real imported profile whole instead of truncating it", async () => {
+    // The live Eleusis profile imported from Grok is 37,662 bytes. Under the old 32 KiB
+    // window it overflowed on its own and every other document was named as omitted.
+    const profile = "e".repeat(37_662);
+    const read = vi.fn(async ({ scope }: { scope: "bot" | "user" }) =>
+      snapshot(
+        scope === "bot"
+          ? [
+              document("profile", "profile.md", profile, 3, "2026-08-16T12:00:00.000Z"),
+              document(
+                "rel",
+                "relationships.md",
+                "Flux is the companion.",
+                1,
+                "2026-08-15T12:00:00.000Z",
+              ),
+            ]
+          : [],
+      ),
+    );
+
+    const result = await loadAgentMemoryContext(storeWith(read), "bot-1", context);
+
+    expect(result).toContain(profile);
+    expect(result).toContain("Flux is the companion.");
+    expect(result).not.toContain("[truncated:");
+    expect(result).not.toContain("[omitted,");
+  });
+
+  it("takes the memory window from the environment when one is set", () => {
+    expect(agentMemoryMaxBytes({})).toBe(128 * 1024);
+    expect(agentMemoryMaxBytes({ AGENT_MEMORY_MAX_BYTES: "262144" })).toBe(262_144);
+    expect(agentMemoryMaxBytes({ AGENT_MEMORY_MAX_BYTES: "" })).toBe(128 * 1024);
+    expect(agentMemoryMaxBytes({ AGENT_MEMORY_MAX_BYTES: "not a number" })).toBe(128 * 1024);
+    expect(agentMemoryMaxBytes({ AGENT_MEMORY_MAX_BYTES: "-1" })).toBe(128 * 1024);
   });
 
   it("omits the memory block when neither scope has documents", async () => {
