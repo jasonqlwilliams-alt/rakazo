@@ -327,7 +327,19 @@ export function createRouter(deps: RouterDeps) {
 
   const authed = os.use(async ({ context, next }) => {
     if (!context.actor) throw new ORPCError("UNAUTHORIZED");
-    return next({ context: { ...context, actor: context.actor } });
+    try {
+      return await next({ context: { ...context, actor: context.actor } });
+    } catch (error) {
+      // A cross-workspace read is a routine, expected outcome, not a server fault. Left
+      // as a bare Error it left the handler as an untyped 500 with no message, so a
+      // caller could not tell an isolation refusal from a crashed API. It answers as the
+      // resource simply not existing, which is also what keeps one workspace from
+      // probing another for which ids are real.
+      if (error instanceof IsolationError) {
+        throw new ORPCError("NOT_FOUND", { message: error.message });
+      }
+      throw error;
+    }
   });
 
   return os.router({
