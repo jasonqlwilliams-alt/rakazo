@@ -17,6 +17,7 @@ import {
   InMemoryRealtimeFanout,
   isComposioEnabled,
   LocalAgentHomeStore,
+  LocalArtifactStore,
   PiAgentRuntime,
   PiOAuthLogins,
   PostgresRealtimeFanout,
@@ -92,6 +93,7 @@ export async function createApp(
   const secrets = new EncryptedSecretStore(env.encryptionKey);
   const oauthLogins = new PiOAuthLogins();
   const home = new LocalAgentHomeStore(env.dataDir);
+  const artifacts = new LocalArtifactStore(env.dataDir);
   const memory = new MarkdownMemoryStore(prisma);
   const stack = createConnectorStack(isComposioEnabled(env.composioApiKey), composioOverride);
   const connector = stack.destination;
@@ -123,7 +125,7 @@ export async function createApp(
       await Promise.all(
         bots.map((bot) =>
           destroyBot(
-            { prisma, sandbox, home, jobs, dataDir: env.dataDir },
+            { prisma, sandbox, home, jobs, artifacts, dataDir: env.dataDir },
             bot,
             {
               operationId: `account-delete:${userId}`,
@@ -146,6 +148,7 @@ export async function createApp(
     sandbox,
     memory,
     home,
+    artifacts,
     connector: stack.connector,
     secrets: [env.openRouterKey ?? "", env.composioApiKey ?? ""].filter(Boolean),
     secretStore: secrets,
@@ -182,6 +185,7 @@ export async function createApp(
     secrets,
     oauthLogins,
     composio: stack.composio,
+    artifacts,
     dataDir: env.dataDir,
     env: {
       defaultProvider: env.defaultProvider,

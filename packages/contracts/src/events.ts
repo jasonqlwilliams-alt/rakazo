@@ -100,6 +100,19 @@ export const MessageBlock = z.discriminatedUnion("kind", [
     text: z.string(),
     direction: z.enum(["sent", "received"]).optional(),
   }),
+  z.object({
+    kind: z.literal("image"),
+    artifactId: Id,
+    mimeType: z.string(),
+    name: z.string(),
+  }),
+  z.object({
+    kind: z.literal("file"),
+    artifactId: Id,
+    mimeType: z.string(),
+    name: z.string(),
+    size: z.number().int().nonnegative(),
+  }),
 ]);
 export type MessageBlock = z.infer<typeof MessageBlock>;
 

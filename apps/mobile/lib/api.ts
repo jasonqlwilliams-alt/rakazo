@@ -179,6 +179,9 @@ export type MobileMessage = {
     toBotId?: string;
     toName?: string;
     direction?: string;
+    artifactId?: string;
+    mimeType?: string;
+    size?: number;
   }>;
 };
 
@@ -228,6 +231,10 @@ export function blockText(message: MobileMessage) {
         const peer =
           block.direction === "received" ? `from ${block.fromName}` : `sent to ${block.toName}`;
         return `[agent] ${peer}: ${block.text ?? ""}`;
+      }
+      if (block.kind === "image") return `[image: ${block.name ?? "attachment"}]`;
+      if (block.kind === "file") {
+        return `[file: ${block.name ?? "attachment"}${block.size ? ` (${block.size} bytes)` : ""}]`;
       }
       return block.text ?? block.state ?? "";
     })
