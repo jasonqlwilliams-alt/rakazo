@@ -972,12 +972,6 @@ export function ShellPage() {
                   a.click();
                   URL.revokeObjectURL(url);
                 }}
-                onArchive={async () => {
-                  await rpc.bots.archive({ botId: active.id });
-                  setPanel(null);
-                  await refreshBots(true);
-                }}
-                onDelete={() => setDeleteTarget(active)}
               />
             ) : null}
             {panel === "routine" ? (
@@ -1791,8 +1785,6 @@ function BotSettings({
   bot,
   onSave,
   onExport,
-  onArchive,
-  onDelete,
 }: {
   bot: Bot;
   // No instructions field: this panel has no instructions editor, and accepting one here is
@@ -1804,15 +1796,12 @@ function BotSettings({
     computerMode: ComputerMode;
   }) => Promise<void>;
   onExport: () => Promise<void>;
-  onArchive: () => Promise<void>;
-  onDelete: () => void;
 }) {
   const [name, setName] = useState(bot.name);
   const [title, setTitle] = useState(bot.title);
   const [description, setDescription] = useState(bot.description);
   const [computerMode, setComputerMode] = useState(bot.computerMode);
   const [saving, setSaving] = useState(false);
-  const [archiving, setArchiving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   return (
@@ -1873,23 +1862,6 @@ function BotSettings({
           className="text-[14px] text-[#85858A]"
         >
           Export
-        </button>
-        <button
-          type="button"
-          disabled={archiving}
-          onClick={() => {
-            setArchiving(true);
-            setError(null);
-            void onArchive()
-              .catch((err) => setError(err instanceof Error ? err.message : "Could not archive"))
-              .finally(() => setArchiving(false));
-          }}
-          className="text-[14px] text-[#85858A] disabled:opacity-40"
-        >
-          {archiving ? "Archiving…" : "Archive bot"}
-        </button>
-        <button type="button" onClick={onDelete} className="text-[14px] text-[#E65707]">
-          Delete bot…
         </button>
       </div>
     </div>
