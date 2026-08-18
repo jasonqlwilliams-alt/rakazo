@@ -75,6 +75,7 @@ export function ShellPage() {
   const [snapshot, setSnapshot] = useState<ThreadSnapshot | null>(null);
   const [panel, setPanel] = useState<Panel>(null);
   const [routines, setRoutines] = useState<Routine[]>([]);
+  const [routinesBotId, setRoutinesBotId] = useState<string | null>(null);
   const [computer, setComputer] = useState<ComputerStatus | null>(null);
   const [pluginsOpen, setPluginsOpen] = useState(false);
   const [modelsOpen, setModelsOpen] = useState(false);
@@ -93,6 +94,9 @@ export function ShellPage() {
     prompt: "",
     schedule: defaultCronPreset(),
   });
+  const [editingRoutine, setEditingRoutine] = useState<Routine | null>(null);
+  const [deleteRoutineTarget, setDeleteRoutineTarget] = useState<Routine | null>(null);
+  const [savingRoutine, setSavingRoutine] = useState(false);
   const [screenUrl, setScreenUrl] = useState<string | null>(null);
   const [computerOpen, setComputerOpen] = useState(false);
   const [usage, setUsage] = useState<{
@@ -101,6 +105,7 @@ export function ShellPage() {
     runs: number;
   } | null>(null);
   const autoBooted = useRef<string | null>(null);
+  const routineSavePending = useRef(false);
   const bootstrappedThread = useRef<ThreadSnapshot | null>(null);
   const expandedHistoryThread = useRef<string | null>(null);
   const initiallyScrolledThread = useRef<string | null>(null);
@@ -110,6 +115,7 @@ export function ShellPage() {
   computerVisible.current = panel === "computer" || computerOpen;
 
   const active = bots.find((b) => b.id === botId) ?? bots[0];
+  const activeRoutines = routinesBotId === active?.id ? routines : [];
   const routeBotId = useRef<string | undefined>(botId);
   routeBotId.current = botId;
   const activeBotId = useRef<string | undefined>(active?.id);
@@ -193,11 +199,13 @@ export function ShellPage() {
       refreshComputerScreen(id),
     ]);
     markOnce("rk:renderer:thread-response");
+    if (activeBotId.current !== id) return snap;
     setSnapshot((prev) =>
       mergeThreadSnapshot(prev, snap, expandedHistoryThread.current === snap.threadId),
     );
     setComputer(snap.computer);
     setRoutines(routines);
+    setRoutinesBotId(id);
     if (stickToEnd) {
       window.requestAnimationFrame(() => {
         const element = messageScroll.current;
@@ -256,6 +264,7 @@ export function ShellPage() {
           setSnapshot(bootstrap.thread);
           setComputer(bootstrap.thread.computer);
           setRoutines(bootstrap.routines);
+          setRoutinesBotId(bootstrap.thread.botId);
           markOnce("rk:renderer:bots-response");
           markOnce("rk:renderer:thread-response");
         }
@@ -480,6 +489,15 @@ export function ShellPage() {
 
   useEffect(() => {
     setComputerOpen(false);
+  }, [active?.id]);
+
+  // The routine panel copies a routine's data into local draft state at click time
+  // rather than deriving it from `active`, so it goes stale across a bot switch —
+  // without this, Save on bot B could silently update bot A's routine.
+  useEffect(() => {
+    setEditingRoutine(null);
+    setDeleteRoutineTarget(null);
+    setPanel((current) => (current === "routine" ? null : current));
   }, [active?.id]);
 
   useEffect(() => {
@@ -870,7 +888,7 @@ export function ShellPage() {
                   )}
                 </div>
                 <div className="mt-[30px] mb-3 text-[14px] text-[#85858A]">Routines</div>
-                {routines.map((routine) => (
+                {activeRoutines.map((routine) => (
                   <button
                     key={routine.id}
                     type="button"
@@ -880,6 +898,7 @@ export function ShellPage() {
                         prompt: routine.prompt,
                         schedule: presetFromCron(routine.cron),
                       });
+                      setEditingRoutine(routine);
                       setPanel("routine");
                     }}
                     className="flex w-full items-center gap-3 rounded-[11px] px-2.5 py-2.5 hover:bg-[#121214]"
@@ -894,12 +913,13 @@ export function ShellPage() {
                 <button
                   type="button"
                   onClick={async () => {
-                    const first = routines[0];
+                    const first = activeRoutines[0];
                     if (first) {
                       await rpc.routines.testRun({ routineId: first.id });
                       await refreshThread(active.id);
                     } else {
                       setRoutineDraft({ name: "", prompt: "", schedule: defaultCronPreset() });
+                      setEditingRoutine(null);
                       setPanel("routine");
                     }
                   }}
@@ -911,6 +931,7 @@ export function ShellPage() {
                   type="button"
                   onClick={() => {
                     setRoutineDraft({ name: "", prompt: "", schedule: defaultCronPreset() });
+                    setEditingRoutine(null);
                     setPanel("routine");
                   }}
                   className="mt-1 flex items-center gap-2.5 px-2.5 py-2.5 text-[14.5px] text-[#7A7A80]"
@@ -1000,25 +1021,59 @@ export function ShellPage() {
                     />
                   </Suspense>
                 </div>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    await rpc.routines.create({
-                      botId: active.id,
-                      name: routineDraft.name || "Routine",
-                      prompt: routineDraft.prompt || "Check in.",
-                      cron: cronFromPreset(routineDraft.schedule),
-                      timezone: "UTC",
-                      active: true,
-                      notify: true,
-                    });
-                    await refreshThread(active.id);
-                    setPanel("computer");
-                  }}
-                  className="mt-5 rounded-[11px] bg-[#F1F1EF] px-4 py-2 text-[#17171A]"
-                >
-                  Save
-                </button>
+                <div className="mt-5 flex items-center gap-3">
+                  <button
+                    type="button"
+                    disabled={savingRoutine}
+                    onClick={async () => {
+                      if (routineSavePending.current) return;
+                      const targetBotId = active.id;
+                      const targetRoutine = editingRoutine;
+                      if (targetRoutine && targetRoutine.botId !== targetBotId) return;
+                      routineSavePending.current = true;
+                      setSavingRoutine(true);
+                      try {
+                        if (targetRoutine) {
+                          await rpc.routines.update({
+                            routineId: targetRoutine.id,
+                            name: routineDraft.name || "Routine",
+                            prompt: routineDraft.prompt || "Check in.",
+                            cron: cronFromPreset(routineDraft.schedule),
+                          });
+                        } else {
+                          await rpc.routines.create({
+                            botId: targetBotId,
+                            name: routineDraft.name || "Routine",
+                            prompt: routineDraft.prompt || "Check in.",
+                            cron: cronFromPreset(routineDraft.schedule),
+                            timezone: "UTC",
+                            active: true,
+                            notify: true,
+                          });
+                        }
+                        if (activeBotId.current !== targetBotId) return;
+                        await refreshThread(targetBotId);
+                        if (activeBotId.current === targetBotId) setPanel("computer");
+                      } finally {
+                        routineSavePending.current = false;
+                        setSavingRoutine(false);
+                      }
+                    }}
+                    className="rounded-[11px] bg-[#F1F1EF] px-4 py-2 text-[#17171A] disabled:opacity-40"
+                  >
+                    {savingRoutine ? "Saving…" : "Save"}
+                  </button>
+                  {editingRoutine?.botId === active.id ? (
+                    <button
+                      type="button"
+                      disabled={savingRoutine}
+                      onClick={() => setDeleteRoutineTarget(editingRoutine)}
+                      className="rounded-[11px] px-4 py-2 text-[14px] text-[#FF5364]"
+                    >
+                      Delete routine
+                    </button>
+                  ) : null}
+                </div>
               </div>
             ) : null}
           </div>
@@ -1075,6 +1130,22 @@ export function ShellPage() {
               setDeleteTarget(null);
               setPanel(null);
               await refreshBots(true);
+            }}
+          />
+        ) : null}
+
+        {deleteRoutineTarget ? (
+          <DeleteRoutineDialog
+            routine={deleteRoutineTarget}
+            onCancel={() => setDeleteRoutineTarget(null)}
+            onConfirm={async () => {
+              const target = deleteRoutineTarget;
+              await rpc.routines.remove({ routineId: target.id });
+              setDeleteRoutineTarget(null);
+              setEditingRoutine((current) => (current?.id === target.id ? null : current));
+              if (activeBotId.current !== target.botId) return;
+              await refreshThread(target.botId);
+              if (activeBotId.current === target.botId) setPanel("computer");
             }}
           />
         ) : null}
@@ -1918,6 +1989,79 @@ function DeleteBotDialog({
               setError(null);
               void onConfirm(deleteMemories).catch((err: unknown) => {
                 setError(err instanceof Error ? err.message : "Could not delete bot");
+                setDeleting(false);
+              });
+            }}
+            className="rounded-[10px] bg-[#FF5364] px-3.5 py-2 text-[14px] font-medium text-white disabled:opacity-40"
+          >
+            {deleting ? "Deleting…" : "Delete"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DeleteRoutineDialog({
+  routine,
+  onCancel,
+  onConfirm,
+}: {
+  routine: Routine;
+  onCancel: () => void;
+  onConfirm: () => Promise<void>;
+}) {
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && !deleting) onCancel();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [deleting, onCancel]);
+
+  return (
+    <div
+      role="presentation"
+      className="absolute inset-0 z-50 grid place-items-center bg-[rgba(4,4,5,.76)] px-5"
+      onPointerDown={() => {
+        if (!deleting) onCancel();
+      }}
+    >
+      <div
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="delete-routine-title"
+        aria-describedby="delete-routine-description"
+        className="w-full max-w-[420px] rounded-[18px] border border-[#343438] bg-[#1A1A1D] p-5 shadow-[0_24px_70px_rgba(0,0,0,.65)]"
+        onPointerDown={(event) => event.stopPropagation()}
+      >
+        <h2 id="delete-routine-title" className="text-[17px] font-medium text-[#F1F1F2]">
+          Delete {routine.name}?
+        </h2>
+        <p id="delete-routine-description" className="mt-2 text-[14px] leading-6 text-[#9A9AA0]">
+          This cannot be undone.
+        </p>
+        {error ? <p className="mt-3 text-[13.5px] text-[#FF5364]">{error}</p> : null}
+        <div className="mt-5 flex justify-end gap-2.5">
+          <button
+            type="button"
+            disabled={deleting}
+            onClick={onCancel}
+            className="rounded-[10px] px-3.5 py-2 text-[14px] text-[#C9C9CE] hover:bg-[#29292D] disabled:opacity-40"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={deleting}
+            onClick={() => {
+              setDeleting(true);
+              setError(null);
+              void onConfirm().catch((err: unknown) => {
+                setError(err instanceof Error ? err.message : "Could not delete routine");
                 setDeleting(false);
               });
             }}
