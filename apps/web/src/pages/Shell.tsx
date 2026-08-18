@@ -863,13 +863,13 @@ export function ShellPage() {
                   <span className="text-[13.5px] text-[#85858A]">
                     {computer?.busyBotName
                       ? `${computer.busyBotName} is using it`
-                      : computer?.controlHolder === "user"
+                      : computer?.controlHolder === "user" && computer.controlBotId === active.id
                         ? "You have control"
                         : computer?.state === "suspended"
                           ? "Asleep"
                           : computerLabel(computer?.mode, active.name)}
                   </span>
-                  {computer?.controlHolder === "user" ? (
+                  {computer?.controlHolder === "user" && computer.controlBotId === active.id ? (
                     <Button
                       type="button"
                       variant="outline"
@@ -1176,14 +1176,14 @@ export function ShellPage() {
               <span className="truncate text-[15.5px] font-medium text-[#ECECEE]">
                 {computerLabel(computer?.mode, active.name)}
               </span>
-              {computer?.controlHolder === "user" ? (
+              {computer?.controlHolder === "user" && computer.controlBotId === active.id ? (
                 <span className="rounded-full bg-[rgba(48,162,75,.14)] px-[11px] py-1 text-[13px] text-[#4ECB71]">
                   You have control
                 </span>
               ) : null}
             </div>
             <div className="flex items-center gap-3">
-              {computer?.controlHolder === "user" ? (
+              {computer?.controlHolder === "user" && computer.controlBotId === active.id ? (
                 <Button
                   type="button"
                   variant="outline"
@@ -1225,7 +1225,12 @@ export function ShellPage() {
                 sandbox={screenIframeSandbox(embeddedScreenUrl)}
                 className="h-full w-full border-0 bg-black"
                 allow="clipboard-read; clipboard-write; fullscreen"
-                style={{ pointerEvents: computer?.controlHolder === "user" ? "auto" : "none" }}
+                style={{
+                  pointerEvents:
+                    computer?.controlHolder === "user" && computer.controlBotId === active.id
+                      ? "auto"
+                      : "none",
+                }}
               />
             ) : (
               <div className="grid h-full place-items-center text-sm text-[#6C6C70]">

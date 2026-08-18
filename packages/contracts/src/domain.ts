@@ -143,6 +143,7 @@ export const ComputerStatusSchema = z.object({
   kind: SandboxKind,
   state: z.enum(["stopped", "booting", "running", "suspended", "error"]),
   controlHolder: z.enum(["bot", "user", "none"]),
+  controlBotId: Id.nullable(),
   screenAvailable: z.boolean(),
   homeRevision: z.string().nullable(),
   busyBotName: z.string().nullable(),

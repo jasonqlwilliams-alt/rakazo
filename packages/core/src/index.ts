@@ -5,5 +5,6 @@ export * from "./message-pages.js";
 export * from "./model-oauth.js";
 export * from "./run-state.js";
 export * from "./sandbox-command.js";
+export * from "./screen-lease.js";
 export * from "./secrets-guard.js";
 export * from "./signup-policy.js";

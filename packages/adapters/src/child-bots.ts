@@ -194,6 +194,7 @@ type LifecycleBot = {
   workspaceId: string;
   name: string;
   archivedAt: Date | null;
+  computerId?: string | null;
 };
 
 export async function archiveSpawnedBot(
@@ -279,6 +280,7 @@ export async function archiveBot(
       where: { botId: bot.id },
       data: { active: false, nextRunAt: null },
     });
+    await tx.computerExecutionLease.deleteMany({ where: { botId: bot.id } });
     await tx.computer.updateMany({
       where: {
         OR: [{ controlBotId: bot.id }, { executionBotId: bot.id }],
@@ -300,6 +302,7 @@ export async function archiveBot(
     ...activeRuns.map((run) => deps.jobs.cancel(runJobKey(run.id))),
     ...activeRoutines.map((routine) => deps.jobs.cancel(routineJobKey(routine.id))),
   ]);
+  await releaseTeamComputerScreen(deps, bot, dedicated?.id, context);
   const currentDedicated = dedicated
     ? await deps.prisma.computer.findUnique({ where: { id: dedicated.id } })
     : null;
@@ -343,10 +346,12 @@ export async function destroyBot(
     ...activeRuns.map((run) => deps.jobs.cancel(runJobKey(run.id))),
     ...routines.map((routine) => deps.jobs.cancel(routineJobKey(routine.id))),
   ]);
+  await releaseTeamComputerScreen(deps, bot, dedicated?.id, context);
   if (dedicated?.providerRef) {
     await deps.sandbox.destroy(toComputerRef(dedicated), context).catch(() => undefined);
   }
   await deps.prisma.$transaction(async (tx) => {
+    await tx.computerExecutionLease.deleteMany({ where: { botId: bot.id } });
     await tx.computer.updateMany({
       where: {
         ...(dedicated ? { id: { not: dedicated.id } } : {}),
@@ -400,4 +405,16 @@ function releasedComputerLease() {
     executionBotId: null,
     executionLeaseExpiresAt: null,
   };
+}
+
+async function releaseTeamComputerScreen(
+  deps: BotLifecycleDeps,
+  bot: LifecycleBot,
+  dedicatedId: string | undefined,
+  context: AdapterContext,
+) {
+  if (!bot.computerId || bot.computerId === dedicatedId) return;
+  const computer = await deps.prisma.computer.findUnique({ where: { id: bot.computerId } });
+  if (!computer?.providerRef) return;
+  await deps.sandbox.releaseScreen?.(toComputerRef(computer), context).catch(() => undefined);
 }

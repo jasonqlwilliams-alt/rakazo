@@ -160,6 +160,29 @@ export function inferScript(
     ];
   }
   if (
+    lower.includes("observe your screen") ||
+    lower.includes("look at your screen") ||
+    lower.includes("use your screen")
+  ) {
+    const typed = /type\s+([A-Za-z0-9._-]+)/i.exec(prompt)?.[1] ?? "ready";
+    return [
+      {
+        assistant: "using my screen now.",
+        toolCalls: [
+          { name: "computer_observe", args: {} },
+          {
+            name: "computer_act",
+            args: {
+              actions: [{ kind: "type", text: typed }],
+              observe: true,
+            },
+          },
+        ],
+        complete: true,
+      },
+    ];
+  }
+  if (
     lower.includes("delete the bot named") ||
     lower.includes("delete the child bot") ||
     lower.includes("delete child")

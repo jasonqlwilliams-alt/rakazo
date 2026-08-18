@@ -1,4 +1,5 @@
 import type {
+  AdapterContext,
   AgentHomeStore,
   AgentModelOAuthCredential,
   AgentRuntime,
@@ -41,7 +42,9 @@ import {
   provisionComputer,
   releaseComputerExecutionLease,
   renewComputerExecutionLease,
+  screenLeaseIdForRun,
 } from "./computer-lifecycle.js";
+import { withComputerScreenAvailability } from "./computer-screens.js";
 import {
   displayBotWorkspacePath,
   resolveBotWorkspaceCwd,
@@ -241,6 +244,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
       let leaseValid = true;
       let lastLeaseCheckAt = 0;
       let retainComputerLease = false;
+      let screenRelease: { computer: ComputerRef; context: AdapterContext } | undefined;
       let runAbortController: AbortController | null = null;
       const heartbeat = setInterval(() => {
         void Promise.all([
@@ -292,6 +296,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
           userId: run.userId,
           botId: bot.id,
           runId,
+          screenLeaseId: screenLeaseIdForRun(computerLease, runId, fence),
           signal: runAbortController.signal,
           connectedProviders: connectedPlugins.map((row) => row.provider),
         };
@@ -326,6 +331,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
         const storedComputer = bot.computer;
         const computerMode = parseComputerMode(storedComputer.scope);
         const computer = await provisionComputer(deps, storedComputer.id, context, "bot");
+        screenRelease = { computer, context };
         scheduleComputerSleep(deps.jobs, storedComputer.id);
         const graphical =
           computer.kind !== "desktop" && deps.sandbox.describe().capabilities.graphical;
@@ -339,7 +345,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
           ),
         ];
         const computerInstruction = graphical
-          ? "You have a persistent computer. Use computer_observe and computer_act for its visible desktop, including browsers and installed applications. Use open_path and launch_app to open graphical files, URLs, and applications. Use the file tools and shell for precise filesystem and terminal work. Another user may interact with the same desktop while you run, so re-observe when it may have changed."
+          ? "You have a persistent computer. Use computer_observe and computer_act for its visible desktop, including browsers and installed applications. Use open_path and launch_app to open graphical files, URLs, and applications. Use the file tools and shell for precise filesystem and terminal work. On a Team Computer you have your own screen; other Team bots may run at the same time on theirs. Another user may interact with your screen while you run, so re-observe when it may have changed."
           : "You have a persistent sandbox filesystem and shell. This backend does not provide model-visible graphical control, so use the file tools and shell.";
         const workspaceInstruction =
           computerMode === "team"
@@ -386,26 +392,28 @@ export function createRunExecutor(deps: ExecutorDeps) {
             return result;
           };
           if (name === "computer_observe") {
-            return formatObservation(await deps.sandbox.observe(computer, context));
+            return computerScreenToolResult(async () =>
+              formatObservation(await deps.sandbox.observe(computer, context)),
+            );
           }
           if (name === "computer_act") {
-            const result = await deps.sandbox.act(
-              computer,
-              {
-                actions: parseComputerActions(args.actions),
-                observe: args.observe !== false,
-                settleMs: Number(args.settle_ms ?? 350),
-              },
-              context,
-            );
-            return finish(
-              result.observation
+            return computerScreenToolResult(async () => {
+              const result = await deps.sandbox.act(
+                computer,
+                {
+                  actions: parseComputerActions(args.actions),
+                  observe: args.observe !== false,
+                  settleMs: Number(args.settle_ms ?? 350),
+                },
+                context,
+              );
+              return result.observation
                 ? formatObservation(
                     result.observation,
                     `completed ${result.completed} computer action${result.completed === 1 ? "" : "s"}`,
                   )
-                : { ok: true, completed: result.completed },
-            );
+                : { ok: true, completed: result.completed };
+            }, finish);
           }
           if (name === "list_files") {
             const requestedPath = String(args.path ?? "");
@@ -489,50 +497,50 @@ export function createRunExecutor(deps: ExecutorDeps) {
           }
           if (name === "open_path") {
             const requestedPath = String(args.path ?? "");
-            const result = await deps.sandbox.act(
-              computer,
-              {
-                actions: [
-                  {
-                    kind: "open",
-                    path: /^https?:\/\//i.test(requestedPath)
-                      ? requestedPath
-                      : resolveBotWorkspacePath(computerMode, bot.id, requestedPath),
-                  },
-                ],
-                observe: true,
-                settleMs: 600,
-              },
-              context,
-            );
-            return finish(
-              result.observation
+            return computerScreenToolResult(async () => {
+              const result = await deps.sandbox.act(
+                computer,
+                {
+                  actions: [
+                    {
+                      kind: "open",
+                      path: /^https?:\/\//i.test(requestedPath)
+                        ? requestedPath
+                        : resolveBotWorkspacePath(computerMode, bot.id, requestedPath),
+                    },
+                  ],
+                  observe: true,
+                  settleMs: 600,
+                },
+                context,
+              );
+              return result.observation
                 ? formatObservation(result.observation, `opened ${requestedPath}`)
-                : { ok: true },
-            );
+                : { ok: true };
+            }, finish);
           }
           if (name === "launch_app") {
             const application = String(args.application ?? "");
-            const result = await deps.sandbox.act(
-              computer,
-              {
-                actions: [
-                  {
-                    kind: "launch",
-                    application,
-                    uri: args.uri ? String(args.uri) : undefined,
-                  },
-                ],
-                observe: true,
-                settleMs: 600,
-              },
-              context,
-            );
-            return finish(
-              result.observation
+            return computerScreenToolResult(async () => {
+              const result = await deps.sandbox.act(
+                computer,
+                {
+                  actions: [
+                    {
+                      kind: "launch",
+                      application,
+                      uri: args.uri ? String(args.uri) : undefined,
+                    },
+                  ],
+                  observe: true,
+                  settleMs: 600,
+                },
+                context,
+              );
+              return result.observation
                 ? formatObservation(result.observation, `launched ${application}`)
-                : { ok: true },
-            );
+                : { ok: true };
+            }, finish);
           }
           if (name === "remember" || name === "replace_memory_document") {
             const resolvedPath = resolveMemoryPath(
@@ -1057,6 +1065,11 @@ export function createRunExecutor(deps: ExecutorDeps) {
       } finally {
         clearInterval(heartbeat);
         if (!retainComputerLease) {
+          if (screenRelease) {
+            await deps.sandbox
+              .releaseScreen?.(screenRelease.computer, screenRelease.context)
+              .catch(() => undefined);
+          }
           await releaseComputerExecutionLease(deps.prisma, computerLease).catch(() => undefined);
         }
         await deps.prisma.attempt
@@ -1068,6 +1081,14 @@ export function createRunExecutor(deps: ExecutorDeps) {
       }
     },
   };
+}
+
+async function computerScreenToolResult(
+  work: () => Promise<unknown>,
+  finish?: (result: unknown) => Promise<unknown>,
+) {
+  const result = await withComputerScreenAvailability(work);
+  return finish ? finish(result) : result;
 }
 
 async function notifyRun(
