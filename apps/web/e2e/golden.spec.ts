@@ -89,7 +89,27 @@ test("takeover, routine, plugins, and export are reachable", async ({ page }, te
 
   await page.getByText("Plugins").click();
   await expect(page.getByPlaceholder("Search apps")).toBeVisible();
+  await expect(page.getByText("Gmail", { exact: true })).toBeVisible();
+  await expect(page.getByText("Slack", { exact: true })).toBeVisible();
+  await expect(page.getByText("GitHub", { exact: true })).toBeVisible();
+  await expect(page.getByText("Notion", { exact: true })).toBeVisible();
   await captureScreenshot(page, testInfo, "11-plugins-catalog");
+
+  const gmailRow = page.getByText("Gmail", { exact: true }).locator("..").locator("..");
+  await gmailRow.getByRole("button", { name: "Connect", exact: true }).click();
+  await expect(gmailRow.getByRole("button", { name: "Revoke", exact: true })).toBeVisible();
+  await page.getByRole("tab", { name: "Connected", exact: true }).click();
+  await expect(page.getByText("Slack", { exact: true })).toBeHidden();
+  await captureScreenshot(page, testInfo, "11a-connected-plugins");
+
+  await gmailRow.getByRole("button", { name: "Revoke", exact: true }).click();
+  await expect(page.getByText("No connected apps yet.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Gmail", { exact: true })).toBeHidden();
+  await captureScreenshot(page, testInfo, "11b-connected-plugins-empty");
+
+  await page.getByRole("tab", { name: "All", exact: true }).click();
+  await expect(page.getByText("Gmail", { exact: true })).toBeVisible();
+  await expect(gmailRow.getByRole("button", { name: "Connect", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Close plugins" }).click();
 
   await page.getByText("Chief").first().click();
