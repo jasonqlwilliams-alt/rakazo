@@ -1176,7 +1176,9 @@ async function notifyRun(
       botId: run.botId,
       signal: new AbortController().signal,
     })
-    .catch(() => undefined);
+    .catch((error) => {
+      console.error("run notification", error);
+    });
 }
 
 async function renewRunLease(

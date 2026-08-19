@@ -237,6 +237,7 @@ export async function createApp(
       composio: Boolean(stack.composio),
       jobs: jobKind,
       realtime: realtime.describe().id,
+      revision: env.gitSha ?? null,
     }),
   );
 
