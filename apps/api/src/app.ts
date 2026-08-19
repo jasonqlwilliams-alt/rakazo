@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { RPCHandler } from "@orpc/server/fetch";
 import type {
@@ -26,6 +27,9 @@ import {
   isPipedreamEnabled,
   LocalAgentHomeStore,
   LocalArtifactStore,
+  MAX_INBOX_IMAGE_BYTES,
+  MAX_INBOX_IMAGE_COUNT,
+  MAX_INBOX_IMAGE_TOTAL_BYTES,
   McpConnector,
   McpOAuthBroker,
   PiAgentRuntime,
@@ -36,10 +40,18 @@ import {
   pushTokenPath,
   type RemoteConnectorDependencies,
   ScriptedAgentRuntime,
+  storeBotInboxImages,
+  toComputerRef,
   WorkspaceMemoryProviderResolver,
 } from "@rakazo/adapters";
 import { blockedAuthPaths, createAuth } from "@rakazo/auth";
-import { createDb, createThreadEvents, type PrismaClient, requireMembership } from "@rakazo/db";
+import {
+  createDb,
+  createThreadEvents,
+  type PrismaClient,
+  parseComputerMode,
+  requireMembership,
+} from "@rakazo/db";
 import { MarkdownMemoryStore } from "@rakazo/memory";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -269,6 +281,76 @@ export async function createApp(
     }
     return auth.handler(c.req.raw);
   });
+  app.post("/api/desktop-files", async (c) => {
+    const session = await auth.api.getSession({ headers: sessionHeaders(c.req.raw) });
+    const actor = session?.user
+      ? await requireMembership(prisma, session.user.id).catch(() => null)
+      : null;
+    if (!actor) return c.json({ error: "Sign in to attach photos" }, 401);
+
+    try {
+      const form = await c.req.raw.formData();
+      const botId = String(form.get("botId") ?? "");
+      const bot = await prisma.bot.findFirst({
+        where: { id: botId, workspaceId: actor.workspaceId, archivedAt: null },
+        include: { computer: true },
+      });
+      if (!bot) return c.json({ error: "Bot not found" }, 404);
+      if (!bot.computer?.providerRef) {
+        return c.json({ error: "Open the bot computer before attaching photos" }, 409);
+      }
+
+      const selected = form.getAll("files").filter(isUploadedFile);
+      if (selected.length === 0) return c.json({ error: "Choose at least one image" }, 400);
+      if (selected.length > MAX_INBOX_IMAGE_COUNT) {
+        return c.json(
+          { error: `Choose no more than ${MAX_INBOX_IMAGE_COUNT} images at once` },
+          400,
+        );
+      }
+      let total = 0;
+      for (const file of selected) {
+        if (file.size > MAX_INBOX_IMAGE_BYTES) {
+          return c.json({ error: `${file.name || "Photo"} is larger than 25 MB` }, 413);
+        }
+        total += file.size;
+      }
+      if (total > MAX_INBOX_IMAGE_TOTAL_BYTES) {
+        return c.json({ error: "The selected images are larger than 100 MB together" }, 413);
+      }
+
+      const context = {
+        operationId: `desktop-files:${randomUUID()}`,
+        traceId: `desktop-files:${bot.id}`,
+        workspaceId: actor.workspaceId,
+        userId: actor.userId,
+        botId: bot.id,
+        signal: c.req.raw.signal,
+      };
+      const files = await storeBotInboxImages(
+        { home, sandbox },
+        {
+          botId: bot.id,
+          homeKey: bot.computer.homeKey,
+          mode: parseComputerMode(bot.computer.scope),
+          computer: toComputerRef(bot.computer),
+          files: await Promise.all(
+            selected.map(async (file) => ({
+              name: file.name,
+              bytes: new Uint8Array(await file.arrayBuffer()),
+            })),
+          ),
+        },
+        context,
+      );
+      return c.json({ files });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not attach photos";
+      if (/image|choose|larger than/i.test(message)) return c.json({ error: message }, 400);
+      console.error("desktop photo copy", error);
+      return c.json({ error: "Could not copy photos into the bot home" }, 500);
+    }
+  });
   app.use("/rpc/*", async (c, next) => {
     const session = await auth.api.getSession({ headers: sessionHeaders(c.req.raw) });
     const actor = session?.user
@@ -319,6 +401,14 @@ export async function createApp(
       await created.pool?.end().catch(() => undefined);
     },
   };
+}
+
+function isUploadedFile(value: unknown): value is File {
+  return (
+    typeof value !== "string" &&
+    Boolean(value) &&
+    typeof (value as { arrayBuffer?: unknown }).arrayBuffer === "function"
+  );
 }
 
 function isTrustedOrigin(origin: string, env: AppEnv) {

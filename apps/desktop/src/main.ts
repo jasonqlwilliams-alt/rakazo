@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { DesktopReachability, DesktopSetup } from "@rakazo/contracts";
-import { app, BrowserWindow, ipcMain, Menu, net, type Session, session, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, type Session, session, shell } from "electron";
 import {
   DesktopUpdateController,
   type ElectronAutoUpdater,
@@ -28,6 +28,7 @@ import {
   sessionPartitionForServerUrl,
 } from "./setup-config.js";
 import { clearSetup, readSetup, writeSetup } from "./setup-store.js";
+import { desktopCookieHeader, imageMimeType, parsePickedFiles } from "./file-picker.js";
 import { browserWindowOptions, setupWindowOptions, warmWindowTtlMs } from "./window-options.js";
 
 const PERFORMANCE_USER_DATA = process.env.RAKAZO_PERFORMANCE_USER_DATA;
@@ -901,6 +902,85 @@ app.whenReady().then(async () => {
     // is no longer true for any other reason.
     if (state.phase !== "ready") quitting = false;
     return state;
+  });
+  ipcMain.handle("desktop.file.pick", async (event, input: unknown) => {
+    const serverUrl = currentTargetUrl;
+    if (!fromMainWindow(event) || !serverUrl) {
+      throw new Error("File picking is only available from the active Rakazo window");
+    }
+    const botId =
+      input && typeof input === "object" && "botId" in input
+        ? String((input as { botId: unknown }).botId)
+        : "";
+    if (!botId) throw new Error("Choose an active bot before attaching photos");
+    const win = windowFrom(event);
+    const options = {
+      title: "Add photos to Rakazo",
+      properties: ["openFile", "multiSelections"] as Array<"openFile" | "multiSelections">,
+      filters: [
+        {
+          name: "Images",
+          extensions: [
+            "png",
+            "jpg",
+            "jpeg",
+            "gif",
+            "webp",
+            "bmp",
+            "tif",
+            "tiff",
+            "heic",
+            "heif",
+            "avif",
+          ],
+        },
+      ],
+    };
+    const selection = win
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options);
+    if (selection.canceled || selection.filePaths.length === 0) return [];
+    if (selection.filePaths.length > 12) throw new Error("Choose no more than 12 images at once");
+
+    const form = new FormData();
+    form.set("botId", botId);
+    let total = 0;
+    for (const filePath of selection.filePaths) {
+      const mimeType = imageMimeType(filePath);
+      if (!mimeType) throw new Error(`${path.basename(filePath)} is not a supported image`);
+      const info = await stat(filePath);
+      if (info.size > 25 * 1024 * 1024) {
+        throw new Error(`${path.basename(filePath)} is larger than 25 MB`);
+      }
+      total += info.size;
+      if (total > 100 * 1024 * 1024) {
+        throw new Error("The selected images are larger than 100 MB together");
+      }
+      form.append(
+        "files",
+        new Blob([new Uint8Array(await readFile(filePath))], { type: mimeType }),
+        path.basename(filePath),
+      );
+    }
+
+    const cookies = await event.sender.session.cookies.get({ url: serverUrl });
+    const response = await fetch(new URL("/api/desktop-files", serverUrl), {
+      method: "POST",
+      headers: {
+        cookie: desktopCookieHeader(cookies),
+        origin: new URL(serverUrl).origin,
+      },
+      body: form,
+    });
+    const payload: unknown = await response.json().catch(() => null);
+    if (!response.ok) {
+      const message =
+        payload && typeof payload === "object" && "error" in payload
+          ? String((payload as { error: unknown }).error)
+          : "Could not attach photos";
+      throw new Error(message);
+    }
+    return parsePickedFiles(payload);
   });
   ipcMain.handle("desktop.setup.state", (event) => {
     if (!fromSetupWindow(event)) return null;
