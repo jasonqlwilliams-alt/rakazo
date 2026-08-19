@@ -9,9 +9,16 @@ import type { AdapterContext, MemorySnapshot, MemoryStore } from "@rakazo/adapte
  * model is memory the bot does not have, so the default is the size of the memory a
  * seat actually carries, not a round number.
  *
- * Set `AGENT_MEMORY_MAX_BYTES` to raise or lower it per deployment without a code change.
+ * The seats measured on 2026-08-19 carry 19,817 to 247,912 bytes each, so 128 KiB still
+ * truncated `profile.md` on the two largest. 256 KiB holds the largest of them whole,
+ * which is the point: a seat's profile and log rows have to arrive intact, not as a stub.
+ * Read against a run's other input this stays modest — the 200-message history window is
+ * the larger half of the prompt for most seats.
+ *
+ * A deployment on a small-context model, or one whose seats grow past this, should set
+ * `AGENT_MEMORY_MAX_BYTES` rather than carry a silently truncated memory.
  */
-const DEFAULT_MAX_AGENT_MEMORY_BYTES = 128 * 1024;
+const DEFAULT_MAX_AGENT_MEMORY_BYTES = 256 * 1024;
 
 /** Reads the window at call time so a deployment can retune it without a rebuild. */
 export function agentMemoryMaxBytes(env: NodeJS.ProcessEnv = process.env): number {
