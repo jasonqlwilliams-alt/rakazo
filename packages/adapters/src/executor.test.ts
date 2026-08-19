@@ -1,10 +1,22 @@
 import type { ConnectorTool } from "@rakazo/adapter-kit";
 import type { MessageBlock } from "@rakazo/contracts";
 import { describe, expect, it } from "vitest";
-import { blocksToText, MAX_MODEL_TOOL_COUNT, selectModelTools } from "./executor.js";
+import {
+  blocksToText,
+  MAX_MODEL_TOOL_BYTES,
+  MAX_MODEL_TOOL_COUNT,
+  modelToolMaxBytes,
+  selectModelTools,
+  toolSchemaBytes,
+} from "./executor.js";
 
 function tool(name: string, description = name): ConnectorTool {
   return { name, description, inputSchema: { type: "object", properties: {} } };
+}
+
+/** A tool whose schema costs roughly `bytes`, the way a real connector's biggest ones do. */
+function fatTool(name: string, bytes: number): ConnectorTool {
+  return { name, description: "x".repeat(Math.max(0, bytes - name.length)), inputSchema: {} };
 }
 
 const note = {
@@ -96,6 +108,49 @@ describe("model tool selection", () => {
     expect(names).toContain("SLACK_SEND_MESSAGE");
     expect(names).toContain("GMAIL_SEND_EMAIL");
     expect(names).not.toContain("SLACK_ARCHIVE_CHANNEL");
+  });
+
+  it("caps the tool schemas by bytes, not only by count", () => {
+    // Twelve 40 KB tools are only twelve tools, so the count cap never fires -- but they
+    // are 480 KB of prompt. The live workspace's largest single schema is 18 KB.
+    const discovered = ["SLACK", "GMAIL", "SUPABASE"].flatMap((group) =>
+      Array.from({ length: 4 }, (_, index) => fatTool(`${group}_FAT_${index}`, 40_000)),
+    );
+
+    const selection = selectModelTools([tool("shell")], discovered, "status", 300, 100_000);
+    const bytes = selection.tools.reduce((total, entry) => total + toolSchemaBytes(entry), 0);
+
+    expect(selection.curated).toBe(true);
+    expect(bytes).toBeLessThanOrEqual(100_000);
+    expect(selection.tools.length).toBeLessThan(discovered.length + 1);
+    expect(selection.omittedCount).toBeGreaterThan(0);
+    // The built-in still has to be there.
+    expect(selection.tools.map((entry) => entry.name)).toContain("shell");
+  });
+
+  it("steps over one oversized schema to admit the smaller tools behind it", () => {
+    const selection = selectModelTools(
+      [tool("shell")],
+      [fatTool("SLACK_HUGE", 90_000), tool("SLACK_SEND_MESSAGE"), tool("GMAIL_SEND_EMAIL")],
+      "status",
+      300,
+      20_000,
+    );
+    const names = selection.tools.map((entry) => entry.name);
+
+    expect(names).not.toContain("SLACK_HUGE");
+    expect(names).toContain("SLACK_SEND_MESSAGE");
+    expect(names).toContain("GMAIL_SEND_EMAIL");
+  });
+
+  it("takes the tool-schema budget from the environment when one is set", () => {
+    expect(modelToolMaxBytes({})).toBe(MAX_MODEL_TOOL_BYTES);
+    expect(modelToolMaxBytes({ AGENT_MODEL_TOOL_MAX_BYTES: "65536" })).toBe(65_536);
+    expect(modelToolMaxBytes({ AGENT_MODEL_TOOL_MAX_BYTES: "" })).toBe(MAX_MODEL_TOOL_BYTES);
+    expect(modelToolMaxBytes({ AGENT_MODEL_TOOL_MAX_BYTES: "nonsense" })).toBe(
+      MAX_MODEL_TOOL_BYTES,
+    );
+    expect(modelToolMaxBytes({ AGENT_MODEL_TOOL_MAX_BYTES: "-1" })).toBe(MAX_MODEL_TOOL_BYTES);
   });
 
   it("uses a provider-safe default ceiling", () => {

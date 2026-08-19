@@ -73,6 +73,39 @@ const READ_ONLY_AGENT_TOOLS = new Set([
 const MAX_MODEL_FILE_BYTES = 250_000;
 const MAX_AGENT_HISTORY_MESSAGES = 200;
 export const MAX_MODEL_TOOL_COUNT = 300;
+
+/**
+ * How many bytes of tool schema are allowed into one run's prompt.
+ *
+ * The count cap alone does not bound the prompt. Measured against the live workspace the
+ * discovered tools ranged from 174 to 18,206 bytes each, a hundredfold spread, so 300
+ * tools is anywhere between 52 KB and 5 MB depending on which 300 they are. The whole
+ * uncurated set was 1,636,412 bytes -- larger than that seat's memory and history put
+ * together, and the dominant cost of every run.
+ *
+ * Bounding the bytes is what actually protects the context window; the count cap stays
+ * because some providers limit the number of tools regardless of their size.
+ *
+ * Set `AGENT_MODEL_TOOL_MAX_BYTES` to retune it per deployment without a code change.
+ */
+export const MAX_MODEL_TOOL_BYTES = 384 * 1024;
+
+/** Reads the tool-schema budget at call time so a deployment can retune it without a rebuild. */
+export function modelToolMaxBytes(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.AGENT_MODEL_TOOL_MAX_BYTES;
+  if (raw === undefined || raw.trim() === "") return MAX_MODEL_TOOL_BYTES;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return MAX_MODEL_TOOL_BYTES;
+  return Math.floor(parsed);
+}
+
+/** What one tool costs the prompt: the text the provider is sent for it. */
+export function toolSchemaBytes(tool: ConnectorTool): number {
+  return Buffer.byteLength(
+    `${tool.name}${tool.description}${JSON.stringify(tool.inputSchema ?? {})}`,
+    "utf8",
+  );
+}
 const GRAPHICAL_AGENT_TOOLS = new Set([
   "computer_observe",
   "computer_act",
@@ -95,6 +128,7 @@ export function selectModelTools(
   discovered: ConnectorTool[],
   prompt: string,
   maxTools = MAX_MODEL_TOOL_COUNT,
+  maxBytes = modelToolMaxBytes(),
 ): ModelToolSelection {
   if (!Number.isInteger(maxTools) || maxTools < builtins.length) {
     throw new Error(`model tool limit ${maxTools} is smaller than ${builtins.length} built-ins`);
@@ -107,7 +141,8 @@ export function selectModelTools(
     return true;
   });
   const all = [...builtins, ...uniqueDiscovered];
-  if (all.length <= maxTools) {
+  const allBytes = all.reduce((total, tool) => total + toolSchemaBytes(tool), 0);
+  if (all.length <= maxTools && allBytes <= maxBytes) {
     return { tools: all, curated: false, omittedCount: 0 };
   }
 
@@ -143,17 +178,30 @@ export function selectModelTools(
     .sort((a, b) => b.score - a.score || a.firstIndex - b.firstIndex);
   const selected: ConnectorTool[] = [];
   const remaining = maxTools - builtins.length - alwaysKeep.length;
+  // The tools that have to be there are charged against the budget first, so what is left
+  // is what the discovered tools may actually spend.
+  const required = [...builtins, ...alwaysKeep].reduce(
+    (total, tool) => total + toolSchemaBytes(tool),
+    0,
+  );
+  let spendable = maxBytes - required;
 
   // Round-robin prevents a large toolkit (for example Slack) from crowding out every
   // direct tool from smaller connected toolkits. Ranking each group keeps its most
   // prompt-relevant tools first.
+  //
+  // A tool too big for what is left is stepped over rather than ending the pass: one
+  // 18 KB schema must not shut the door on the small tools ranked behind it.
   for (let offset = 0; selected.length < remaining; offset += 1) {
     let added = false;
     for (const group of rankedGroups) {
       const entry = group.entries[offset];
       if (!entry) continue;
-      selected.push(entry.tool);
       added = true;
+      const cost = toolSchemaBytes(entry.tool);
+      if (cost > spendable) continue;
+      selected.push(entry.tool);
+      spendable -= cost;
       if (selected.length === remaining) break;
     }
     if (!added) break;
