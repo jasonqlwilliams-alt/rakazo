@@ -9,6 +9,8 @@ import type {
   SearchHit,
   ThreadMessage,
   ThreadSnapshot,
+  VoiceInfo,
+  VoiceStatus,
 } from "@rakazo/contracts";
 import {
   ATTACHMENT_ALLOWED_MIME_TYPES,
@@ -24,6 +26,7 @@ import {
   inferAttachmentMimeType,
   isActive,
   presetFromCron,
+  speechFromBlocks,
 } from "@rakazo/core";
 import { BotAvatar, Button } from "@rakazo/ui-web";
 import {
@@ -45,6 +48,7 @@ import { decodeArtifactBase64, openArtifact } from "../lib/artifact-open";
 import { authClient } from "../lib/auth";
 import { botCreateInput, botSettingsPatch } from "../lib/bot-fields";
 import { takeInitialBootstrap } from "../lib/bootstrap";
+import { dictation } from "../lib/dictation";
 import { revokePendingAttachmentPreviews } from "../lib/pending-attachments";
 import { markAfterPaint, markOnce } from "../lib/performance";
 import { rpc } from "../lib/rpc";
@@ -56,6 +60,7 @@ import {
   reduceComputerStatus,
   reduceThreadSnapshot,
 } from "../lib/thread-events";
+import { speaker } from "../lib/tts";
 import type { ContextMenuPosition } from "./BotContextMenu";
 import { HostComputerPrompt } from "./HostComputerPrompt";
 import { WindowChrome } from "./WindowChrome";
@@ -73,6 +78,10 @@ const PluginsOverlay = lazy(() =>
 const RoutineSchedule = lazy(() =>
   import("./RoutineSchedule").then((module) => ({ default: module.RoutineSchedule })),
 );
+const VoiceSettingsOverlay = lazy(() =>
+  import("./VoiceSettingsOverlay").then((module) => ({ default: module.VoiceSettingsOverlay })),
+);
+const CallView = lazy(() => import("./CallView").then((module) => ({ default: module.CallView })));
 
 type Panel = "computer" | "settings" | "routine" | "create" | null;
 
@@ -108,6 +117,12 @@ export function ShellPage() {
   const [computer, setComputer] = useState<ComputerStatus | null>(null);
   const [pluginsOpen, setPluginsOpen] = useState(false);
   const [modelsOpen, setModelsOpen] = useState(false);
+  const [voiceOpen, setVoiceOpen] = useState(false);
+  const [callOpen, setCallOpen] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState<VoiceStatus | null>(null);
+  const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
+  const [dictating, setDictating] = useState(false);
+  const [dictationError, setDictationError] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [botMenu, setBotMenu] = useState<{
     botId: string;
@@ -153,6 +168,8 @@ export function ShellPage() {
   const manuallyUnread = useRef(new Set<string>());
   const computerVisible = useRef(false);
   computerVisible.current = panel === "computer" || computerOpen;
+  const autoSpoken = useRef<string | null>(null);
+  const autoSpokenBotId = useRef<string | null>(null);
 
   const active = bots.find((b) => b.id === botId) ?? bots[0];
   const activePendingAttachments = useMemo(
@@ -359,6 +376,52 @@ export function ShellPage() {
       document.removeEventListener("visibilitychange", refreshVisibleBots);
     };
   }, []);
+
+  useEffect(() => {
+    void rpc.voice
+      .status()
+      .then(setVoiceStatus)
+      .catch(() => undefined);
+    const unsubSpeech = speaker.subscribe((state) => {
+      setSpeakingMessageId(state.status === "idle" ? null : (state.messageId ?? null));
+    });
+    const unsubDictation = dictation.subscribe((state) => {
+      setDictating(state.status === "listening" || state.status === "transcribing");
+      if (state.error) setDictationError(state.error);
+      else if (state.status === "listening") setDictationError(null);
+    });
+    return () => {
+      unsubSpeech();
+      unsubDictation();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!active || !snapshot || snapshot.botId !== active.id) return;
+    const lastBot = [...snapshot.messages].reverse().find((message) => message.role === "bot");
+    if (autoSpokenBotId.current !== active.id) {
+      autoSpokenBotId.current = active.id;
+      autoSpoken.current = lastBot?.id ?? null;
+      return;
+    }
+    if (callOpen || !active.autoSpeak) {
+      autoSpoken.current = lastBot?.id ?? null;
+      return;
+    }
+    if (snapshot.run && ["running", "queued", "leased"].includes(snapshot.run.status)) return;
+    if (!lastBot || lastBot.id === autoSpoken.current) return;
+    const text = speechFromBlocks(lastBot.blocks);
+    if (!text) return;
+    autoSpoken.current = lastBot.id;
+    void speaker.speak(text, { botId: active.id, messageId: lastBot.id });
+  }, [
+    snapshot?.messages,
+    snapshot?.run?.status,
+    snapshot?.botId,
+    active?.autoSpeak,
+    active?.id,
+    callOpen,
+  ]);
 
   useEffect(() => {
     if (!active) return;
@@ -680,6 +743,12 @@ export function ShellPage() {
     },
     [pendingAttachments, sending],
   );
+  const followUpMessage = useCallback(async (text: string) => {
+    const id = activeBotId.current;
+    if (!id) return;
+    await rpc.threads.followUp({ botId: id, text });
+    await refreshThreadRef.current(id);
+  }, []);
   const stopRun = useCallback(async () => {
     const id = activeBotId.current;
     if (!id) return;
@@ -967,6 +1036,17 @@ export function ShellPage() {
               </button>
               <button
                 type="button"
+                onClick={() => {
+                  setMenuOpen(false);
+                  setVoiceOpen(true);
+                }}
+                className="flex w-full items-center gap-3 rounded-[11px] px-3 py-2.5 hover:bg-[#232327]"
+              >
+                <span className="text-[#9A9AA0]">♫</span>
+                <span className="flex-1 text-left text-[14.5px] text-[#ECECEE]">Voice</span>
+              </button>
+              <button
+                type="button"
                 className="flex w-full items-center gap-3 rounded-[11px] px-3 py-2.5 hover:bg-[#232327]"
                 onClick={async () => {
                   setUsage(await rpc.usage.summary());
@@ -1018,25 +1098,54 @@ export function ShellPage() {
               </span>
             </span>
           </button>
-          <button
-            type="button"
-            title="Agent computer"
-            onClick={() => setPanel((p) => (p === "computer" ? null : "computer"))}
-            className="grid h-[30px] w-[34px] place-items-center rounded-[9px] hover:bg-[#1B1B1E]"
-            style={{ background: panel ? "#1B1B1E" : "transparent" }}
-          >
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="#A8A8AD"
-              strokeWidth="1.6"
+          <div className="flex items-center gap-1">
+            {active ? (
+              <button
+                type="button"
+                title={voiceStatus?.ready ? "Call" : "Set up voice to call"}
+                aria-label="Call"
+                onClick={() => {
+                  if (!voiceStatus?.ready) {
+                    setVoiceOpen(true);
+                    return;
+                  }
+                  setCallOpen(true);
+                }}
+                className="grid h-[30px] w-[34px] place-items-center rounded-[9px] hover:bg-[#1B1B1E]"
+                style={{ background: callOpen ? "#1B1B1E" : "transparent" }}
+              >
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="#A8A8AD"
+                  strokeWidth="1.6"
+                >
+                  <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.79 19.79 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.35 1.9.66 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.31 1.85.53 2.81.66A2 2 0 0 1 22 16.92z" />
+                </svg>
+              </button>
+            ) : null}
+            <button
+              type="button"
+              title="Agent computer"
+              onClick={() => setPanel((p) => (p === "computer" ? null : "computer"))}
+              className="grid h-[30px] w-[34px] place-items-center rounded-[9px] hover:bg-[#1B1B1E]"
+              style={{ background: panel ? "#1B1B1E" : "transparent" }}
             >
-              <rect x="2" y="4" width="20" height="13" rx="2" />
-              <path d="M8 21h8M12 17v4" />
-            </svg>
-          </button>
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="#A8A8AD"
+                strokeWidth="1.6"
+              >
+                <rect x="2" y="4" width="20" height="13" rx="2" />
+                <path d="M8 21h8M12 17v4" />
+              </svg>
+            </button>
+          </div>
         </div>
         <Transcript
           scrollRef={messageScroll}
@@ -1051,6 +1160,17 @@ export function ShellPage() {
           onLoadOlder={loadOlder}
           onOpenBot={openBot}
           onAnswer={answerMessage}
+          voiceReady={Boolean(voiceStatus?.ready)}
+          speakingMessageId={speakingMessageId}
+          onSpeak={(message) => {
+            if (speakingMessageId === message.id) {
+              speaker.stop();
+              return;
+            }
+            const text = speechFromBlocks(message.blocks);
+            if (text && active)
+              void speaker.speak(text, { botId: active.id, messageId: message.id });
+          }}
         />
         <Composer
           activeName={active?.name}
@@ -1058,12 +1178,23 @@ export function ShellPage() {
           pendingAttachments={activePendingAttachments}
           attachmentNotice={attachmentNotice}
           sendError={sendError}
+          dictationError={dictationError}
           sending={sending}
           fileInputRef={fileInputRef}
           onAttachmentPick={onAttachmentPick}
           onRemoveAttachment={removeAttachment}
           onSend={sendMessage}
           onStop={stopRun}
+          dictating={dictating}
+          transcribe={Boolean(voiceStatus?.transcribe)}
+          onDictateStart={(onFinal) => {
+            void dictation.listen({
+              mode: "hold",
+              transcribe: Boolean(voiceStatus?.transcribe),
+              onFinal,
+            });
+          }}
+          onDictateStop={() => dictation.submitHold()}
         />
       </main>
 
@@ -1455,6 +1586,29 @@ export function ShellPage() {
 
       <Suspense fallback={null}>
         {modelsOpen ? <ModelSettingsOverlay onClose={() => setModelsOpen(false)} /> : null}
+        {voiceOpen ? (
+          <VoiceSettingsOverlay
+            onClose={() => {
+              setVoiceOpen(false);
+              void rpc.voice
+                .status()
+                .then(setVoiceStatus)
+                .catch(() => undefined);
+            }}
+          />
+        ) : null}
+        {callOpen && active ? (
+          <CallView
+            botId={active.id}
+            botName={active.name}
+            transcribe={Boolean(voiceStatus?.transcribe)}
+            snapshot={snapshot}
+            onSend={sendMessage}
+            onFollowUp={followUpMessage}
+            onAnswer={answerMessage}
+            onClose={() => setCallOpen(false)}
+          />
+        ) : null}
       </Suspense>
 
       {booting ? (
@@ -1555,6 +1709,9 @@ const Transcript = memo(function Transcript({
   onLoadOlder,
   onOpenBot,
   onAnswer,
+  voiceReady,
+  speakingMessageId,
+  onSpeak,
 }: {
   scrollRef: RefObject<HTMLDivElement | null>;
   botId: string;
@@ -1566,6 +1723,9 @@ const Transcript = memo(function Transcript({
   onLoadOlder: () => void | Promise<void>;
   onOpenBot: (botId: string) => void;
   onAnswer: (message: ThreadMessage, text: string) => Promise<void>;
+  voiceReady: boolean;
+  speakingMessageId: string | null;
+  onSpeak: (message: ThreadMessage) => void;
 }) {
   return (
     <div
@@ -1591,6 +1751,9 @@ const Transcript = memo(function Transcript({
             canAnswer={message.id === answerableAskMessageId}
             onOpenBot={onOpenBot}
             onAnswer={onAnswer}
+            voiceReady={voiceReady}
+            speaking={speakingMessageId === message.id}
+            onSpeak={() => onSpeak(message)}
           />
         </div>
       ))}
@@ -1614,24 +1777,34 @@ const Composer = memo(function Composer({
   pendingAttachments,
   attachmentNotice,
   sendError,
+  dictationError,
   sending,
   fileInputRef,
   onAttachmentPick,
   onRemoveAttachment,
   onSend,
   onStop,
+  dictating,
+  transcribe,
+  onDictateStart,
+  onDictateStop,
 }: {
   activeName?: string;
   running: boolean;
   pendingAttachments: PendingAttachment[];
   attachmentNotice: string | null;
   sendError: string | null;
+  dictationError: string | null;
   sending: boolean;
   fileInputRef: RefObject<HTMLInputElement | null>;
   onAttachmentPick: (files: FileList | null) => void | Promise<void>;
   onRemoveAttachment: (attachment: PendingAttachment) => void;
   onSend: (text: string) => Promise<void>;
   onStop: () => Promise<void>;
+  dictating: boolean;
+  transcribe: boolean;
+  onDictateStart: (onFinal: (text: string) => void) => void;
+  onDictateStop: () => void;
 }) {
   const [draft, setDraft] = useState("");
   const canSend = draft.trim().length > 0 || pendingAttachments.length > 0;
@@ -1645,9 +1818,9 @@ const Composer = memo(function Composer({
 
   return (
     <div className="px-6 pb-6 pt-3">
-      {sendError ? (
+      {sendError || dictationError ? (
         <div className="mb-3 rounded-[14px] border border-[#5A2A2A] bg-[#2A1717] px-4 py-2 text-[13px] text-[#F1A8A8]">
-          {sendError}
+          {sendError ?? dictationError}
         </div>
       ) : null}
       {attachmentNotice ? (
@@ -1700,6 +1873,31 @@ const Composer = memo(function Composer({
           className="grid h-[34px] w-[34px] shrink-0 place-items-center rounded-full border border-[#26262A] text-[18px] text-[#9A9AA0]"
         >
           +
+        </button>
+        <button
+          type="button"
+          aria-label={dictating ? "Stop dictation" : "Dictate"}
+          onMouseDown={(event) => {
+            event.preventDefault();
+            onDictateStart((text) => setDraft((current) => `${current} ${text}`.trim()));
+          }}
+          onMouseUp={onDictateStop}
+          onMouseLeave={() => {
+            if (dictating) onDictateStop();
+          }}
+          onTouchStart={(event) => {
+            event.preventDefault();
+            onDictateStart((text) => setDraft((current) => `${current} ${text}`.trim()));
+          }}
+          onTouchEnd={onDictateStop}
+          className={`grid h-[34px] w-[34px] shrink-0 place-items-center rounded-full border text-[15px] ${
+            dictating
+              ? "border-[#4ECB71] bg-[rgba(48,162,75,.16)] text-[#4ECB71]"
+              : "border-[#26262A] text-[#9A9AA0]"
+          }`}
+          title={transcribe ? "Hold to talk" : "Hold to talk (on-device dictation)"}
+        >
+          ⌇
         </button>
         <input
           value={draft}
@@ -1769,12 +1967,18 @@ export function MessageView({
   message,
   onAnswer,
   onOpenBot,
+  voiceReady,
+  speaking,
+  onSpeak,
 }: {
   botId: string;
   canAnswer: boolean;
   message: ThreadMessage;
   onAnswer: (message: ThreadMessage, text: string) => Promise<void>;
   onOpenBot: (botId: string) => void;
+  voiceReady: boolean;
+  speaking: boolean;
+  onSpeak: () => void;
 }) {
   return (
     <>
@@ -1936,6 +2140,16 @@ export function MessageView({
             <div key={i} className="flex justify-start">
               <div className="max-w-[74%] rounded-[20px] bg-[#1A1A1D] px-[18px] py-3 text-[15.5px] leading-[1.5] text-[#DFDFE2]">
                 <ChatMarkdown>{block.text}</ChatMarkdown>
+                {voiceReady ? (
+                  <button
+                    type="button"
+                    aria-label={speaking ? "Stop speaking" : "Speak this reply"}
+                    onClick={onSpeak}
+                    className="mt-2 text-[12px] text-[#85858A] hover:text-[#ECECEE]"
+                  >
+                    {speaking ? "Stop" : "Speak"}
+                  </button>
+                ) : null}
               </div>
             </div>
           );
@@ -2205,6 +2419,8 @@ function BotSettings({
     title?: string;
     description?: string;
     computerMode: ComputerMode;
+    autoSpeak?: boolean;
+    voiceId?: string | null;
   }) => Promise<void>;
   onExport: () => Promise<void>;
   onClear: () => void;
@@ -2213,8 +2429,18 @@ function BotSettings({
   const [title, setTitle] = useState(bot.title);
   const [description, setDescription] = useState(bot.description);
   const [computerMode, setComputerMode] = useState(bot.computerMode);
+  const [autoSpeak, setAutoSpeak] = useState(bot.autoSpeak);
+  const [voiceId, setVoiceId] = useState(bot.voiceId ?? "");
+  const [voices, setVoices] = useState<VoiceInfo[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void rpc.voice
+      .voices({})
+      .then(setVoices)
+      .catch(() => setVoices([]));
+  }, []);
 
   return (
     <div data-testid="bot-settings">
@@ -2247,6 +2473,31 @@ function BotSettings({
         />
       </label>
       <ComputerModePicker value={computerMode} onChange={setComputerMode} />
+      <label className="mt-5 flex cursor-pointer items-center gap-3 text-[14px] text-[#C9C9CE]">
+        <input
+          type="checkbox"
+          checked={autoSpeak}
+          onChange={(event) => setAutoSpeak(event.target.checked)}
+        />
+        Read replies aloud
+      </label>
+      {voices.length ? (
+        <label className="mt-4 block text-[14px] text-[#85858A]">
+          Voice
+          <select
+            value={voiceId}
+            onChange={(event) => setVoiceId(event.target.value)}
+            className="mt-2 w-full rounded-[11px] border border-[#26262A] bg-transparent px-3.5 py-3 text-[#ECECEE]"
+          >
+            <option value="">Account default</option>
+            {voices.map((voice) => (
+              <option key={voice.id} value={voice.id}>
+                {voice.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
       {error ? <p className="mt-2 text-[13px] text-[#E65707]">{error}</p> : null}
       <div className="mt-5 flex flex-col items-start gap-3">
         <button
@@ -2260,7 +2511,12 @@ function BotSettings({
           onClick={() => {
             setSaving(true);
             setError(null);
-            void onSave({ ...botSettingsPatch({ name, title, description }), computerMode })
+            void onSave({
+              ...botSettingsPatch({ name, title, description }),
+              computerMode,
+              autoSpeak,
+              voiceId: voiceId || null,
+            })
               .catch((err) => setError(err instanceof Error ? err.message : "Could not save"))
               .finally(() => setSaving(false));
           }}
