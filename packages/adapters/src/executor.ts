@@ -4,6 +4,7 @@ import type {
   AgentRuntime,
   ComputerRef,
   ConnectorProvider,
+  ConnectorTool,
   JobPublisher,
   MemoryStore,
   NotificationMessage,
@@ -71,12 +72,139 @@ const READ_ONLY_AGENT_TOOLS = new Set([
 ]);
 const MAX_MODEL_FILE_BYTES = 250_000;
 const MAX_AGENT_HISTORY_MESSAGES = 200;
+export const MAX_MODEL_TOOL_COUNT = 300;
 const GRAPHICAL_AGENT_TOOLS = new Set([
   "computer_observe",
   "computer_act",
   "open_path",
   "launch_app",
 ]);
+
+export interface ModelToolSelection {
+  tools: ConnectorTool[];
+  curated: boolean;
+  omittedCount: number;
+}
+
+/**
+ * Keep model requests below provider tool-count limits without disconnecting integrations.
+ * Composio's search/execute gateway remains available for any direct tool omitted from a run.
+ */
+export function selectModelTools(
+  builtins: ConnectorTool[],
+  discovered: ConnectorTool[],
+  prompt: string,
+  maxTools = MAX_MODEL_TOOL_COUNT,
+): ModelToolSelection {
+  if (!Number.isInteger(maxTools) || maxTools < builtins.length) {
+    throw new Error(`model tool limit ${maxTools} is smaller than ${builtins.length} built-ins`);
+  }
+
+  const seen = new Set(builtins.map((tool) => tool.name));
+  const uniqueDiscovered = discovered.filter((tool) => {
+    if (seen.has(tool.name)) return false;
+    seen.add(tool.name);
+    return true;
+  });
+  const all = [...builtins, ...uniqueDiscovered];
+  if (all.length <= maxTools) {
+    return { tools: all, curated: false, omittedCount: 0 };
+  }
+
+  const alwaysKeep: ConnectorTool[] = [];
+  const groups = new Map<string, Array<{ tool: ConnectorTool; index: number; score: number }>>();
+  const promptWords = meaningfulWords(prompt);
+  const compactPrompt = prompt.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+  uniqueDiscovered.forEach((tool, index) => {
+    const group = toolGroup(tool.name);
+    if (!group || group === "COMPOSIO") {
+      alwaysKeep.push(tool);
+      return;
+    }
+    const entries = groups.get(group) ?? [];
+    entries.push({ tool, index, score: toolRelevance(tool, group, promptWords, compactPrompt) });
+    groups.set(group, entries);
+  });
+
+  if (builtins.length + alwaysKeep.length > maxTools) {
+    throw new Error(
+      `model tool limit ${maxTools} cannot retain ${builtins.length} built-ins and ${alwaysKeep.length} gateway tools`,
+    );
+  }
+
+  const rankedGroups = [...groups.entries()]
+    .map(([name, entries]) => ({
+      name,
+      entries: entries.sort((a, b) => b.score - a.score || a.index - b.index),
+      score: Math.max(...entries.map((entry) => entry.score)),
+      firstIndex: Math.min(...entries.map((entry) => entry.index)),
+    }))
+    .sort((a, b) => b.score - a.score || a.firstIndex - b.firstIndex);
+  const selected: ConnectorTool[] = [];
+  const remaining = maxTools - builtins.length - alwaysKeep.length;
+
+  // Round-robin prevents a large toolkit (for example Slack) from crowding out every
+  // direct tool from smaller connected toolkits. Ranking each group keeps its most
+  // prompt-relevant tools first.
+  for (let offset = 0; selected.length < remaining; offset += 1) {
+    let added = false;
+    for (const group of rankedGroups) {
+      const entry = group.entries[offset];
+      if (!entry) continue;
+      selected.push(entry.tool);
+      added = true;
+      if (selected.length === remaining) break;
+    }
+    if (!added) break;
+  }
+
+  const tools = [...builtins, ...alwaysKeep, ...selected];
+  return { tools, curated: true, omittedCount: all.length - tools.length };
+}
+
+function toolGroup(name: string): string | undefined {
+  return /^([A-Z0-9]+)_/.exec(name)?.[1];
+}
+
+function meaningfulWords(value: string): string[] {
+  const ignored = new Set([
+    "about",
+    "from",
+    "have",
+    "into",
+    "please",
+    "that",
+    "the",
+    "this",
+    "tool",
+    "use",
+    "with",
+  ]);
+  return [
+    ...new Set(
+      (value.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter(
+        (word) => word.length >= 3 && !ignored.has(word),
+      ),
+    ),
+  ];
+}
+
+function toolRelevance(
+  tool: ConnectorTool,
+  group: string,
+  promptWords: string[],
+  compactPrompt: string,
+): number {
+  const name = tool.name.toLowerCase();
+  const description = tool.description.toLowerCase();
+  let score = compactPrompt.includes(group.toLowerCase()) ? 100 : 0;
+  for (const word of promptWords) {
+    if (name.includes(word)) score += 5;
+    else if (description.includes(word)) score += 1;
+  }
+  return score;
+}
 
 export interface ExecutorDeps {
   prisma: PrismaClient;
@@ -337,12 +465,8 @@ export function createRunExecutor(deps: ExecutorDeps) {
         const builtins = graphical
           ? builtinAgentTools
           : builtinAgentTools.filter((tool) => !GRAPHICAL_AGENT_TOOLS.has(tool.name));
-        const tools = [
-          ...builtins,
-          ...discovered.filter(
-            (tool) => !builtinAgentTools.some((builtin) => builtin.name === tool.name),
-          ),
-        ];
+        const toolSelection = selectModelTools(builtins, discovered, task.prompt);
+        const tools = toolSelection.tools;
         const computerInstruction = graphical
           ? "You have a persistent computer. Use computer_observe and computer_act for its visible desktop, including browsers and installed applications. Use open_path and launch_app to open graphical files, URLs, and applications. Use the file tools and shell for precise filesystem and terminal work. Another user may interact with the same desktop while you run, so re-observe when it may have changed."
           : "You have a persistent sandbox filesystem and shell. This backend does not provide model-visible graphical control, so use the file tools and shell.";
@@ -695,7 +819,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
 
         const pluginLine =
           connectedPlugins.length > 0
-            ? `Connected plugins: ${connectedPlugins.map((row) => `${row.displayName} (${row.provider})`).join(", ")}. Use those plugin tools when the user asks about those apps.`
+            ? `Connected plugins: ${connectedPlugins.map((row) => `${row.displayName} (${row.provider})`).join(", ")}. Use those plugin tools when the user asks about those apps.${toolSelection.curated ? " Direct plugin tools were curated to stay below the model provider limit. If a connected action is not listed directly, use COMPOSIO_SEARCH_TOOLS and COMPOSIO_EXECUTE_TOOL to find and run it." : ""}`
             : "No plugins are connected yet.";
 
         try {
