@@ -68,6 +68,8 @@ import type { Auth } from "@rakazo/auth";
 import {
   type Actor,
   appContract,
+  BOT_FIELDS_CROSSED_MESSAGE,
+  botFieldsAfterPatchAreSeparate,
   type ComputerStatus,
   type McpServer,
   type Me,
@@ -586,6 +588,9 @@ export function createRouter(deps: RouterDeps) {
       }),
       update: authed.bots.update.handler(async ({ context, input }) => {
         const existing = await repos.getBot(context.actor, input.botId);
+        if (!botFieldsAfterPatchAreSeparate(existing, input)) {
+          throw new ORPCError("BAD_REQUEST", { message: BOT_FIELDS_CROSSED_MESSAGE });
+        }
         if (input.sectionId) {
           const section = await deps.prisma.botSection.findFirst({
             where: {

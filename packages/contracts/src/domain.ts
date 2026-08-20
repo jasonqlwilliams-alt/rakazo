@@ -6,6 +6,25 @@ import { McpHeadersSchema, McpRemoteEndpointSchema, McpTransportSchema } from ".
 export const ComputerModeSchema = z.enum(["team", "dedicated"]);
 export type ComputerMode = z.infer<typeof ComputerModeSchema>;
 
+export const BOT_FIELDS_CROSSED_MESSAGE = "Description must remain separate from instructions";
+
+export function botFieldsAreSeparate(fields: {
+  description?: string;
+  instructions?: string;
+}): boolean {
+  return !fields.description || !fields.instructions || fields.description !== fields.instructions;
+}
+
+export function botFieldsAfterPatchAreSeparate(
+  current: { description: string; instructions: string },
+  patch: { description?: string; instructions?: string },
+): boolean {
+  return botFieldsAreSeparate({
+    description: patch.description ?? current.description,
+    instructions: patch.instructions ?? current.instructions,
+  });
+}
+
 export const MemoryScopeSchema = z.enum(["isolated", "shared"]);
 export type MemoryScopeValue = z.infer<typeof MemoryScopeSchema>;
 
@@ -111,15 +130,20 @@ export const BOT_TITLE_MAX_LENGTH = 500;
 export const BOT_DESCRIPTION_MAX_LENGTH = 4000;
 export const BOT_INSTRUCTIONS_MAX_LENGTH = 20000;
 
-export const CreateBotInput = z.object({
-  name: z.string().trim().min(1).max(BOT_NAME_MAX_LENGTH),
-  title: z.string().max(BOT_TITLE_MAX_LENGTH).default(""),
-  description: z.string().max(BOT_DESCRIPTION_MAX_LENGTH).default(""),
-  instructions: z.string().max(BOT_INSTRUCTIONS_MAX_LENGTH).default(""),
-  notifyOnFinish: z.boolean().default(true),
-  color: z.string().optional(),
-  computerMode: ComputerModeSchema.default("team"),
-});
+export const CreateBotInput = z
+  .object({
+    name: z.string().trim().min(1).max(BOT_NAME_MAX_LENGTH),
+    title: z.string().max(BOT_TITLE_MAX_LENGTH).default(""),
+    description: z.string().max(BOT_DESCRIPTION_MAX_LENGTH).default(""),
+    instructions: z.string().max(BOT_INSTRUCTIONS_MAX_LENGTH).default(""),
+    notifyOnFinish: z.boolean().default(true),
+    color: z.string().optional(),
+    computerMode: ComputerModeSchema.default("team"),
+  })
+  .refine(botFieldsAreSeparate, {
+    message: BOT_FIELDS_CROSSED_MESSAGE,
+    path: ["description"],
+  });
 export type CreateBotInput = z.infer<typeof CreateBotInput>;
 
 export function normalizeCreateBotProfile(
@@ -153,6 +177,13 @@ export const UpdateBotInput = z
     thinkingLevel: ThinkingLevelSchema.nullable().optional(),
   })
   .superRefine((value, ctx) => {
+    if (!botFieldsAreSeparate(value)) {
+      ctx.addIssue({
+        code: "custom",
+        message: BOT_FIELDS_CROSSED_MESSAGE,
+        path: ["description"],
+      });
+    }
     const providerProvided = value.modelProvider !== undefined;
     const modelProvided = value.modelId !== undefined;
     if (!providerProvided && !modelProvided) return;

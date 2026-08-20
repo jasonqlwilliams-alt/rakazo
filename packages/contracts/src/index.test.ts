@@ -4,6 +4,7 @@ import {
   BOT_DESCRIPTION_MAX_LENGTH,
   BOT_INSTRUCTIONS_MAX_LENGTH,
   BOT_TITLE_MAX_LENGTH,
+  botFieldsAfterPatchAreSeparate,
   CreateBotInput,
   CreateGroupInput,
   DirectMessageBlockSchema,
@@ -23,6 +24,29 @@ describe("contracts", () => {
     const parsed = CreateBotInput.parse({ name: "Chief" });
     expect(parsed.title).toBe("");
     expect(parsed.notifyOnFinish).toBe(true);
+  });
+
+  it("rejects a field-name sync that crosses a persona into the description", () => {
+    const crossed = {
+      description: "You are Chief.",
+      instructions: "You are Chief.",
+    };
+
+    expect(() => CreateBotInput.parse({ name: "Chief", ...crossed })).toThrow(
+      "Description must remain separate from instructions",
+    );
+    expect(() => UpdateBotInput.parse({ botId: "bot-1", ...crossed })).toThrow(
+      "Description must remain separate from instructions",
+    );
+  });
+
+  it("rejects a partial patch that crosses the stored persona", () => {
+    expect(
+      botFieldsAfterPatchAreSeparate(
+        { description: "Short blurb.", instructions: "You are Chief." },
+        { description: "You are Chief." },
+      ),
+    ).toBe(false);
   });
 
   it("normalizes bot creation fields without losing the longer instruction copy", () => {
