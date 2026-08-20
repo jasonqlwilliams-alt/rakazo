@@ -49,6 +49,8 @@ import type { Auth } from "@rakazo/auth";
 import {
   type Actor,
   appContract,
+  BOT_FIELDS_CROSSED_MESSAGE,
+  botFieldsAfterPatchAreSeparate,
   type ComputerStatus,
   type Me,
   type ThreadSnapshot,
@@ -319,7 +321,10 @@ export function createRouter(deps: RouterDeps) {
         });
       }),
       update: authed.bots.update.handler(async ({ context, input }) => {
-        await repos.getBot(context.actor, input.botId);
+        const current = await repos.getBot(context.actor, input.botId);
+        if (!botFieldsAfterPatchAreSeparate(current, input)) {
+          throw new ORPCError("BAD_REQUEST", { message: BOT_FIELDS_CROSSED_MESSAGE });
+        }
         await deps.prisma.bot.update({
           where: { id: input.botId },
           data: {

@@ -5,6 +5,25 @@ import { Id, MemoryScope, RunStatus, SandboxKind } from "./ids.js";
 export const ComputerModeSchema = z.enum(["team", "dedicated"]);
 export type ComputerMode = z.infer<typeof ComputerModeSchema>;
 
+export const BOT_FIELDS_CROSSED_MESSAGE = "Description must remain separate from instructions";
+
+export function botFieldsAreSeparate(fields: {
+  description?: string;
+  instructions?: string;
+}): boolean {
+  return !fields.description || !fields.instructions || fields.description !== fields.instructions;
+}
+
+export function botFieldsAfterPatchAreSeparate(
+  current: { description: string; instructions: string },
+  patch: { description?: string; instructions?: string },
+): boolean {
+  return botFieldsAreSeparate({
+    description: patch.description ?? current.description,
+    instructions: patch.instructions ?? current.instructions,
+  });
+}
+
 export const BotSchema = z.object({
   id: Id,
   workspaceId: Id,
@@ -29,29 +48,39 @@ export const BotSchema = z.object({
 });
 export type Bot = z.infer<typeof BotSchema>;
 
-export const CreateBotInput = z.object({
-  name: z.string().min(1).max(80),
-  title: z.string().max(160).default(""),
-  description: z.string().max(4000).default(""),
-  instructions: z.string().max(20000).default(""),
-  notifyOnFinish: z.boolean().default(true),
-  color: z.string().optional(),
-  computerMode: ComputerModeSchema.default("team"),
-});
+export const CreateBotInput = z
+  .object({
+    name: z.string().min(1).max(80),
+    title: z.string().max(160).default(""),
+    description: z.string().max(4000).default(""),
+    instructions: z.string().max(20000).default(""),
+    notifyOnFinish: z.boolean().default(true),
+    color: z.string().optional(),
+    computerMode: ComputerModeSchema.default("team"),
+  })
+  .refine(botFieldsAreSeparate, {
+    message: BOT_FIELDS_CROSSED_MESSAGE,
+    path: ["description"],
+  });
 export type CreateBotInput = z.infer<typeof CreateBotInput>;
 
-export const UpdateBotInput = z.object({
-  botId: Id,
-  name: z.string().min(1).max(80).optional(),
-  title: z.string().max(160).optional(),
-  description: z.string().max(4000).optional(),
-  instructions: z.string().max(20000).optional(),
-  notifyOnFinish: z.boolean().optional(),
-  color: z.string().optional(),
-  pinned: z.boolean().optional(),
-  voiceId: z.string().max(120).nullable().optional(),
-  autoSpeak: z.boolean().optional(),
-});
+export const UpdateBotInput = z
+  .object({
+    botId: Id,
+    name: z.string().min(1).max(80).optional(),
+    title: z.string().max(160).optional(),
+    description: z.string().max(4000).optional(),
+    instructions: z.string().max(20000).optional(),
+    notifyOnFinish: z.boolean().optional(),
+    color: z.string().optional(),
+    pinned: z.boolean().optional(),
+    voiceId: z.string().max(120).nullable().optional(),
+    autoSpeak: z.boolean().optional(),
+  })
+  .refine(botFieldsAreSeparate, {
+    message: BOT_FIELDS_CROSSED_MESSAGE,
+    path: ["description"],
+  });
 
 export const RoutineSchema = z.object({
   id: Id,
