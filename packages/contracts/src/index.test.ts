@@ -6,6 +6,7 @@ import {
   BOT_TITLE_MAX_LENGTH,
   CreateBotInput,
   CreateGroupInput,
+  DirectMessageBlockSchema,
   McpServerConfigInput,
   MessageBlock,
   ModelOAuthBeginSchema,
@@ -113,12 +114,27 @@ describe("contracts", () => {
     expect(appContract.botSections.create).toBeTruthy();
     expect(appContract.threads.subscribe).toBeTruthy();
     expect(appContract.threads.clear).toBeTruthy();
+    expect(appContract.threads.sendToBot).toBeTruthy();
     expect(appContract.voice.prepare).toBeTruthy();
     expect(appContract.notifications.registerPush).toBeTruthy();
     expect(ProductEventType.options).toContain("thread.message.created");
     expect(ProductEventType.options).toContain("thread.cleared");
     expect(ProductEventType.options).toContain("thread.subagent");
     expect(ProductEventType.options).toContain("bot.spawned");
+  });
+
+  it("parses a recipient-side direct message block", () => {
+    expect(
+      DirectMessageBlockSchema.parse({
+        kind: "direct_message",
+        fromBotId: "bot-eleusis",
+        fromName: "Eleusis",
+        toBotId: "bot-thor",
+        toName: "Thor",
+        text: "hold the venue list",
+        direction: "received",
+      }),
+    ).toMatchObject({ kind: "direct_message", direction: "received" });
   });
 
   it("accepts bot-to-bot runs in thread snapshots and activity rows", () => {

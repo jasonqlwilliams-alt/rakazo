@@ -53,7 +53,7 @@ import {
   VoiceStatusSchema,
   WorkspaceMemoryConfigSchema,
 } from "./domain.js";
-import { ProductEventSchema } from "./events.js";
+import { DIRECT_MESSAGE_MAX_LENGTH, ProductEventSchema } from "./events.js";
 import { Id } from "./ids.js";
 import { RunsListOutputSchema } from "./runs.js";
 import { SearchQueryOutputSchema } from "./search.js";
@@ -219,6 +219,35 @@ export const appContract = {
         runIds: z.array(Id).optional(),
       }),
     ),
+    sendToBot: oc
+      .input(
+        z
+          .object({
+            botId: Id,
+            toBotId: Id.optional(),
+            toName: z.string().min(1).max(80).optional(),
+            text: z.string().trim().min(1).max(DIRECT_MESSAGE_MAX_LENGTH),
+            clientNonce: z.string().min(1).max(200).optional(),
+          })
+          .refine((input) => input.toBotId || input.toName, {
+            message: "Pass toBotId or toName",
+            path: ["toBotId"],
+          }),
+      )
+      .output(
+        z.object({
+          directThreadId: Id,
+          messageId: Id,
+          seq: z.number().int().nonnegative(),
+          role: z.literal("bot"),
+          kind: z.literal("direct_message"),
+          direction: z.literal("received"),
+          toBotId: Id,
+          toName: z.string(),
+          peerRunId: Id,
+          duplicate: z.literal(true).optional(),
+        }),
+      ),
     stop: oc.input(threadTarget).output(z.object({ ok: z.literal(true) })),
     followUp: oc
       .input(threadTarget.safeExtend({ text: z.string().min(1) }))

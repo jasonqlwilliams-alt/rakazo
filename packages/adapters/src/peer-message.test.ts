@@ -2,7 +2,7 @@ import type { JobPublisher } from "@rakazo/adapter-kit";
 import type { PrismaClient, ThreadEvents } from "@rakazo/db";
 import { describe, expect, it, vi } from "vitest";
 import { spawnBot } from "./child-bots.js";
-import { MAX_PEER_NOTE_LENGTH, peerNotePrompt, sendPeerMessage } from "./peer-message.js";
+import { directMessagePrompt, MAX_DIRECT_MESSAGE_LENGTH, sendPeerMessage } from "./peer-message.js";
 
 vi.mock("./child-bots.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./child-bots.js")>();
@@ -30,6 +30,7 @@ interface SeedBot {
   workspaceId: string;
   userId: string;
   threadId: string | null;
+  archivedAt?: Date | null;
 }
 
 interface MessageRow {
@@ -40,8 +41,30 @@ interface MessageRow {
   runId?: string;
 }
 
+interface DirectThreadRow {
+  id: string;
+  workspaceId: string;
+  firstBotId: string;
+  secondBotId: string;
+  nextMessageSeq: number;
+}
+
+interface DirectMessageRow {
+  id: string;
+  threadId: string;
+  seq: number;
+  role: string;
+  blocks: Array<Record<string, unknown>>;
+  senderBotId: string;
+  recipientBotId: string;
+  clientNonce: string;
+  recipientRunId: string;
+}
+
 function createStore(bots: SeedBot[], seeded: Array<Omit<MessageRow, "id">> = []) {
   const messages: MessageRow[] = seeded.map((row, index) => ({ id: `seed-${index + 1}`, ...row }));
+  const directThreads: DirectThreadRow[] = [];
+  const directMessages: DirectMessageRow[] = [];
   const tasks: Array<Record<string, unknown>> = [];
   const runs: Array<Record<string, unknown>> = [];
   // The sender is already mid-turn when it calls the tool. Kept out of `runs` so the
@@ -74,6 +97,59 @@ function createStore(bots: SeedBot[], seeded: Array<Omit<MessageRow, "id">> = []
         return created;
       },
     },
+    directThread: {
+      upsert: async ({
+        where,
+        create,
+      }: {
+        where: {
+          workspaceId_firstBotId_secondBotId: {
+            workspaceId: string;
+            firstBotId: string;
+            secondBotId: string;
+          };
+        };
+        create: Omit<DirectThreadRow, "id" | "nextMessageSeq">;
+      }) => {
+        const key = where.workspaceId_firstBotId_secondBotId;
+        const found = directThreads.find(
+          (thread) =>
+            thread.workspaceId === key.workspaceId &&
+            thread.firstBotId === key.firstBotId &&
+            thread.secondBotId === key.secondBotId,
+        );
+        if (found) return found;
+        const created = {
+          id: `direct-thread-${directThreads.length + 1}`,
+          nextMessageSeq: 0,
+          ...create,
+        };
+        directThreads.push(created);
+        return created;
+      },
+      update: async ({ where }: { where: { id: string } }) => {
+        const thread = directThreads.find((candidate) => candidate.id === where.id)!;
+        thread.nextMessageSeq += 1;
+        return thread;
+      },
+    },
+    directMessage: {
+      findUnique: async ({
+        where,
+      }: {
+        where: { threadId_clientNonce: { threadId: string; clientNonce: string } };
+      }) =>
+        directMessages.find(
+          (message) =>
+            message.threadId === where.threadId_clientNonce.threadId &&
+            message.clientNonce === where.threadId_clientNonce.clientNonce,
+        ) ?? null,
+      create: async ({ data }: { data: Omit<DirectMessageRow, "id"> }) => {
+        const created = { id: `direct-message-${directMessages.length + 1}`, ...data };
+        directMessages.push(created);
+        return created;
+      },
+    },
     task: {
       create: async ({ data }: { data: Record<string, unknown> }) => {
         const created = { id: `task-${tasks.length + 1}`, ...data };
@@ -97,11 +173,23 @@ function createStore(bots: SeedBot[], seeded: Array<Omit<MessageRow, "id">> = []
     bot: {
       create: botCreate,
       findFirst: async ({ where }: { where: Record<string, string> }) => {
-        const found = bots.find((bot) => bot.id === where.id && scoped(bot, where));
+        const found = bots.find(
+          (bot) =>
+            bot.id === where.id &&
+            scoped(bot, where) &&
+            (where.archivedAt === null ? !bot.archivedAt : true),
+        );
         return found ? row(found) : null;
       },
       findMany: async ({ where }: { where: Record<string, string> }) =>
-        bots.filter((bot) => bot.name === where.name && scoped(bot, where)).map(row),
+        bots
+          .filter(
+            (bot) =>
+              bot.name === where.name &&
+              scoped(bot, where) &&
+              (where.archivedAt === null ? !bot.archivedAt : true),
+          )
+          .map(row),
     },
     run: {
       findUnique: async ({
@@ -132,6 +220,8 @@ function createStore(bots: SeedBot[], seeded: Array<Omit<MessageRow, "id">> = []
     runUpdateMany,
     enqueue,
     append,
+    directThreads,
+    directMessages,
     on: (threadId: string) => messages.filter((message) => message.threadId === threadId),
   };
 }
@@ -142,7 +232,6 @@ function send(
 ) {
   return sendPeerMessage(store.deps, {
     sender: ELEUSIS,
-    runId: "run-eleusis",
     messageKey: "tool-call-1",
     name: "Thor",
     text: "CROSSCHAT-PROOF: hold the venue list until I confirm.",
@@ -151,7 +240,7 @@ function send(
 }
 
 describe("peer message delivery", () => {
-  it("writes one note on each thread and wakes only the target", async () => {
+  it("stores one bot-authored DM in a peer thread and wakes only the target", async () => {
     const store = createStore([ELEUSIS, THOR]);
 
     const result = await send(store);
@@ -160,18 +249,32 @@ describe("peer message delivery", () => {
       ok: true,
       toBotId: THOR.id,
       toName: "Thor",
-      toThreadId: THOR.threadId,
+      directThreadId: "direct-thread-1",
+      messageId: "direct-message-1",
+      seq: 0,
+      role: "bot",
+      kind: "direct_message",
+      direction: "received",
     });
 
-    const onThor = store.on(THOR.threadId);
-    const onEleusis = store.on(ELEUSIS.threadId);
-    expect(onThor).toHaveLength(1);
-    expect(onEleusis).toHaveLength(1);
-    expect(onThor[0]).toMatchObject({
-      role: "system",
+    expect(store.directThreads).toEqual([
+      expect.objectContaining({
+        id: "direct-thread-1",
+        workspaceId: ELEUSIS.workspaceId,
+        firstBotId: ELEUSIS.id,
+        secondBotId: THOR.id,
+      }),
+    ]);
+    expect(store.directMessages).toHaveLength(1);
+    expect(store.directMessages[0]).toMatchObject({
+      threadId: "direct-thread-1",
+      seq: 0,
+      role: "bot",
+      senderBotId: ELEUSIS.id,
+      recipientBotId: THOR.id,
       blocks: [
         {
-          kind: "agent_note",
+          kind: "direct_message",
           direction: "received",
           fromBotId: ELEUSIS.id,
           fromName: "Eleusis",
@@ -181,14 +284,8 @@ describe("peer message delivery", () => {
         },
       ],
     });
-    expect(onEleusis[0]).toMatchObject({
-      role: "bot",
-      runId: "run-eleusis",
-      blocks: [{ kind: "agent_note", direction: "sent", toBotId: THOR.id, toName: "Thor" }],
-    });
-
-    // Same note text on both seats, and nothing else crosses.
-    expect(onThor[0]?.blocks[0]?.text).toBe(onEleusis[0]?.blocks[0]?.text);
+    expect(store.on(THOR.threadId)).toHaveLength(0);
+    expect(store.on(ELEUSIS.threadId)).toHaveLength(0);
 
     // Only the receiver wakes; the sender already has its own turn.
     expect(store.runs).toHaveLength(1);
@@ -197,18 +294,13 @@ describe("peer message delivery", () => {
       threadId: THOR.threadId,
       status: "queued",
       trigger: "peer",
-      clientNonce: "peer:tool-call-1",
+      clientNonce: "peer:bot-eleusis:bot-thor:tool-call-1",
     });
     expect(store.tasks).toHaveLength(1);
     expect(String(store.tasks[0]?.prompt)).toContain("Eleusis");
     expect(store.enqueue).toHaveBeenCalledOnce();
     expect(JSON.stringify(store.enqueue.mock.calls[0])).toContain(String(store.runs[0]?.id));
-
-    // Both seats update live.
-    expect(store.append).toHaveBeenCalledTimes(2);
-    expect(store.append.mock.calls.map(([event]) => event.threadId).sort()).toEqual(
-      [ELEUSIS.threadId, THOR.threadId].sort(),
-    );
+    expect(store.append).not.toHaveBeenCalled();
   });
 
   it("never creates a bot and never routes through spawn_bot", async () => {
@@ -225,12 +317,12 @@ describe("peer message delivery", () => {
 
     await send(store);
 
-    // `threads.send` cancels the bot's other queued runs. A peer note must not, or an
-    // incoming note would silently kill what the user asked for.
+    // `threads.send` cancels the bot's other queued runs. A peer DM must not, or an
+    // incoming message would silently kill what the user asked for.
     expect(store.runUpdateMany).not.toHaveBeenCalled();
   });
 
-  it("copies nothing from the target's thread onto the sender's", async () => {
+  it("copies neither user thread into the direct thread", async () => {
     const store = createStore(
       [ELEUSIS, THOR],
       [
@@ -252,13 +344,14 @@ describe("peer message delivery", () => {
       ],
     );
     const beforeOnSender = store.on(ELEUSIS.threadId).length;
+    const beforeOnTarget = store.on(THOR.threadId).length;
 
     await send(store);
 
-    const senderThread = store.on(ELEUSIS.threadId);
-    expect(senderThread).toHaveLength(beforeOnSender + 1);
-    expect(JSON.stringify(senderThread)).not.toContain("THOR-PRIVATE");
-    expect(JSON.stringify(store.on(THOR.threadId))).not.toContain("ELEUSIS-PRIVATE");
+    expect(store.on(ELEUSIS.threadId)).toHaveLength(beforeOnSender);
+    expect(store.on(THOR.threadId)).toHaveLength(beforeOnTarget);
+    expect(JSON.stringify(store.directMessages)).not.toContain("THOR-PRIVATE");
+    expect(JSON.stringify(store.directMessages)).not.toContain("ELEUSIS-PRIVATE");
   });
 
   it("delivers a replayed tool call once", async () => {
@@ -270,8 +363,26 @@ describe("peer message delivery", () => {
     expect(first).toMatchObject({ ok: true });
     expect(second).toMatchObject({ ok: true, duplicate: true });
     expect(store.runs).toHaveLength(1);
-    expect(store.on(THOR.threadId)).toHaveLength(1);
+    expect(store.directMessages).toHaveLength(1);
     expect(store.enqueue).toHaveBeenCalledOnce();
+  });
+
+  it("reuses the canonical peer thread for the reverse direction", async () => {
+    const store = createStore([ELEUSIS, THOR]);
+
+    await send(store);
+    await sendPeerMessage(store.deps, {
+      sender: THOR,
+      messageKey: "tool-call-2",
+      botId: ELEUSIS.id,
+      text: "The venue list is still on hold.",
+    });
+
+    expect(store.directThreads).toHaveLength(1);
+    expect(store.directMessages).toMatchObject([
+      { seq: 0, senderBotId: ELEUSIS.id, recipientBotId: THOR.id },
+      { seq: 1, senderBotId: THOR.id, recipientBotId: ELEUSIS.id },
+    ]);
   });
 });
 
@@ -328,10 +439,10 @@ describe("peer resolution", () => {
     const store = createStore([ELEUSIS, THOR]);
 
     expect(await send(store, { name: "Eleusis" })).toMatchObject({
-      error: expect.stringContaining("cannot send a note to itself"),
+      error: expect.stringContaining("cannot send a direct message to itself"),
     });
     expect(await send(store, { name: undefined, botId: ELEUSIS.id })).toMatchObject({
-      error: expect.stringContaining("cannot send a note to itself"),
+      error: expect.stringContaining("cannot send a direct message to itself"),
     });
     expect(store.runs).toHaveLength(0);
   });
@@ -356,7 +467,7 @@ describe("peer resolution", () => {
     expect(store.runs).toHaveLength(0);
   });
 
-  it("requires a target and a note", async () => {
+  it("requires a target and a message", async () => {
     const store = createStore([ELEUSIS, THOR]);
 
     expect(await send(store, { name: undefined, botId: undefined })).toMatchObject({
@@ -367,27 +478,37 @@ describe("peer resolution", () => {
     });
   });
 
-  it("refuses a note long enough to be a transcript", async () => {
+  it("refuses a message long enough to be a transcript", async () => {
     const store = createStore([ELEUSIS, THOR]);
 
-    const result = await send(store, { text: "x".repeat(MAX_PEER_NOTE_LENGTH + 1) });
+    const result = await send(store, { text: "x".repeat(MAX_DIRECT_MESSAGE_LENGTH + 1) });
 
     expect(result).toMatchObject({ error: expect.stringContaining("not a transcript") });
     expect(store.runs).toHaveLength(0);
   });
 
-  it("refuses a peer that has no thread to deliver to", async () => {
+  it("refuses a peer that has no execution thread", async () => {
     const store = createStore([ELEUSIS, { ...THOR, threadId: null }]);
 
     expect(await send(store, { name: "Thor" })).toMatchObject({
-      error: expect.stringContaining("no thread"),
+      error: expect.stringContaining("no execution thread"),
     });
+  });
+
+  it("refuses an archived peer", async () => {
+    const store = createStore([ELEUSIS, { ...THOR, archivedAt: new Date(0) }]);
+
+    expect(await send(store, { botId: THOR.id, name: undefined })).toMatchObject({
+      error: expect.stringContaining("No bot with id"),
+    });
+    expect(store.directMessages).toHaveLength(0);
+    expect(store.runs).toHaveLength(0);
   });
 });
 
-describe("peer note prompt", () => {
-  it("frames the note as a peer, never as the user", () => {
-    const prompt = peerNotePrompt("Eleusis", "Thor", "hold the venue list");
+describe("direct message prompt", () => {
+  it("frames the message as peer-authored, never as the user", () => {
+    const prompt = directMessagePrompt("Eleusis", "Thor", "hold the venue list");
 
     expect(prompt).toContain('Peer bot "Eleusis"');
     expect(prompt).toContain("This is not the user speaking");
