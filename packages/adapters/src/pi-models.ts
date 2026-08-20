@@ -1,4 +1,5 @@
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+import { withDeploymentModels } from "./model-catalog.js";
 import { DEVICE_CODE_PROVIDERS, DEVICE_CODE_SIGN_IN, isDeviceCodeProvider } from "./pi-oauth.js";
 
 export type PiCatalogAuth = "api-key" | "oauth" | "both";
@@ -24,7 +25,7 @@ export function listPiCatalog(): PiCatalogEntry[] {
 let cachedCatalog: PiCatalogEntry[] | undefined;
 
 function buildPiCatalog(): PiCatalogEntry[] {
-  const models = builtinModels();
+  const models = withDeploymentModels(builtinModels());
   const entries: PiCatalogEntry[] = [];
   for (const provider of models.getProviders()) {
     const apiKey = Boolean(provider.auth.apiKey);
