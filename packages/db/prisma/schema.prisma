@@ -101,6 +101,7 @@ model Organization {
   notificationPreferences NotificationPreference[]
   computers   Computer[]
   externalEffects ExternalEffect[]
+  directThreads DirectThread[]
 
   @@unique([slug])
   @@map("organization")
@@ -200,6 +201,8 @@ model Bot {
   usageRecords   UsageRecord[]
   tasks          Task[]
   runs           Run[]
+  directThreadsAsFirst  DirectThread[] @relation("DirectThreadFirstBot")
+  directThreadsAsSecond DirectThread[] @relation("DirectThreadSecondBot")
 
   @@index([workspaceId, userId, archivedAt, pinned, updatedAt])
   @@index([computerId])
@@ -254,6 +257,46 @@ model Message {
   @@unique([threadId, seq])
   @@index([threadId, seq])
   @@map("messages")
+}
+
+model DirectThread {
+  id             String       @id @default(cuid())
+  workspaceId    String
+  workspace      Organization @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  firstBotId     String
+  firstBot       Bot          @relation("DirectThreadFirstBot", fields: [firstBotId], references: [id], onDelete: Cascade)
+  secondBotId    String
+  secondBot      Bot          @relation("DirectThreadSecondBot", fields: [secondBotId], references: [id], onDelete: Cascade)
+  nextMessageSeq Int          @default(0)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  messages       DirectMessage[]
+
+  @@unique([workspaceId, firstBotId, secondBotId])
+  @@index([workspaceId])
+  @@index([firstBotId])
+  @@index([secondBotId])
+  @@map("direct_threads")
+}
+
+model DirectMessage {
+  id             String       @id @default(cuid())
+  threadId       String
+  thread         DirectThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  seq            Int
+  role           String
+  blocks         Json
+  senderBotId    String
+  recipientBotId String
+  clientNonce    String
+  recipientRunId String
+  createdAt      DateTime     @default(now())
+
+  @@unique([threadId, seq])
+  @@unique([threadId, clientNonce])
+  @@index([threadId, seq])
+  @@index([recipientBotId, createdAt])
+  @@map("direct_messages")
 }
 
 model Event {

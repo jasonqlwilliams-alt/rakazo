@@ -33,6 +33,7 @@ import {
   scheduleComputerControlExpiry,
   scheduleComputerSleep,
   scriptedCatalogEntry,
+  sendPeerMessage,
   serializeModelSecret,
   takeoverLeaseMs,
   toComputerRef,
@@ -431,6 +432,28 @@ export function createRouter(deps: RouterDeps) {
         });
         await deps.jobs.enqueue(runContinueJob(run.id));
         return { taskId: task.id, runId: run.id, seq: message.seq };
+      }),
+      sendToBot: authed.threads.sendToBot.handler(async ({ context, input }) => {
+        const sender = await repos.getBot(context.actor, input.botId);
+        const sent = await sendPeerMessage(
+          { prisma: deps.prisma, jobs: deps.jobs },
+          {
+            sender: {
+              id: sender.id,
+              name: sender.name,
+              workspaceId: sender.workspaceId,
+              userId: sender.userId,
+            },
+            messageKey: input.clientNonce ?? randomUUID(),
+            botId: input.toBotId,
+            name: input.toName,
+            text: input.text,
+          },
+        );
+        if ("error" in sent) {
+          throw new ORPCError("BAD_REQUEST", { message: sent.error });
+        }
+        return sent;
       }),
       stop: authed.threads.stop.handler(async ({ context, input }) => {
         const bot = await repos.getBot(context.actor, input.botId);
