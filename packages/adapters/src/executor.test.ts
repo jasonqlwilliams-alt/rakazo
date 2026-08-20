@@ -4,6 +4,7 @@ import type { MessageBlock } from "@rakazo/contracts";
 import type { PrismaClient } from "@rakazo/db";
 import { describe, expect, it, vi } from "vitest";
 import {
+  archivalHistoryExclusion,
   blocksToText,
   createRunExecutor,
   MAX_MODEL_TOOL_BYTES,
@@ -638,5 +639,47 @@ describe("model tool selection", () => {
 
     expect(selection.tools).toHaveLength(MAX_MODEL_TOOL_COUNT);
     expect(selection.tools.length).toBeLessThan(350);
+  });
+});
+
+describe("recent history excludes imported Grokbot transcript", () => {
+  // The importer writes archival records into the live thread at the newest seq, so without
+  // this every seat's window filled with old Grokbot conversation and its real Rakazo work
+  // fell out entirely -- 200 of 200 on seven seats, 198 of 200 on the eighth.
+  const matches = (blocks: Array<{ kind: string; text: string }>) => {
+    const [first] = blocks;
+    const clause = archivalHistoryExclusion().NOT.AND;
+    const kind = clause[0]?.blocks as { path: string[]; equals: string };
+    const text = clause[1]?.blocks as { path: string[]; string_starts_with: string };
+    return first?.kind === kind.equals && first.text.startsWith(text.string_starts_with);
+  };
+
+  it("targets the first block's kind and source label", () => {
+    const clause = archivalHistoryExclusion().NOT.AND;
+
+    expect(clause).toHaveLength(2);
+    const [kindClause, textClause] = clause;
+    expect((kindClause?.blocks as { path: string[] } | undefined)?.path).toEqual(["0", "kind"]);
+    expect((textClause?.blocks as { path: string[] } | undefined)?.path).toEqual(["0", "text"]);
+  });
+
+  it("excludes an imported transcript record", () => {
+    expect(
+      matches([
+        { kind: "meta", text: "Source: Grok · transcript 22425e78 · record 37440/37440" },
+        { kind: "text", text: "Grok keeps two piles on my computer" },
+      ]),
+    ).toBe(true);
+  });
+
+  it("excludes it whether the importer says Grok or Grokbot", () => {
+    expect(matches([{ kind: "meta", text: "Source: Grokbot · transcript abc · record 1/2" }])).toBe(
+      true,
+    );
+  });
+
+  it("keeps the seat's own Rakazo turns", () => {
+    expect(matches([{ kind: "text", text: "MemoraX 58.02, MemOS 45.89" }])).toBe(false);
+    expect(matches([{ kind: "meta", text: "Created by Chief" }])).toBe(false);
   });
 });

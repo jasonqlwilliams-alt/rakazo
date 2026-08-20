@@ -207,6 +207,37 @@ const BUILTIN_AGENT_TOOL_NAMES = new Set(builtinAgentTools.map((tool) => tool.na
 
 /** Cap the roster so a large workspace cannot flood the prompt. */
 const BOT_DIRECTORY_LIMIT = 40;
+
+/**
+ * Leading label the transcript importer puts on an archival record's `meta` block, as in
+ * "Source: Grok · transcript <id> · record 37440/37440". Matching the prefix rather than the
+ * whole string keeps it working whether the importer writes "Grok" or "Grokbot".
+ */
+const ARCHIVAL_SOURCE_PREFIX = "Source: Grok";
+
+/**
+ * Excludes imported Grokbot transcript from a run's recent history.
+ *
+ * Grokbot and Rakazo are separate products with separate memory, and an imported Grokbot
+ * transcript is an archive of the former, not something the seat said here. It is written
+ * into the live thread at the newest `seq`, so without this every seat's 200-message window
+ * filled with old Grokbot conversation and the seat's actual recent Rakazo work fell out of
+ * the window entirely -- measured at 200 of 200 on seven seats and 198 of 200 on the eighth.
+ *
+ * The records stay imported, source-labelled and queryable; they just do not count as the
+ * recent conversation. A seat that genuinely needs its Grokbot history reads it from durable
+ * memory, where the same history lives as `log/` documents.
+ */
+export function archivalHistoryExclusion() {
+  return {
+    NOT: {
+      AND: [
+        { blocks: { path: ["0", "kind"], equals: "meta" } },
+        { blocks: { path: ["0", "text"], string_starts_with: ARCHIVAL_SOURCE_PREFIX } },
+      ],
+    },
+  };
+}
 export const MAX_MODEL_TOOL_COUNT = 300;
 
 /**
@@ -759,7 +790,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
           }),
           deps.prisma.thread.findUniqueOrThrow({ where: { id: run.threadId } }),
           deps.prisma.message.findMany({
-            where: { threadId: run.threadId },
+            where: { threadId: run.threadId, ...archivalHistoryExclusion() },
             orderBy: { seq: "desc" },
             take: LEGACY_HISTORY_WINDOW_SIZE,
             select: { id: true, seq: true, role: true, runId: true, blocks: true },
