@@ -85,6 +85,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
       ["threads/subscribe", { botId: "missing-bot", cursor: -1 }],
       ["threads/send", { botId: "missing-bot", text: "Nope" }],
       ["threads/send", { groupId: "missing-group", text: "Nope" }],
+      ["threads/sendToBot", { botId: "missing-bot", toBotId: "missing-peer", text: "Nope" }],
       ["threads/stop", { botId: "missing-bot" }],
       ["threads/clear", { botId: "missing-bot" }],
       ["threads/followUp", { botId: "missing-bot", text: "Nope" }],
@@ -294,6 +295,10 @@ describeWithDatabase("API authorization and resource isolation", () => {
       ["threads/subscribe", { botId: ownerBot.id, cursor: -1 }],
       ["threads/send", { botId: ownerBot.id, text: "intruder message" }],
       ["threads/send", { botId: ownerBot.id, artifactIds: [ownerArtifact.id] }],
+      [
+        "threads/sendToBot",
+        { botId: ownerBot.id, toBotId: intruderBot.id, text: "intruder direct message" },
+      ],
       ["threads/stop", { botId: ownerBot.id }],
       ["threads/clear", { botId: ownerBot.id }],
       ["threads/followUp", { botId: ownerBot.id, text: "intruder follow-up" }],
@@ -363,6 +368,12 @@ describeWithDatabase("API authorization and resource isolation", () => {
     await Promise.all(
       groupCalls.map(([procedure, input]) => expectDenied(app, intruder, procedure, input)),
     );
+
+    await expectDenied(app, intruder, "threads/sendToBot", {
+      botId: intruderBot.id,
+      toBotId: ownerBot.id,
+      text: "mixed-workspace direct message",
+    });
 
     // A caller cannot pair their own bot with another workspace's run ID.
     await expectDenied(app, intruder, "threads/answer", {
