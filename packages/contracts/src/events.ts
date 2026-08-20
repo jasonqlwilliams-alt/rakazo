@@ -36,6 +36,22 @@ export const ProductEventType = z.enum([
 export type ProductEventType = z.infer<typeof ProductEventType>;
 
 export const MessageRole = z.enum(["user", "bot", "system"]);
+export const DIRECT_MESSAGE_MAX_LENGTH = 2_000;
+
+export const DirectMessageBlockSchema = z.object({
+  kind: z.literal("direct_message"),
+  fromBotId: Id,
+  fromName: z.string(),
+  toBotId: Id,
+  toName: z.string(),
+  text: z.string().min(1).max(DIRECT_MESSAGE_MAX_LENGTH),
+  /**
+   * Direct messages are stored once, from the recipient's perspective. Callers
+   * can project "sent" when listing the same row for its sender.
+   */
+  direction: z.literal("received"),
+});
+export type DirectMessageBlock = z.infer<typeof DirectMessageBlockSchema>;
 
 export const MessageBlock = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("text"), text: z.string() }),
