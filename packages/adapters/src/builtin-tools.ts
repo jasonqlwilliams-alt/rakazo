@@ -223,7 +223,7 @@ export const builtinAgentTools: ConnectorTool[] = [
   {
     name: "send_to_bot",
     description:
-      "Send a short note to a bot that already exists, by bot_id or exact name. The note appears as one line in both chats and the other bot wakes up on its own thread to read it. This never creates a bot — that is spawn_bot — and it does not show you the other bot's conversation.",
+      "Send a direct message to a bot that already exists, by bot_id or exact name. The message is stored in the peer thread and wakes the other bot without writing into either user's chat. This never creates a bot — that is spawn_bot — and it does not show you the other bot's user conversation.",
     inputSchema: {
       type: "object",
       properties: {
@@ -239,7 +239,7 @@ export const builtinAgentTools: ConnectorTool[] = [
         text: {
           type: "string",
           description:
-            "The note. Keep it to what the other bot needs — this is a line, not a transcript.",
+            "The direct message. Keep it to what the other bot needs — this is not a transcript.",
         },
       },
       required: ["text"],

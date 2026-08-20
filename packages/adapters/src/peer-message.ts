@@ -1,35 +1,22 @@
 import type { JobPublisher } from "@rakazo/adapter-kit";
 import { runContinueJob } from "@rakazo/adapter-kit";
-import type { MessageBlock } from "@rakazo/contracts";
-import {
-  createThreadMessage,
-  createThreadMessageInTransaction,
-  type PrismaClient,
-  type ThreadEvents,
-} from "@rakazo/db";
+import { DIRECT_MESSAGE_MAX_LENGTH, type DirectMessageBlock } from "@rakazo/contracts";
+import type { Prisma, PrismaClient } from "@rakazo/db";
 
-/**
- * A note is a log line, not a transcript. Anything longer is almost certainly an
- * attempt to paste a conversation into another bot's thread, which this verb refuses.
- */
-export const MAX_PEER_NOTE_LENGTH = 2_000;
+export const MAX_DIRECT_MESSAGE_LENGTH = DIRECT_MESSAGE_MAX_LENGTH;
 
 export interface PeerMessageDeps {
   prisma: PrismaClient;
   jobs: JobPublisher;
-  events: ThreadEvents;
 }
 
 export interface PeerMessageInput {
   sender: {
     id: string;
     name: string;
-    threadId: string;
     workspaceId: string;
     userId: string;
   };
-  /** The run the sending bot is in. Attributes the sender's own log line. */
-  runId: string;
   /** Stable per-tool-call key, so a replayed send does not wake the peer twice. */
   messageKey: string;
   botId?: string;
@@ -41,144 +28,194 @@ export interface PeerMessageResult {
   ok: true;
   toBotId: string;
   toName: string;
-  toThreadId: string;
+  directThreadId: string;
+  messageId: string;
+  seq: number;
+  role: "bot";
+  kind: "direct_message";
+  direction: "received";
   peerRunId: string;
   duplicate?: true;
 }
 
 /**
- * Send a note from one bot to an existing peer bot in the same workspace.
+ * Send a direct message from one bot to an existing peer bot in the same workspace.
  *
- * Writes one compact `agent_note` on each thread and wakes the target on its own
- * thread. It never creates, reparents, or deletes a bot, and it never copies any
- * other message between the two threads.
+ * Stores the message once in a peer-to-peer thread, distinct from either bot's
+ * user thread, and wakes the target without copying either user's conversation.
  */
 export async function sendPeerMessage(
   deps: PeerMessageDeps,
   input: PeerMessageInput,
 ): Promise<{ error: string } | PeerMessageResult> {
   const text = input.text.trim();
-  if (!text) return { error: "text is required — send the note you want the other bot to read." };
-  if (text.length > MAX_PEER_NOTE_LENGTH) {
+  if (!text) {
+    return { error: "text is required — send the direct message you want the other bot to read." };
+  }
+  if (text.length > MAX_DIRECT_MESSAGE_LENGTH) {
     return {
-      error: `text is ${text.length} characters; keep a note under ${MAX_PEER_NOTE_LENGTH}. Send a short note, not a transcript.`,
+      error: `text is ${text.length} characters; keep a direct message under ${MAX_DIRECT_MESSAGE_LENGTH}. Send a short message, not a transcript.`,
     };
   }
 
   const target = await resolvePeer(deps.prisma, input);
   if ("error" in target) return target;
 
-  const note = {
+  const block: DirectMessageBlock = {
+    kind: "direct_message",
     fromBotId: input.sender.id,
     fromName: input.sender.name,
     toBotId: target.id,
     toName: target.name,
     text,
-  } as const;
-  const received: MessageBlock = { ...note, kind: "agent_note", direction: "received" };
-  const sent: MessageBlock = { ...note, kind: "agent_note", direction: "sent" };
+    direction: "received",
+  };
+  const firstBotId = input.sender.id < target.id ? input.sender.id : target.id;
+  const secondBotId = input.sender.id < target.id ? target.id : input.sender.id;
+  const directMessageNonce = `${input.sender.id}:${input.messageKey}`;
+  const runNonce = `peer:${input.sender.id}:${target.id}:${input.messageKey}`;
 
-  const clientNonce = `peer:${input.messageKey}`;
-  const alreadySent = await deps.prisma.run.findUnique({
-    where: {
-      workspaceId_clientNonce: { workspaceId: input.sender.workspaceId, clientNonce },
-    },
-  });
-  if (alreadySent) return delivered(target, alreadySent.id, true);
-
-  // The receiving side is one transaction, so a note can never land without the run
-  // that makes the peer read it, and the run can never exist without the note.
-  let receivedMessageId: string;
-  let peerRunId: string;
+  let committed: Awaited<ReturnType<typeof persistDirectMessage>>;
   try {
-    const wake = await deps.prisma.$transaction(async (tx) => {
-      const message = await createThreadMessageInTransaction(tx, {
-        threadId: target.threadId,
-        role: "system",
-        blocks: [received],
-      });
-      const task = await tx.task.create({
-        data: {
-          workspaceId: input.sender.workspaceId,
-          botId: target.id,
-          threadId: target.threadId,
-          userId: target.userId,
-          prompt: peerNotePrompt(input.sender.name, target.name, text),
-          status: "queued",
-        },
-      });
-      const run = await tx.run.create({
-        data: {
-          workspaceId: input.sender.workspaceId,
-          botId: target.id,
-          threadId: target.threadId,
-          taskId: task.id,
-          userId: target.userId,
-          status: "queued",
-          trigger: "peer",
-          clientNonce,
-        },
-      });
-      return { message, run };
-    });
-    receivedMessageId = wake.message.id;
-    peerRunId = wake.run.id;
+    committed = await deps.prisma.$transaction((tx) =>
+      persistDirectMessage(tx, {
+        workspaceId: input.sender.workspaceId,
+        firstBotId,
+        secondBotId,
+        senderBotId: input.sender.id,
+        recipientBotId: target.id,
+        recipientThreadId: target.threadId,
+        recipientUserId: target.userId,
+        directMessageNonce,
+        runNonce,
+        block,
+        prompt: directMessagePrompt(input.sender.name, target.name, text),
+      }),
+    );
   } catch (error) {
-    const winner = await deps.prisma.run.findUnique({
+    const thread = await deps.prisma.directThread.findUnique({
       where: {
-        workspaceId_clientNonce: { workspaceId: input.sender.workspaceId, clientNonce },
+        workspaceId_firstBotId_secondBotId: {
+          workspaceId: input.sender.workspaceId,
+          firstBotId,
+          secondBotId,
+        },
+      },
+    });
+    if (!thread) throw error;
+    const winner = await deps.prisma.directMessage.findUnique({
+      where: {
+        threadId_clientNonce: {
+          threadId: thread.id,
+          clientNonce: directMessageNonce,
+        },
       },
     });
     if (!winner) throw error;
-    return delivered(target, winner.id, true);
+    committed = { thread, message: winner, duplicate: true };
   }
 
-  await deps.events.append({
-    workspaceId: input.sender.workspaceId,
-    threadId: target.threadId,
-    botId: target.id,
-    type: "thread.message.created",
-    payload: { messageId: receivedMessageId, role: "system", blocks: [received] },
-  });
-
-  // The same note, marked outbound, on the sender's own seat. Delivery already
-  // happened, so a failure here costs the sender its log line, never the note.
-  try {
-    const senderMessage = await createThreadMessage(deps.prisma, {
-      threadId: input.sender.threadId,
-      role: "bot",
-      blocks: [sent],
-      runId: input.runId,
-    });
-    await deps.events.append({
-      workspaceId: input.sender.workspaceId,
-      threadId: input.sender.threadId,
-      botId: input.sender.id,
-      runId: input.runId,
-      type: "thread.message.created",
-      payload: { messageId: senderMessage.id, role: "bot", blocks: [sent] },
-    });
-  } catch (error) {
-    console.error("peer message sender note", error);
+  if (!committed.duplicate) {
+    await deps.jobs
+      .enqueue(runContinueJob(committed.message.recipientRunId))
+      .catch((error) => console.error("peer message enqueue", error));
   }
 
-  // Deliberately no cancellation of the target's queued runs. `threads.send` cancels,
-  // because the user retyping supersedes their own queued turn; a peer note must never
-  // cancel the user's work, so this matches the bot-initiated `ensureSpawnRun` path.
-  await deps.jobs
-    .enqueue(runContinueJob(peerRunId))
-    .catch((error) => console.error("peer message enqueue", error));
-
-  return delivered(target, peerRunId);
+  return delivered(target, committed.thread.id, committed.message, committed.duplicate);
 }
 
-export function peerNotePrompt(fromName: string, toName: string, text: string) {
+interface PersistDirectMessageInput {
+  workspaceId: string;
+  firstBotId: string;
+  secondBotId: string;
+  senderBotId: string;
+  recipientBotId: string;
+  recipientThreadId: string;
+  recipientUserId: string;
+  directMessageNonce: string;
+  runNonce: string;
+  block: DirectMessageBlock;
+  prompt: string;
+}
+
+async function persistDirectMessage(
+  tx: Prisma.TransactionClient,
+  input: PersistDirectMessageInput,
+) {
+  const thread = await tx.directThread.upsert({
+    where: {
+      workspaceId_firstBotId_secondBotId: {
+        workspaceId: input.workspaceId,
+        firstBotId: input.firstBotId,
+        secondBotId: input.secondBotId,
+      },
+    },
+    create: {
+      workspaceId: input.workspaceId,
+      firstBotId: input.firstBotId,
+      secondBotId: input.secondBotId,
+    },
+    update: {},
+  });
+  const existing = await tx.directMessage.findUnique({
+    where: {
+      threadId_clientNonce: {
+        threadId: thread.id,
+        clientNonce: input.directMessageNonce,
+      },
+    },
+  });
+  if (existing) return { thread, message: existing, duplicate: true as const };
+
+  const sequence = await tx.directThread.update({
+    where: { id: thread.id },
+    data: { nextMessageSeq: { increment: 1 } },
+    select: { nextMessageSeq: true },
+  });
+  const task = await tx.task.create({
+    data: {
+      workspaceId: input.workspaceId,
+      botId: input.recipientBotId,
+      threadId: input.recipientThreadId,
+      userId: input.recipientUserId,
+      prompt: input.prompt,
+      status: "queued",
+    },
+  });
+  const run = await tx.run.create({
+    data: {
+      workspaceId: input.workspaceId,
+      botId: input.recipientBotId,
+      threadId: input.recipientThreadId,
+      taskId: task.id,
+      userId: input.recipientUserId,
+      status: "queued",
+      trigger: "peer",
+      clientNonce: input.runNonce,
+    },
+  });
+  const message = await tx.directMessage.create({
+    data: {
+      threadId: thread.id,
+      seq: sequence.nextMessageSeq - 1,
+      role: "bot",
+      blocks: [input.block] as Prisma.InputJsonValue,
+      senderBotId: input.senderBotId,
+      recipientBotId: input.recipientBotId,
+      clientNonce: input.directMessageNonce,
+      recipientRunId: run.id,
+    },
+  });
+  return { thread, message, duplicate: false as const };
+}
+
+export function directMessagePrompt(fromName: string, toName: string, text: string) {
   return [
-    `Peer bot "${fromName}" sent you a direct note. This is not the user speaking.`,
+    `Peer bot "${fromName}" sent you a direct message. This is not the user speaking.`,
     "",
     text,
     "",
-    `Answer in your own thread as ${toName}. You cannot see ${fromName}'s conversation and must not ask for it. If ${fromName} needs a reply, use send_to_bot to send one back.`,
+    `Answer as ${toName}. You cannot see ${fromName}'s user conversation and must not ask for it. If ${fromName} needs a reply, use send_to_bot to send one back.`,
   ].join("\n");
 }
 
@@ -191,7 +228,8 @@ interface ResolvedPeer {
 
 function delivered(
   target: ResolvedPeer,
-  peerRunId: string,
+  directThreadId: string,
+  message: { id: string; seq: number; recipientRunId: string },
   duplicate?: boolean,
 ): PeerMessageResult {
   return {
@@ -199,8 +237,13 @@ function delivered(
     ...(duplicate ? { duplicate: true as const } : {}),
     toBotId: target.id,
     toName: target.name,
-    toThreadId: target.threadId,
-    peerRunId,
+    directThreadId,
+    messageId: message.id,
+    seq: message.seq,
+    role: "bot",
+    kind: "direct_message",
+    direction: "received",
+    peerRunId: message.recipientRunId,
   };
 }
 
@@ -218,7 +261,7 @@ async function resolvePeer(
 
   if (botId) {
     const bot = await prisma.bot.findFirst({
-      where: { id: botId, ...scope },
+      where: { id: botId, ...scope, archivedAt: null },
       include: { thread: true },
     });
     if (!bot) {
@@ -235,7 +278,7 @@ async function resolvePeer(
   }
 
   const matches = await prisma.bot.findMany({
-    where: { name, ...scope },
+    where: { name, ...scope, archivedAt: null },
     include: { thread: true },
   });
   if (matches.length === 0) {
@@ -256,8 +299,8 @@ function finishResolve(
   input: PeerMessageInput,
 ): { error: string } | ResolvedPeer {
   if (bot.id === input.sender.id) {
-    return { error: "A bot cannot send a note to itself. Just say it in this thread." };
+    return { error: "A bot cannot send a direct message to itself." };
   }
-  if (!bot.thread) return { error: `Bot "${bot.name}" has no thread to deliver a note to.` };
+  if (!bot.thread) return { error: `Bot "${bot.name}" has no execution thread.` };
   return { id: bot.id, name: bot.name, threadId: bot.thread.id, userId: bot.userId };
 }
