@@ -159,11 +159,11 @@ describe("agent memory context", () => {
   });
 
   it("takes the memory window from the environment when one is set", () => {
-    expect(agentMemoryMaxBytes({})).toBe(256 * 1024);
+    expect(agentMemoryMaxBytes({})).toBe(384 * 1024);
     expect(agentMemoryMaxBytes({ AGENT_MEMORY_MAX_BYTES: "262144" })).toBe(262_144);
-    expect(agentMemoryMaxBytes({ AGENT_MEMORY_MAX_BYTES: "" })).toBe(256 * 1024);
-    expect(agentMemoryMaxBytes({ AGENT_MEMORY_MAX_BYTES: "not a number" })).toBe(256 * 1024);
-    expect(agentMemoryMaxBytes({ AGENT_MEMORY_MAX_BYTES: "-1" })).toBe(256 * 1024);
+    expect(agentMemoryMaxBytes({ AGENT_MEMORY_MAX_BYTES: "" })).toBe(384 * 1024);
+    expect(agentMemoryMaxBytes({ AGENT_MEMORY_MAX_BYTES: "not a number" })).toBe(384 * 1024);
+    expect(agentMemoryMaxBytes({ AGENT_MEMORY_MAX_BYTES: "-1" })).toBe(384 * 1024);
   });
 
   it("omits the memory block when neither scope has documents", async () => {
