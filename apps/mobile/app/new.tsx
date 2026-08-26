@@ -1,4 +1,9 @@
-import type { ComputerMode } from "@rakazo/contracts";
+import {
+  BOT_DESCRIPTION_MAX_LENGTH,
+  BOT_NAME_MAX_LENGTH,
+  BOT_TITLE_MAX_LENGTH,
+  type ComputerMode,
+} from "@rakazo/contracts";
 import { Stack, useRouter } from "expo-router";
 import { useState } from "react";
 import { Pressable, ScrollView, Text, TextInput } from "react-native";
@@ -75,6 +80,7 @@ export default function NewBot() {
         <Text style={{ color: "#85858A", fontSize: 14 }}>Name</Text>
         <TextInput
           value={name}
+          maxLength={BOT_NAME_MAX_LENGTH}
           onChangeText={setName}
           placeholder="Name this bot"
           placeholderTextColor="#6C6C70"
@@ -89,6 +95,7 @@ export default function NewBot() {
         <Text style={{ color: "#85858A", marginTop: 16, fontSize: 14 }}>Title</Text>
         <TextInput
           value={title}
+          maxLength={BOT_TITLE_MAX_LENGTH}
           onChangeText={setTitle}
           placeholder="Describe what this bot does"
           placeholderTextColor="#6C6C70"
@@ -103,6 +110,7 @@ export default function NewBot() {
         <Text style={{ color: "#85858A", marginTop: 16, fontSize: 14 }}>Description</Text>
         <TextInput
           value={description}
+          maxLength={BOT_DESCRIPTION_MAX_LENGTH}
           onChangeText={setDescription}
           placeholder="What this bot is for"
           placeholderTextColor="#6C6C70"

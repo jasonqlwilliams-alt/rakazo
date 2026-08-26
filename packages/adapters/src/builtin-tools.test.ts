@@ -32,6 +32,8 @@ describe("send_to_bot tool definition", () => {
     expect([...DELEGATION_TOOL_NAMES].sort()).toEqual([
       "archive_bot",
       "delete_bot",
+      "handoff_to_bot",
+      "message_bot",
       "run_subagent",
       "spawn_bot",
     ]);

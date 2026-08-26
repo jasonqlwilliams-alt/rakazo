@@ -1,4 +1,4 @@
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -18,11 +18,17 @@ import { native } from "../lib/native";
 
 export default function Account() {
   const router = useRouter();
+  const { focus } = useLocalSearchParams<{ focus?: string }>();
   const [me, setMe] = useState<MobileMe | null>(null);
   const [password, setPassword] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [archivedBots, setArchivedBots] = useState<MobileBot[]>([]);
+  const [usage, setUsage] = useState<{
+    runs: number;
+    inputTokens: number;
+    outputTokens: number;
+  } | null>(null);
 
   useEffect(() => {
     void rpc<MobileMe>("me")
@@ -31,7 +37,22 @@ export default function Account() {
     void rpc<MobileBot[]>("bots/listArchived")
       .then(setArchivedBots)
       .catch(() => undefined);
+    void rpc<{ runs: number; inputTokens: number; outputTokens: number }>("usage/summary")
+      .then(setUsage)
+      .catch(() => undefined);
   }, []);
+
+  const usageBlock = (
+    <View accessibilityLabel="Usage" style={styles.profile}>
+      <Text style={styles.settingsTitle}>Usage</Text>
+      {usage ? (
+        <Text style={styles.email}>
+          {usage.runs} runs · {usage.inputTokens + usage.outputTokens} tokens
+        </Text>
+      ) : null}
+      <Text style={styles.settingsExplanation}>Model spend uses your provider keys.</Text>
+    </View>
+  );
 
   async function restoreBot(botId: string) {
     try {
@@ -85,10 +106,53 @@ export default function Account() {
   return (
     <SafeAreaView edges={["bottom"]} style={styles.screen}>
       <ScrollView contentContainerStyle={styles.content}>
+        {focus === "usage" ? usageBlock : null}
         <View style={styles.profile}>
           <Text style={styles.name}>{me?.name || "Your account"}</Text>
           {me?.email ? <Text style={styles.email}>{me.email}</Text> : null}
         </View>
+        {focus !== "usage" ? usageBlock : null}
+
+        <Pressable
+          accessibilityRole="button"
+          disabled={pending}
+          onPress={() => router.push("/models")}
+          style={({ pressed }) => [styles.settingsButton, pressed && styles.pressed]}
+        >
+          <View>
+            <Text style={styles.settingsTitle}>Models</Text>
+            <Text style={styles.settingsExplanation}>Choose your provider and active model</Text>
+          </View>
+          <Text style={styles.chevron}>›</Text>
+        </Pressable>
+
+        <Pressable
+          accessibilityRole="button"
+          disabled={pending}
+          onPress={() => router.push("/voice")}
+          style={({ pressed }) => [styles.settingsButton, pressed && styles.pressed]}
+        >
+          <View>
+            <Text style={styles.settingsTitle}>Voice</Text>
+            <Text style={styles.settingsExplanation}>
+              Speak replies aloud with ElevenLabs, OpenAI, or Cartesia
+            </Text>
+          </View>
+          <Text style={styles.chevron}>›</Text>
+        </Pressable>
+
+        <Pressable
+          accessibilityRole="button"
+          disabled={pending}
+          onPress={() => router.push("/integrations")}
+          style={({ pressed }) => [styles.settingsButton, pressed && styles.pressed]}
+        >
+          <View>
+            <Text style={styles.settingsTitle}>Integrations</Text>
+            <Text style={styles.settingsExplanation}>Connect apps.</Text>
+          </View>
+          <Text style={styles.chevron}>›</Text>
+        </Pressable>
 
         <Pressable
           accessibilityRole="button"
@@ -236,6 +300,31 @@ const styles = StyleSheet.create({
   archivedDeleteLabel: {
     color: "#FF6961",
     fontSize: 14,
+  },
+  settingsButton: {
+    minHeight: 62,
+    borderRadius: 14,
+    backgroundColor: native.fill,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  settingsTitle: {
+    color: native.label,
+    fontSize: 17,
+    fontWeight: "600",
+  },
+  settingsExplanation: {
+    color: native.secondaryLabel,
+    fontSize: 13,
+    marginTop: 3,
+  },
+  chevron: {
+    color: native.secondaryLabel,
+    fontSize: 28,
+    fontWeight: "300",
   },
   dangerZone: {
     marginTop: 12,

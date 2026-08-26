@@ -30,6 +30,18 @@ describe("scripted runtime", () => {
     expect(script?.some((t) => t.complete)).toBe(true);
   });
 
+  it("resumes a skipped takeover without treating login as done", () => {
+    const script = inferScript("install the cli and sign in", "takeover-skipped");
+    expect(script?.some((t) => t.takeover)).toBe(false);
+    expect(script?.some((t) => t.assistant?.includes("login was skipped"))).toBe(true);
+  });
+
+  it("does not infer a takeover checkpoint from ordinary task text", () => {
+    const script = inferScript("ask me whether to record 'skipped the login'");
+    expect(script?.some((t) => t.assistant?.includes("decision"))).toBe(true);
+    expect(script?.some((t) => t.assistant?.includes("login was skipped"))).toBe(false);
+  });
+
   it("routes destination/crm work through the connector", () => {
     const script = inferScript("write this to the destination crm as a note");
     expect(script?.some((t) => t.toolCalls?.some((c) => c.name === "destination.write"))).toBe(
@@ -86,6 +98,35 @@ describe("scripted runtime", () => {
     expect(types.at(-1)).toBe("done");
   });
 
+  it("attaches a workspace file into the thread", () => {
+    const script = inferScript("write notes/result.txt and attach it to the thread");
+    expect(script?.some((t) => t.toolCalls?.some((c) => c.name === "write_file"))).toBe(true);
+    expect(script?.some((t) => t.toolCalls?.some((c) => c.name === "attach_file"))).toBe(true);
+  });
+
+  it("observes the screen when asked", () => {
+    const script = inferScript("observe your screen and type writer-desk");
+    expect(script?.some((t) => t.toolCalls?.some((c) => c.name === "computer_observe"))).toBe(true);
+    expect(
+      script?.some((t) =>
+        t.toolCalls?.some(
+          (c) =>
+            c.name === "computer_act" &&
+            Array.isArray(c.args.actions) &&
+            c.args.actions.some(
+              (action) =>
+                action &&
+                typeof action === "object" &&
+                "kind" in action &&
+                "text" in action &&
+                action.kind === "type" &&
+                action.text === "writer-desk",
+            ),
+        ),
+      ),
+    ).toBe(true);
+  });
+
   it("archives a spawned bot by exact name", () => {
     const script = inferScript("delete the bot named Scout");
     expect(
@@ -102,6 +143,7 @@ describe("builtin tools", () => {
     expect(builtinAgentTools.map((t) => t.name)).toEqual(
       expect.arrayContaining([
         "write_file",
+        "attach_file",
         "shell",
         "remember",
         "replace_memory_document",
@@ -109,6 +151,10 @@ describe("builtin tools", () => {
         "run_subagent",
         "spawn_bot",
         "archive_bot",
+        "skill_read",
+        "skill_create",
+        "skill_update",
+        "skill_delete",
       ]),
     );
   });

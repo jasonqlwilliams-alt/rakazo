@@ -1,7 +1,27 @@
+/**
+ * Shell.tsx now touches `window` at import time, so this guard needs a DOM even
+ * though it only renders to static markup.
+ *
+ * @vitest-environment jsdom
+ */
 import type { MessageBlock, ThreadMessage } from "@rakazo/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { MessageView } from "./Shell";
+
+// The lingui macros are compiled by a vite plugin the test config does not load,
+// so stand them in with identity helpers. This guard is about markup, not wording.
+vi.mock("@lingui/core/macro", () => ({
+  t: (strings: TemplateStringsArray, ...values: unknown[]) =>
+    String.raw({ raw: strings }, ...values),
+}));
+vi.mock("@lingui/react/macro", () => ({
+  useLingui: () => ({
+    t: (strings: TemplateStringsArray, ...values: unknown[]) =>
+      String.raw({ raw: strings }, ...values),
+  }),
+  Trans: ({ children }: { children?: unknown }) => children,
+}));
 
 /** The exact chrome of the right-aligned bubble the user's own turns render in. */
 const USER_BUBBLE = ["justify-end", "bg-[#F1F1EF]"] as const;
@@ -128,15 +148,32 @@ describe("agent note in the thread", () => {
   });
 });
 
-/** The single block element MessageView produces, so its click wiring can be checked. */
+/** The clickable element MessageView produces for a note, wherever it sits in the tree. */
 function elementFor(message: ThreadMessage, onOpenBot: () => void) {
-  const rendered = MessageView({
+  // MessageView is wrapped in memo(), so the callable component is its inner `type`.
+  const render = (MessageView as unknown as { type: (props: unknown) => unknown }).type;
+  const rendered = render({
     canAnswer: false,
     message,
     onAnswer: vi.fn(),
     onOpenBot,
-  }) as {
-    props: { children: Array<{ props: { onClick?: () => void } }> };
-  };
-  return rendered.props.children[0];
+  });
+  return findClickable(rendered);
+}
+
+type Node = { props?: { onClick?: () => void; children?: unknown } } | null | undefined;
+
+/** Upstream reshapes this markup freely, so locate the handler rather than a fixed index. */
+function findClickable(node: unknown): Node {
+  if (!node || typeof node !== "object") return undefined;
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const hit = findClickable(child);
+      if (hit) return hit;
+    }
+    return undefined;
+  }
+  const candidate = node as { props?: { onClick?: () => void; children?: unknown } };
+  if (typeof candidate.props?.onClick === "function") return candidate;
+  return findClickable(candidate.props?.children);
 }

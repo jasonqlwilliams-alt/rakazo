@@ -16,6 +16,7 @@ import type {
   ComputerRef,
   ConnectorCall,
   ConnectorCapabilities,
+  ConnectorCatalogItem,
   ConnectorEvent,
   ConnectorTool,
   ControlLeaseRef,
@@ -34,11 +35,24 @@ import type {
   ScreenRequest,
   ScreenSession,
   SecretRecord,
+  SemanticMemoryCapabilities,
+  SemanticMemoryPurgeHistoryRequest,
+  SemanticMemoryRecallRequest,
+  SemanticMemoryResponse,
+  SemanticMemoryResult,
+  SemanticMemorySaveRequest,
   SnapshotRef,
+  SpeechClip,
+  VoiceCapabilities,
+  VoiceInfo,
+  VoiceSynthesizeRequest,
+  VoiceTranscribeRequest,
+  VoiceVerifyResult,
 } from "./types.js";
 
 export interface SandboxProvider {
   describe(): AdapterDescriptor<SandboxCapabilities>;
+  /** Allocate or reconnect the computer, returning its reference before fallible setup. */
   provision(
     request: {
       botId: string;
@@ -48,6 +62,8 @@ export interface SandboxProvider {
     },
     context: AdapterContext,
   ): Promise<ComputerRef>;
+  /** Perform idempotent provider setup after the lifecycle has captured the reference. */
+  prepare(computer: ComputerRef, context: AdapterContext): Promise<void>;
   execute(
     computer: ComputerRef,
     request: CommandRequest,
@@ -96,6 +112,8 @@ export interface SandboxProvider {
   ): Promise<void>;
   snapshot(computer: ComputerRef, context: AdapterContext): Promise<SnapshotRef>;
   keepAlive?(computer: ComputerRef): Promise<void>;
+  /** Drop a single-screen graphical claim for this bot so another Team bot can use the display. */
+  releaseScreen?(computer: ComputerRef, context: AdapterContext): Promise<void>;
   stop(computer: ComputerRef, context: AdapterContext): Promise<void>;
   destroy(computer: ComputerRef, context: AdapterContext): Promise<void>;
 }
@@ -119,6 +137,16 @@ export interface ConnectionAuthProvider {
   revoke(connectionRef: string, context: AdapterContext): Promise<void>;
 }
 
+/** A connector that also owns an end-user app catalog and connection lifecycle. */
+export interface ManagedConnectorProvider
+  extends ConnectorProvider,
+    Omit<ConnectionAuthProvider, "describe"> {
+  catalog(context: AdapterContext, query?: string): Promise<ConnectorCatalogItem[]>;
+  listConnectedExternalIds(context: AdapterContext): Promise<string[]>;
+  connectionReady(context: AdapterContext, externalId: string): Promise<boolean>;
+  warmDirectory?(): Promise<void>;
+}
+
 export interface MemoryStore {
   describe(): AdapterDescriptor<MemoryCapabilities>;
   read(request: MemoryReadRequest, context: AdapterContext): Promise<MemorySnapshot>;
@@ -132,6 +160,23 @@ export interface MemoryStore {
     files: AsyncIterable<PortableFile>,
     context: AdapterContext,
   ): Promise<MemoryRevision>;
+}
+
+/** Optional semantic memory. Durable Markdown memory remains owned by MemoryStore. */
+export interface SemanticMemoryProvider {
+  describe(): AdapterDescriptor<SemanticMemoryCapabilities>;
+  recall(
+    request: SemanticMemoryRecallRequest,
+    context: AdapterContext,
+  ): Promise<SemanticMemoryResponse<SemanticMemoryResult[]>>;
+  save(
+    request: SemanticMemorySaveRequest,
+    context: AdapterContext,
+  ): Promise<SemanticMemoryResponse>;
+  purgeHistory(
+    request: SemanticMemoryPurgeHistoryRequest,
+    context: AdapterContext,
+  ): Promise<SemanticMemoryResponse>;
 }
 
 export interface AgentRuntime {
@@ -205,4 +250,12 @@ export interface NotificationProvider {
 export interface ExecutionRunner {
   describe(): AdapterDescriptor<{ cloud: boolean; selfHosted: boolean; desktop: boolean }>;
   dispatch(runId: string, target: "cloud" | "self-hosted" | "desktop"): Promise<void>;
+}
+
+export interface VoiceProvider {
+  describe(): AdapterDescriptor<VoiceCapabilities>;
+  verify(apiKey: string, context: AdapterContext): Promise<VoiceVerifyResult>;
+  listVoices(apiKey: string, context: AdapterContext): Promise<VoiceInfo[]>;
+  synthesize(request: VoiceSynthesizeRequest, context: AdapterContext): Promise<SpeechClip>;
+  transcribe?(request: VoiceTranscribeRequest, context: AdapterContext): Promise<{ text: string }>;
 }

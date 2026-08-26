@@ -6,6 +6,7 @@ import {
   e2bCreateOptions,
   isUnrecoverableSandboxError,
   openDesktopBrowser,
+  openDesktopUrl,
 } from "./e2b-sandbox.js";
 
 describe("sandbox idle", () => {
@@ -72,6 +73,7 @@ describe("sandbox idle", () => {
         controlLeaseId: null,
         controlLeaseExpiresAt: null,
         controlBotId: null,
+        controlRunId: null,
       },
     });
     expect(harness.events.append).toHaveBeenCalledWith(
@@ -117,6 +119,34 @@ describe("e2b create options", () => {
       },
     });
     expect(launched).toEqual(["google-chrome", "firefox"]);
+  });
+
+  it("opens a URL through the named browser launcher", async () => {
+    const launched: string[] = [];
+    const commands = {
+      run: async (cmd: string) => {
+        launched.push(cmd);
+        if (cmd.includes("google-chrome")) throw new Error("missing");
+        if (cmd.includes("firefox")) return { exitCode: 0 };
+        throw new Error("missing");
+      },
+    };
+    await openDesktopUrl(
+      {
+        commands,
+        launch: async () => {
+          throw new Error("should use gtk-launch via commands");
+        },
+        open: async () => {
+          throw new Error("should not fall back");
+        },
+      },
+      "https://example.com/page",
+    );
+    expect(launched).toEqual([
+      "gtk-launch 'google-chrome' 'https://example.com/page'",
+      "gtk-launch 'firefox' 'https://example.com/page'",
+    ]);
   });
 });
 

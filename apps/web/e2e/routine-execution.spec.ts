@@ -4,9 +4,10 @@ import { captureScreenshot, completeOnboarding, signup } from "./helpers";
 test("routine run-now completes and survives reload", async ({ page }, testInfo) => {
   const stamp = Date.now();
   await signup(page, `routine-${stamp}@rakazo.test`, "password12", "Routine");
-  await completeOnboarding(page, ["A bit of everything", "Clear and tight"]);
+  await completeOnboarding(page);
 
   await page.getByTitle("Agent computer").click();
+  await expect(page.getByRole("button", { name: "Run now" })).toHaveCount(0);
   await page.getByText("+ New routine").click();
   await page.locator("label:has-text('Name') input").fill("Daily verification");
   await page
@@ -22,6 +23,7 @@ test("routine run-now completes and survives reload", async ({ page }, testInfo)
   await expect(routine).toContainText("Weekdays at 9:00 AM");
   await captureScreenshot(page, testInfo, "33-routine-scheduled");
 
+  await routine.click();
   await page.getByRole("button", { name: "Run now" }).click();
   await expect(page.getByText(/routine-run-now-ok/i).first()).toBeVisible({ timeout: 30_000 });
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible({ timeout: 30_000 });

@@ -44,6 +44,11 @@ function createStore(bots: SeedBot[], seeded: Array<Omit<MessageRow, "id">> = []
   const messages: MessageRow[] = seeded.map((row, index) => ({ id: `seed-${index + 1}`, ...row }));
   const tasks: Array<Record<string, unknown>> = [];
   const runs: Array<Record<string, unknown>> = [];
+  // The sender is already mid-turn when it calls the tool. Kept out of `runs` so the
+  // ids this store hands out stay run-1, run-2, ... for the delivery assertions.
+  const callerRuns: Array<Record<string, unknown>> = [
+    { id: "run-eleusis", workspaceId: ELEUSIS.workspaceId, status: "running" },
+  ];
   const seqByThread = new Map<string, number>();
   const botCreate = vi.fn();
   const runUpdateMany = vi.fn();
@@ -82,6 +87,9 @@ function createStore(bots: SeedBot[], seeded: Array<Omit<MessageRow, "id">> = []
         runs.push(created);
         return created;
       },
+      // createThreadMessageInTransaction checks the writing run is not cancelled.
+      findUnique: async ({ where }: { where: { id: string } }) =>
+        [...runs, ...callerRuns].find((run) => run.id === where.id) ?? null,
     },
   };
 

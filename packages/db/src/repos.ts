@@ -1,4 +1,10 @@
-import { type Actor, BOT_COLORS, type Bot, type MessageBlock } from "@rakazo/contracts";
+import {
+  type Actor,
+  BOT_COLORS,
+  type Bot,
+  type BotSection,
+  type MessageBlock,
+} from "@rakazo/contracts";
 import type { PrismaClient } from "./client.js";
 import { type ComputerMode, ensureComputerRecord, parseComputerMode } from "./computers.js";
 import { createThreadMessageInTransaction } from "./messages.js";
@@ -15,12 +21,19 @@ function mapBot(
     color: string;
     notifyOnFinish: boolean;
     pinned: boolean;
+    sectionId: string | null;
     archivedAt: Date | null;
     parentBotId: string | null;
+    memoryScope: string | null;
     createdAt: Date;
     updatedAt: Date;
     thread: { id: string; unread: boolean } | null;
     computer: { scope: string } | null;
+    voiceId?: string | null;
+    autoSpeak?: boolean;
+    modelProvider?: string | null;
+    modelId?: string | null;
+    thinkingLevel?: string | null;
   },
   preview = "",
   status = "idle",
@@ -38,20 +51,88 @@ function mapBot(
     color: bot.color,
     notifyOnFinish: bot.notifyOnFinish,
     pinned: bot.pinned,
+    sectionId: bot.sectionId,
     archivedAt: bot.archivedAt?.toISOString() ?? null,
     unread: bot.thread.unread,
     parentBotId: bot.parentBotId,
+    memoryScope: bot.memoryScope as "isolated" | "shared" | null,
     threadId: bot.thread.id,
     preview,
     status,
     computerMode: bot.computer ? parseComputerMode(bot.computer.scope) : "team",
     createdAt: bot.createdAt.toISOString(),
     updatedAt: bot.updatedAt.toISOString(),
+    voiceId: bot.voiceId ?? null,
+    autoSpeak: bot.autoSpeak ?? false,
+    modelProvider: bot.modelProvider ?? null,
+    modelId: bot.modelId ?? null,
+    thinkingLevel: (bot.thinkingLevel as Bot["thinkingLevel"]) ?? null,
   };
 }
 
 export function createRepos(prisma: PrismaClient) {
   return {
+    async listBotSections(actor: Actor): Promise<BotSection[]> {
+      const sections = await prisma.botSection.findMany({
+        where: { workspaceId: actor.workspaceId, userId: actor.userId },
+        orderBy: [{ position: "asc" }, { createdAt: "asc" }],
+      });
+      return sections.map((section) => ({
+        id: section.id,
+        name: section.name,
+        position: section.position,
+        createdAt: section.createdAt.toISOString(),
+        updatedAt: section.updatedAt.toISOString(),
+      }));
+    },
+
+    async createBotSection(actor: Actor, input: { botId: string; name: string }) {
+      const { name } = input;
+      return prisma.$transaction(async (tx) => {
+        const bot = await tx.bot.findFirst({
+          where: {
+            id: input.botId,
+            workspaceId: actor.workspaceId,
+            userId: actor.userId,
+            archivedAt: null,
+          },
+          select: { id: true },
+        });
+        if (!bot) throw new IsolationError();
+
+        const aggregate = await tx.botSection.aggregate({
+          where: { workspaceId: actor.workspaceId, userId: actor.userId },
+          _max: { position: true },
+        });
+        await tx.botSection.createMany({
+          data: {
+            workspaceId: actor.workspaceId,
+            userId: actor.userId,
+            name,
+            position: (aggregate._max.position ?? -1) + 1,
+          },
+          skipDuplicates: true,
+        });
+        const section = await tx.botSection.findUniqueOrThrow({
+          where: {
+            workspaceId_userId_name: {
+              workspaceId: actor.workspaceId,
+              userId: actor.userId,
+              name,
+            },
+          },
+        });
+        await tx.bot.update({ where: { id: bot.id }, data: { sectionId: section.id } });
+        return {
+          id: section.id,
+          name: section.name,
+          position: section.position,
+          createdAt: section.createdAt.toISOString(),
+          updatedAt: section.updatedAt.toISOString(),
+        } satisfies BotSection;
+      });
+    },
+
     async listBots(actor: Actor, options: { archived?: boolean } = {}): Promise<Bot[]> {
       const bots = await prisma.bot.findMany({
         where: {
@@ -112,6 +193,9 @@ export function createRepos(prisma: PrismaClient) {
         parentBotId?: string | null;
         computerMode?: ComputerMode;
         spawnKey?: string;
+        modelProvider?: string | null;
+        modelId?: string | null;
+        thinkingLevel?: string | null;
         initialMessage?: {
           role: "user" | "bot" | "system";
           blocks: MessageBlock[];
@@ -126,6 +210,9 @@ export function createRepos(prisma: PrismaClient) {
         });
         color = BOT_COLORS[count % BOT_COLORS.length] ?? BOT_COLORS[0];
       }
+      let modelProvider = input.modelProvider ?? null;
+      let modelId = input.modelId ?? null;
+      let thinkingLevel = input.thinkingLevel ?? null;
       if (input.parentBotId) {
         const parent = await prisma.bot.findFirst({
           where: {
@@ -135,6 +222,11 @@ export function createRepos(prisma: PrismaClient) {
           },
         });
         if (!parent) throw new IsolationError();
+        if (!modelId) {
+          modelProvider = parent.modelProvider ?? null;
+          modelId = parent.modelId ?? null;
+        }
+        if (thinkingLevel == null) thinkingLevel = parent.thinkingLevel ?? null;
       }
       const settings = await prisma.deploymentSettings.findUnique({ where: { id: "default" } });
       const envKind = process.env.SANDBOX_PROVIDER ?? "docker";
@@ -160,6 +252,9 @@ export function createRepos(prisma: PrismaClient) {
             parentBotId: input.parentBotId ?? null,
             computerId: teamComputer.id,
             spawnKey: input.spawnKey,
+            modelProvider,
+            modelId,
+            thinkingLevel,
           },
         });
         const thread = await tx.thread.create({

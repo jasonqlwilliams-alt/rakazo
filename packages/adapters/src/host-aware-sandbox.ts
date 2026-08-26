@@ -82,6 +82,10 @@ export class HostAwareSandbox implements SandboxProvider {
     );
   }
 
+  prepare(computer: ComputerRef, context: AdapterContext) {
+    return this.route(computer).prepare(computer, context);
+  }
+
   async *execute(
     computer: ComputerRef,
     request: CommandRequest,
@@ -142,6 +146,26 @@ export class HostAwareSandbox implements SandboxProvider {
 
   snapshot(computer: ComputerRef, context: AdapterContext) {
     return this.route(computer).snapshot(computer, context);
+  }
+
+  keepAlive(computer: ComputerRef) {
+    return this.route(computer).keepAlive?.(computer) ?? Promise.resolve();
+  }
+
+  releaseScreen(computer: ComputerRef, context: AdapterContext) {
+    return this.route(computer).releaseScreen?.(computer, context) ?? Promise.resolve();
+  }
+
+  setScreenControl(
+    computer: ComputerRef,
+    interactive: boolean,
+    context: AdapterContext,
+    controlToken?: string,
+  ) {
+    return (
+      this.route(computer).setScreenControl?.(computer, interactive, context, controlToken) ??
+      Promise.resolve()
+    );
   }
 
   stop(computer: ComputerRef, context: AdapterContext) {

@@ -62,7 +62,7 @@ export async function sleepComputerIfIdle(
     traceId: "computer.sleep",
     workspaceId: computer.workspaceId,
     userId: computer.userId,
-    botId: computer.executionBotId ?? computer.controlBotId ?? undefined,
+    botId: computer.controlBotId ?? undefined,
     signal: new AbortController().signal,
   };
   const ref = toComputerRef(computer);
@@ -81,6 +81,7 @@ export async function sleepComputerIfIdle(
       providerRef: computer.providerRef,
       updatedAt: computer.updatedAt,
       executionRunId: null,
+      executionLeases: { none: { expiresAt: { gt: checkpointedAt } } },
     },
     data: { state: "suspending", homeRevision: revision, updatedAt: checkpointedAt },
   });
@@ -134,6 +135,7 @@ export async function sleepComputerIfIdle(
       controlLeaseId: null,
       controlLeaseExpiresAt: null,
       controlBotId: null,
+      controlRunId: null,
     },
   });
   const bots = await deps.prisma.bot.findMany({
@@ -167,8 +169,6 @@ function loadComputer(prisma: PrismaClient, computerId: string) {
       controlLeaseId: true,
       controlLeaseExpiresAt: true,
       controlBotId: true,
-      executionRunId: true,
-      executionBotId: true,
       updatedAt: true,
     },
   });

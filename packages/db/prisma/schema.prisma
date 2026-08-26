@@ -20,7 +20,11 @@ model User {
   members       Member[]
   invitations   Invitation[]
   modelCredentials UserModelCredential[]
+  voiceCredentials UserVoiceCredential[]
   secrets          Secret[]
+  mcpServers       McpServer[]
+  botSections      BotSection[]
+  actionApprovalRules ActionApprovalRule[]
 
   @@unique([email])
   @@map("user")
@@ -85,12 +89,16 @@ model Organization {
   members     Member[]
   invitations Invitation[]
   bots        Bot[]
+  botSections BotSection[]
   botDeletions BotDeletion[]
   threads     Thread[]
   events      Event[]
   tasks       Task[]
   runs        Run[]
   routines    Routine[]
+  scratchpadItems ScratchpadItem[]
+  taughtSkills TaughtSkill[]
+  agentSkills AgentSkill[]
   connections Connection[]
   capabilities CapabilityInstall[]
   memoryDocuments MemoryDocument[]
@@ -101,9 +109,29 @@ model Organization {
   notificationPreferences NotificationPreference[]
   computers   Computer[]
   externalEffects ExternalEffect[]
+  mcpServers   McpServer[]
+  actionApprovalRules ActionApprovalRule[]
+  workspaceMemoryConfig WorkspaceMemoryConfig?
+  chatGroups  ChatGroup[]
 
   @@unique([slug])
   @@map("organization")
+}
+
+model ActionApprovalRule {
+  id              String       @id @default(cuid())
+  workspaceId     String
+  workspace       Organization @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdByUserId String
+  createdByUser   User         @relation(fields: [createdByUserId], references: [id], onDelete: Cascade)
+  effect          String
+  matchKind       String
+  matchValue      String
+  createdAt       DateTime     @default(now())
+
+  @@unique([workspaceId, createdByUserId, effect, matchKind, matchValue])
+  @@index([workspaceId, createdByUserId])
+  @@map("action_approval_rules")
 }
 
 model Member {
@@ -169,6 +197,22 @@ model UserModelCredential {
   @@map("user_model_credentials")
 }
 
+model UserVoiceCredential {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspaceId String
+  provider    String
+  secretId    String
+  isDefault   Boolean  @default(false)
+  voiceId     String   @default("")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, workspaceId, provider])
+  @@map("user_voice_credentials")
+}
+
 model Bot {
   id             String   @id @default(cuid())
   workspaceId    String
@@ -181,9 +225,12 @@ model Bot {
   color          String
   notifyOnFinish Boolean  @default(true)
   pinned         Boolean  @default(false)
+  sectionId      String?
+  section        BotSection? @relation(fields: [sectionId], references: [id], onDelete: SetNull)
   archivedAt     DateTime?
   parentBotId    String?
   spawnKey       String?
+  memoryScope    String?
   parent         Bot?     @relation("BotChildren", fields: [parentBotId], references: [id], onDelete: SetNull)
   children       Bot[]    @relation("BotChildren")
   createdAt      DateTime @default(now())
@@ -192,7 +239,14 @@ model Bot {
   computerId     String?
   computer       Computer? @relation(fields: [computerId], references: [id], onDelete: SetNull)
   computerSwitching Boolean @default(false)
+  voiceId        String?
+  autoSpeak      Boolean  @default(false)
+  modelProvider  String?
+  modelId        String?
+  thinkingLevel  String?
   routines       Routine[]
+  scratchpadItems ScratchpadItem[]
+  taughtSkills   TaughtSkill[]
   memoryDocuments MemoryDocument[]
   agentHome      AgentHome?
   browserProfile BrowserProfile?
@@ -200,12 +254,32 @@ model Bot {
   usageRecords   UsageRecord[]
   tasks          Task[]
   runs           Run[]
+  mcpServers     BotMcpServer[]
+  groupMembers   ChatGroupMember[]
 
   @@index([workspaceId, userId, archivedAt, pinned, updatedAt])
+  @@index([sectionId])
   @@index([computerId])
   @@index([parentBotId])
   @@unique([workspaceId, spawnKey])
   @@map("bots")
+}
+
+model BotSection {
+  id          String       @id @default(cuid())
+  workspaceId String
+  workspace   Organization @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  position    Int          @default(0)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  bots        Bot[]
+
+  @@unique([workspaceId, userId, name])
+  @@index([workspaceId, userId, position, createdAt])
+  @@map("bot_sections")
 }
 
 model BotDeletion {
@@ -221,38 +295,80 @@ model BotDeletion {
   @@map("bot_deletions")
 }
 
-model Thread {
+model ChatGroup {
   id          String   @id @default(cuid())
   workspaceId String
   workspace   Organization @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  botId       String   @unique
-  bot         Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
   userId      String
+  name        String
   createdAt   DateTime @default(now())
-  nextEventSeq   Int   @default(0)
-  nextMessageSeq Int   @default(0)
-  unread      Boolean  @default(false)
-  messages    Message[]
-  events      Event[]
-  tasks       Task[]
-  runs        Run[]
+  updatedAt   DateTime @updatedAt
+  members     ChatGroupMember[]
+  thread      Thread?
+  artifacts   Artifact[]
+
+  @@index([workspaceId, userId, updatedAt])
+  @@map("chat_groups")
+}
+
+model ChatGroupMember {
+  id        String    @id @default(cuid())
+  groupId   String
+  group     ChatGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  botId     String
+  bot       Bot       @relation(fields: [botId], references: [id], onDelete: NoAction)
+  createdAt DateTime  @default(now())
+
+  @@unique([groupId, botId])
+  @@index([botId])
+  @@map("chat_group_members")
+}
+
+model Thread {
+  id                      String       @id @default(cuid())
+  workspaceId             String
+  workspace               Organization @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  botId                   String?      @unique
+  bot                     Bot?         @relation(fields: [botId], references: [id], onDelete: Cascade)
+  groupId                 String?      @unique
+  group                   ChatGroup?   @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  userId                  String
+  createdAt               DateTime     @default(now())
+  nextEventSeq            Int          @default(0)
+  nextMessageSeq          Int          @default(0)
+  historyCompactedUpToSeq Int?
+  historyCompactionSummary String?      @db.Text
+  historyCompactionGeneration Int        @default(0)
+  unread                  Boolean      @default(false)
+  messages                Message[]
+  events                  Event[]
+  tasks                   Task[]
+  runs                    Run[]
 
   @@index([workspaceId])
   @@map("threads")
 }
 
 model Message {
-  id        String   @id @default(cuid())
-  threadId  String
-  thread    Thread   @relation(fields: [threadId], references: [id], onDelete: Cascade)
-  seq       Int
-  role      String
-  blocks    Json
-  runId     String?
-  createdAt DateTime @default(now())
+  id               String   @id @default(cuid())
+  threadId         String
+  thread           Thread   @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  seq              Int
+  role             String
+  blocks           Json
+  botId            String?
+  replyToMessageId String?
+  replyTo          Message? @relation("MessageReplies", fields: [replyToMessageId], references: [id], onDelete: SetNull)
+  replies          Message[] @relation("MessageReplies")
+  runId            String?
+  clientNonce      String?
+  sourceRuns       Run[]    @relation("RunSourceMessage")
+  createdAt        DateTime @default(now())
 
   @@unique([threadId, seq])
+  @@unique([threadId, clientNonce])
   @@index([threadId, seq])
+  @@index([replyToMessageId])
   @@map("messages")
 }
 
@@ -316,6 +432,10 @@ model Run {
   leaseExpiresAt DateTime?
   checkpoint    String?
   clientNonce   String?
+  sourceMessageId String?
+  sourceMessage Message?  @relation("RunSourceMessage", fields: [sourceMessageId], references: [id], onDelete: SetNull)
+  routineId     String?
+  routine       Routine?  @relation(fields: [routineId], references: [id], onDelete: SetNull)
   startedAt     DateTime?
   completedAt   DateTime?
   createdAt     DateTime  @default(now())
@@ -328,6 +448,9 @@ model Run {
   @@index([status, leaseExpiresAt])
   @@index([status, updatedAt, id])
   @@index([workspaceId, botId])
+  @@index([sourceMessageId])
+  @@index([threadId, status, createdAt])
+  @@index([routineId])
   @@map("runs")
 }
 
@@ -373,7 +496,7 @@ model Routine {
   userId      String
   name        String
   prompt      String
-  cron        String
+  crons       String[]
   timezone    String    @default("UTC")
   active      Boolean   @default(false)
   notify      Boolean   @default(true)
@@ -381,10 +504,75 @@ model Routine {
   nextRunAt   DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+  runs        Run[]
 
   @@index([active, nextRunAt])
   @@index([workspaceId, botId])
   @@map("routines")
+}
+
+model ScratchpadItem {
+  id          String   @id @default(cuid())
+  workspaceId String
+  workspace   Organization @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  botId       String
+  bot         Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
+  userId      String
+  title       String
+  status      String   @default("open")
+  notes       String   @default("")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([workspaceId, botId, status])
+  @@index([workspaceId, botId, updatedAt])
+  @@map("scratchpad_items")
+}
+
+model TaughtSkill {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Organization @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  botId       String
+  bot         Bot       @relation(fields: [botId], references: [id], onDelete: Cascade)
+  userId      String
+  name        String    @default("")
+  goal        String
+  status      String
+  playbook    Json      @default("{}")
+  recording   Json      @default("{\"events\":[],\"snapshots\":[]}")
+  startedAt   DateTime?
+  expiresAt   DateTime?
+  stoppedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([workspaceId, botId])
+  @@index([workspaceId, botId, status])
+  // Partial unique index taught_skills_botId_recording_key is created in SQL:
+  // one recording session per bot.
+  @@map("taught_skills")
+}
+
+/// Claude Agent Skills: SKILL.md recipes shared across assistants (not per-bot).
+/// The Pi runtime already understands this format; we persist and inject them.
+/// Distinct from TaughtSkill (demo/record playbooks).
+model AgentSkill {
+  id          String   @id @default(cuid())
+  workspaceId String
+  workspace   Organization @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId      String
+  name        String
+  description String
+  content     String
+  /// user | builtin | plugin — only user skills are writable via API/tools.
+  source      String   @default("user")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([workspaceId, userId])
+  // Case-insensitive unique index agent_skills_workspaceId_userId_name_lower_key is created in SQL.
+  @@map("agent_skills")
 }
 
 model Connection {
@@ -392,6 +580,7 @@ model Connection {
   workspaceId   String
   workspace     Organization @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   userId        String
+  connectorId   String   @default("composio")
   provider      String
   displayName   String
   status        String
@@ -401,7 +590,7 @@ model Connection {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  @@index([workspaceId, userId])
+  @@index([workspaceId, userId, connectorId])
   @@map("connections")
 }
 
@@ -415,6 +604,7 @@ model CapabilityInstall {
   source      String
   version     String?
   digest      String?
+  secretId    String?
   config      Json     @default("{}")
   createdAt   DateTime @default(now())
 
@@ -500,6 +690,7 @@ model Computer {
   controlLeaseId           String?
   controlLeaseExpiresAt    DateTime?
   controlBotId             String?
+  controlRunId             String?
   controlFence             Int      @default(0)
   executionRunId           String?
   executionBotId           String?
@@ -509,17 +700,37 @@ model Computer {
   createdAt                DateTime @default(now())
   updatedAt                DateTime @updatedAt
   bots                     Bot[]
+  executionLeases          ComputerExecutionLease[]
 
   @@index([workspaceId, scope])
   @@map("computers")
+}
+
+model ComputerExecutionLease {
+  id         String   @id @default(cuid())
+  computerId String
+  computer   Computer @relation(fields: [computerId], references: [id], onDelete: Cascade)
+  botId      String
+  runId      String
+  fence      Int      @default(0)
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([computerId, botId])
+  @@index([runId])
+  @@index([computerId, expiresAt])
+  @@map("computer_execution_leases")
 }
 
 model Artifact {
   id          String   @id @default(cuid())
   workspaceId String
   workspace   Organization @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  botId       String
-  bot         Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
+  botId       String?
+  bot         Bot?     @relation(fields: [botId], references: [id], onDelete: SetNull)
+  groupId     String?
+  group       ChatGroup? @relation(fields: [groupId], references: [id], onDelete: Cascade)
   userId      String
   runId       String?
   name        String
@@ -530,6 +741,7 @@ model Artifact {
   createdAt   DateTime @default(now())
 
   @@index([workspaceId, botId])
+  @@index([groupId])
   @@map("artifacts")
 }
 
@@ -565,6 +777,22 @@ model NotificationPreference {
   @@map("notification_preferences")
 }
 
+model WorkspaceMemoryConfig {
+  id                 String   @id @default(cuid())
+  workspaceId        String   @unique
+  workspace          Organization @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId             String
+  provider           String
+  settings           Json
+  secretId           String   @unique
+  secret             Secret   @relation(fields: [secretId], references: [id], onDelete: Cascade)
+  defaultMemoryScope String   @default("isolated")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@map("workspace_memory_configs")
+}
+
 model Secret {
   id          String   @id @default(cuid())
   userId      String
@@ -573,7 +801,71 @@ model Secret {
   kind        String
   ciphertext  String
   createdAt   DateTime @default(now())
+  mcpServers  McpServer[]
+  workspaceMemoryConfig WorkspaceMemoryConfig?
 
   @@index([userId, workspaceId])
   @@map("secrets")
+}
+
+model McpServer {
+  id          String   @id @default(cuid())
+  workspaceId String
+  workspace   Organization @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  slug        String
+  name        String
+  description String   @default("")
+  transport   String
+  endpoint    String?
+  command     String?
+  args        Json     @default("[]")
+  env         Json     @default("{}")
+  headers     Json     @default("{}")
+  secretId    String?
+  secret      Secret?  @relation(fields: [secretId], references: [id], onDelete: SetNull)
+  enabled     Boolean  @default(true)
+  revision    Int      @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  assignments BotMcpServer[]
+  oauthSessions McpOAuthSession[]
+
+  @@unique([workspaceId, userId, slug])
+  @@index([workspaceId, userId])
+  @@map("mcp_servers")
+}
+
+model McpOAuthSession {
+  id          String   @id
+  workspaceId String
+  userId      String
+  serverId    String
+  server      McpServer @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  endpoint    String
+  redirectUri String
+  oauthCiphertext String
+  createdAt   DateTime @default(now())
+
+  @@index([workspaceId, userId, createdAt])
+  @@map("mcp_oauth_sessions")
+}
+
+model BotMcpServer {
+  id          String   @id @default(cuid())
+  workspaceId String
+  botId       String
+  bot         Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
+  serverId    String
+  server      McpServer @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  userId      String
+  allowAllTools Boolean @default(true)
+  allowedTools Json    @default("[]")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([botId, serverId])
+  @@index([workspaceId, userId, botId])
+  @@map("bot_mcp_servers")
 }
