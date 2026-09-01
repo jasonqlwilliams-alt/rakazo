@@ -2,12 +2,23 @@ import { existsSync } from "node:fs";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { DesktopReachability, DesktopSetup } from "@rakazo/contracts";
-import { app, BrowserWindow, dialog, ipcMain, Menu, net, type Session, session, shell } from "electron";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  net,
+  type Session,
+  session,
+  shell,
+} from "electron";
 import {
   DesktopUpdateController,
   type ElectronAutoUpdater,
   LAUNCH_CHECK_DELAY_MS,
 } from "./auto-update.js";
+import { desktopCookieHeader, imageMimeType, parsePickedFiles } from "./file-picker.js";
 import { oauthCallbackFrom } from "./oauth-callback.js";
 import {
   bundledRendererCandidates,
@@ -28,7 +39,6 @@ import {
   sessionPartitionForServerUrl,
 } from "./setup-config.js";
 import { clearSetup, readSetup, writeSetup } from "./setup-store.js";
-import { desktopCookieHeader, imageMimeType, parsePickedFiles } from "./file-picker.js";
 import { browserWindowOptions, setupWindowOptions, warmWindowTtlMs } from "./window-options.js";
 
 const PERFORMANCE_USER_DATA = process.env.RAKAZO_PERFORMANCE_USER_DATA;

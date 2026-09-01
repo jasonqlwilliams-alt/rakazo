@@ -33,7 +33,6 @@ import {
   BOT_DESCRIPTION_MAX_LENGTH,
   BOT_NAME_MAX_LENGTH,
   BOT_TITLE_MAX_LENGTH,
-  normalizeCreateBotProfile,
 } from "@rakazo/contracts";
 import {
   abortableDelay,
@@ -113,13 +112,13 @@ import { readActivityMode, writeActivityMode } from "../lib/activity-mode";
 import { type ArtifactTarget, decodeArtifactBase64 } from "../lib/artifact-open";
 import { authClient } from "../lib/auth";
 import { takeInitialBootstrap } from "../lib/bootstrap";
+import { botCreateInput, botSettingsPatch } from "../lib/bot-fields";
 import { chartViewport } from "../lib/chart-viewport";
 import { dictation } from "../lib/dictation";
 import { localTimezone } from "../lib/local-timezone";
 import { connectMcpOauth } from "../lib/mcp-connect";
 import { revokePendingAttachmentPreviews } from "../lib/pending-attachments";
 import { markAfterPaint, markOnce } from "../lib/performance";
-import { botCreateInput, botSettingsPatch } from "../lib/bot-fields";
 import { rpc } from "../lib/rpc";
 import {
   activeThreadRuns,

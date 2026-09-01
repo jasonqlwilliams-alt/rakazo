@@ -15,9 +15,9 @@ import type {
   SandboxProvider,
   SemanticMemoryProvider,
 } from "@rakazo/adapter-kit";
-import { resolveMemoryPath } from "@rakazo/adapter-kit";
 import {
   historyCompactJob,
+  resolveMemoryPath,
   routineJobKey,
   routineWakeupJob,
   runContinueJob,
@@ -128,7 +128,6 @@ import {
   parseMcpServerToolArgs,
 } from "./mcp-server-tool.js";
 import { loadAgentMemoryContext } from "./memory-context.js";
-import { sendPeerMessage } from "./peer-message.js";
 import type { MemoryProviderResolver } from "./memory-provider-factory.js";
 import { selectMemoryTools } from "./memory-tools.js";
 import {
@@ -137,6 +136,7 @@ import {
   MODEL_CANNOT_SEE_MESSAGE,
   modelAcceptsImageInput,
 } from "./model-vision.js";
+import { sendPeerMessage } from "./peer-message.js";
 import { toOAuthCredential } from "./pi-credentials.js";
 import {
   parseModelSecret,

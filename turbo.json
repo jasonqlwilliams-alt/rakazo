@@ -1,6 +1,10 @@
 {
   "$schema": "https://turbo.build/schema.json",
-  "globalPassThroughEnv": ["RAKAZO_API_URL", "RAKAZO_SESSION_TOKEN", "COREPACK_ENABLE_DOWNLOAD_PROMPT"],
+  "globalPassThroughEnv": [
+    "RAKAZO_API_URL",
+    "RAKAZO_SESSION_TOKEN",
+    "COREPACK_ENABLE_DOWNLOAD_PROMPT"
+  ],
   "tasks": {
     "generate": {
       "cache": false

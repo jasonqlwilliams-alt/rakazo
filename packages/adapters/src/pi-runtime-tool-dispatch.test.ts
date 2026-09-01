@@ -108,8 +108,8 @@ vi.mock("./pi-openai-compatible-provider.js", () => ({
   registerOpenAiCompatibleRuntime: (models: unknown) => models,
 }));
 
-import { maxToolCallsPerTurn, PiAgentRuntime } from "./pi-runtime.js";
 import { builtinAgentTools } from "./builtin-tools.js";
+import { maxToolCallsPerTurn, PiAgentRuntime } from "./pi-runtime.js";
 
 const destinationTool: ConnectorTool = {
   name: "destination.write",
