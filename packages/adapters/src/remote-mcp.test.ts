@@ -59,6 +59,29 @@ describe("remote MCP URL policy", () => {
     expect(result).toEqual({ address: "203.0.113.10", family: 4 });
   });
 
+  it("drives the guarded dispatcher with fetch from the same undici package", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => {
+      throw new TypeError("fetch failed", {
+        cause: new Error("invalid onRequestStart method"),
+      });
+    };
+    let resolutions = 0;
+    const safeFetch = createSafeRemoteFetch(undefined, async () => {
+      resolutions += 1;
+      if (resolutions > 1) throw new Error("lookup reached");
+      return [{ address: "203.0.113.10", family: 4 as const }];
+    });
+    try {
+      await expect(safeFetch("https://connectors.example.test/mcp")).rejects.toMatchObject({
+        cause: { message: "lookup reached" },
+      });
+    } finally {
+      await safeFetch.close();
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("rejects Request inputs instead of silently dropping their method and body", async () => {
     const safeFetch = createSafeRemoteFetch(
       async () => new Response(null, { status: 204 }),

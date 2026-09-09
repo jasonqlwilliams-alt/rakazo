@@ -5,6 +5,7 @@ import { buildModelConnectPlaintext } from "./model-connect.js";
 import { listPiCatalog } from "./pi-models.js";
 import { parseModelSecret, secretValuesToRedact, serializeModelSecret } from "./pi-oauth.js";
 import {
+  createOpenAiCompatibleFetch,
   createOpenAiCompatibleLookup,
   OPENAI_COMPATIBLE_CATALOG_MODEL_ID,
   openAiCompatibleCatalogProvider,
@@ -46,6 +47,72 @@ describe("model connect", () => {
 });
 
 describe("openai-compatible provider", () => {
+  it("drives hostname dispatchers with fetch from the same undici package", async () => {
+    const originalFetch = globalThis.fetch;
+    const originalAllowPublic = process.env.RAKAZO_OPENAI_COMPAT_ALLOW_PUBLIC;
+    globalThis.fetch = async () => {
+      throw new TypeError("fetch failed", {
+        cause: new Error("invalid onRequestStart method"),
+      });
+    };
+    process.env.RAKAZO_OPENAI_COMPAT_ALLOW_PUBLIC = "1";
+    try {
+      const safeFetch = createOpenAiCompatibleFetch(undefined, async () => {
+        throw new Error("lookup reached");
+      });
+      await expect(safeFetch("https://models.example.test/v1/models")).rejects.toMatchObject({
+        cause: { message: "lookup reached" },
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalAllowPublic === undefined) delete process.env.RAKAZO_OPENAI_COMPAT_ALLOW_PUBLIC;
+      else process.env.RAKAZO_OPENAI_COMPAT_ALLOW_PUBLIC = originalAllowPublic;
+    }
+  });
+
+  it("flattens a global Request before dispatching it with npm undici", async () => {
+    const originalAllowPublic = process.env.RAKAZO_OPENAI_COMPAT_ALLOW_PUBLIC;
+    process.env.RAKAZO_OPENAI_COMPAT_ALLOW_PUBLIC = "1";
+    try {
+      const safeFetch = createOpenAiCompatibleFetch(undefined, async () => {
+        throw new Error("lookup reached");
+      });
+      const request = new Request("https://models.example.test/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "local" }),
+      });
+      await expect(safeFetch(request)).rejects.toMatchObject({
+        cause: { message: "lookup reached" },
+      });
+    } finally {
+      if (originalAllowPublic === undefined) delete process.env.RAKAZO_OPENAI_COMPAT_ALLOW_PUBLIC;
+      else process.env.RAKAZO_OPENAI_COMPAT_ALLOW_PUBLIC = originalAllowPublic;
+    }
+  });
+
+  it("preserves an injected fetch for hostname requests", async () => {
+    let calls = 0;
+    const safeFetch = createOpenAiCompatibleFetch(
+      async () => {
+        calls += 1;
+        return new Response(null, { status: 204 });
+      },
+      async () => [{ address: "203.0.113.10", family: 4 }],
+    );
+    const originalAllowPublic = process.env.RAKAZO_OPENAI_COMPAT_ALLOW_PUBLIC;
+    process.env.RAKAZO_OPENAI_COMPAT_ALLOW_PUBLIC = "1";
+    try {
+      await expect(safeFetch("https://models.example.test/v1/models")).resolves.toMatchObject({
+        status: 204,
+      });
+      expect(calls).toBe(1);
+    } finally {
+      if (originalAllowPublic === undefined) delete process.env.RAKAZO_OPENAI_COMPAT_ALLOW_PUBLIC;
+      else process.env.RAKAZO_OPENAI_COMPAT_ALLOW_PUBLIC = originalAllowPublic;
+    }
+  });
+
   it("rejects public hostnames that resolve to private addresses", async () => {
     const lookup = createOpenAiCompatibleLookup(
       new URL("https://models.example.test/v1"),

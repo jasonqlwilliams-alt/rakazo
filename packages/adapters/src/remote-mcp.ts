@@ -3,7 +3,7 @@ import { isIP, type LookupFunction } from "node:net";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { ConnectorTool } from "@rakazo/adapter-kit";
-import { Agent } from "undici";
+import { Agent, fetch as undiciFetch } from "undici";
 import { combineSignals } from "./connector-safety.js";
 import {
   createAddressCheckedLookup,
@@ -137,12 +137,19 @@ export function createSafeRemoteFetch(
   resolve: ResolveHostname = resolveHostname,
 ): SafeRemoteFetch {
   const dispatcher = new Agent({ connect: { lookup: createSafeLookup(resolve) } });
+  // Node's built-in fetch (bundled undici 6.x) rejects a dispatcher built by the
+  // npm undici package (8.x) with "invalid onRequestStart method". Pair the
+  // Agent with undici's own fetch unless a caller injected a custom fetch.
+  const fetchImpl =
+    baseFetch === globalThis.fetch
+      ? (undiciFetch as unknown as typeof globalThis.fetch)
+      : baseFetch;
   const safeFetch = async (input: string | URL | Request, init?: RequestInit) => {
     if (typeof input !== "string" && !(input instanceof URL)) {
       throw new Error("Connector fetch requires a URL, not a Request");
     }
     const url = await assertSafeRemoteUrl(String(input), resolve);
-    const response = await baseFetch(url, {
+    const response = await fetchImpl(url, {
       ...init,
       redirect: "manual",
       dispatcher,

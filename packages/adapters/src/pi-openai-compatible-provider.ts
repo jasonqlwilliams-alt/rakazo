@@ -8,7 +8,7 @@ import {
   type ProviderStreams,
 } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
-import { Agent } from "undici";
+import { Agent, fetch as undiciFetch } from "undici";
 import {
   createAddressCheckedLookup,
   isLinkLocalAddress,
@@ -123,9 +123,17 @@ export function createOpenAiCompatibleFetch(
       isIP(hostname) === 0
         ? new Agent({ connect: { lookup: createOpenAiCompatibleLookup(url, resolve) } })
         : undefined;
+    // A dispatcher must be driven by the fetch implementation from the same
+    // undici package. Preserve injected fetches and the dispatcher-free IP path.
+    const useUndiciFetch = dispatcher !== undefined && baseFetch === globalThis.fetch;
+    const fetchImpl = useUndiciFetch
+      ? (undiciFetch as unknown as typeof globalThis.fetch)
+      : baseFetch;
     try {
-      const response = await baseFetch(input instanceof Request ? input : url, {
-        ...init,
+      const response = await fetchImpl(input instanceof Request && !useUndiciFetch ? input : url, {
+        ...(input instanceof Request && useUndiciFetch
+          ? await requestInitForUndici(input, init)
+          : init),
         redirect: "error",
         ...(dispatcher ? { dispatcher } : {}),
       } as RequestInit & { dispatcher?: Agent });
@@ -135,6 +143,15 @@ export function createOpenAiCompatibleFetch(
       throw error;
     }
   };
+}
+
+/** npm undici does not recognize Node's built-in Request class, so flatten a
+ * global Request when switching from the built-in fetch to npm undici. */
+async function requestInitForUndici(input: Request, init?: RequestInit): Promise<RequestInit> {
+  const request = new Request(input, init);
+  const body =
+    request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer();
+  return { method: request.method, headers: request.headers, body, signal: request.signal };
 }
 
 async function closeDispatcherWithResponse(

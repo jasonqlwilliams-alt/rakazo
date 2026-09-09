@@ -23,6 +23,12 @@ const ASSIGNMENT = {
   server: SERVER,
 };
 
+const TEST_NETWORK = {
+  // Read the global per call so a fetch stubbed after construction is injected.
+  fetch: (input: string | URL | Request, init?: RequestInit) => globalThis.fetch(input, init),
+  resolveHostname: async () => [{ address: "203.0.113.10", family: 4 }],
+};
+
 function mcpFetch(state: { failNext: boolean; initializations: number }) {
   return vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const request = input instanceof Request ? input : new Request(input, init);
@@ -72,9 +78,7 @@ describe("MCP connector session cache", () => {
       },
     };
     const connector = new McpConnector(prisma as never, {} as never, {
-      network: {
-        resolveHostname: async () => [{ address: "203.0.113.10", family: 4 }],
-      },
+      network: TEST_NETWORK,
     });
     const context = {
       workspaceId: "w1",
