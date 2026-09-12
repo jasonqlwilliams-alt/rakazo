@@ -25,7 +25,8 @@ export type ModelEmulatorResponse =
       /** Concatenation must equal the JSON arguments. Each fragment is a separate SSE delta. */
       argumentChunks?: string[];
     }
-  | { type: "error"; status: number; message: string }
+  | { type: "error"; status: number; message: string; headers?: Record<string, string> }
+  | { type: "stream-error"; text: string; message: string }
   | { type: "disconnect"; text?: string }
   | { type: "hold"; text?: string; onOpen?: () => void; onClose?: () => void };
 
@@ -72,7 +73,7 @@ export async function startModelEmulator(options: {
       await step.expect(body);
       const reply = typeof step.response === "function" ? step.response(body) : step.response;
       if (reply.type === "error") {
-        response.writeHead(reply.status, { "content-type": "application/json" });
+        response.writeHead(reply.status, { "content-type": "application/json", ...reply.headers });
         response.end(JSON.stringify({ error: { message: reply.message, type: "fixture_error" } }));
         return;
       }
@@ -110,6 +111,10 @@ export async function startModelEmulator(options: {
         emit({}, "tool_calls");
       } else {
         if (reply.text) emit({ content: reply.text });
+        if (reply.type === "stream-error") {
+          response.end(`data: ${JSON.stringify({ error: { message: reply.message } })}\n\n`);
+          return;
+        }
         if (reply.type === "hold") {
           response.once("close", () => reply.onClose?.());
           reply.onOpen?.();

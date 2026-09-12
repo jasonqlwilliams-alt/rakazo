@@ -628,6 +628,10 @@ least 32 characters in production). It must differ from `BETTER_AUTH_SECRET`,
 `SANDBOX_SUPERVISOR_TOKEN`, and `SCREEN_PROXY_SECRET`. Leave the profile disabled if you would
 rather not grant the capability.
 
+## Model quota retries and research
+
+For model rate-limit waits and optional CLI research delegation, see [Model quota retries and Antigravity](model-quota-retry.md).
+
 ## Other deployment layouts
 
 API and worker need always-on processes; serverless request handlers are not sufficient. Use a

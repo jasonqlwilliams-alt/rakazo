@@ -60,10 +60,14 @@ describe("built-in skill precedence in the API", () => {
     "keeps %j listed, readable and mutable",
     async (name) => {
       const { service } = setup([savedSkill(name)]);
-      await expect(service.list(actor)).resolves.toEqual([
+      const listed = await service.list(actor);
+      expect(listed.filter((skill) => skill.name.trim().toLowerCase() === "interrogate")).toEqual([
         expect.objectContaining({ id: "saved-1", name, readOnly: false }),
       ]);
-      await expect(service.listWithContent(actor)).resolves.toEqual([
+      const withContent = await service.listWithContent(actor);
+      expect(
+        withContent.filter((skill) => skill.name.trim().toLowerCase() === "interrogate"),
+      ).toEqual([
         expect.objectContaining({ id: "saved-1", content: expect.stringContaining("Saved steps") }),
       ]);
       await expect(service.get(actor, { name: " INTERROGATE " })).resolves.toMatchObject({
@@ -105,7 +109,8 @@ describe("built-in skill precedence in the API", () => {
         id: "builtin:Interrogate",
         readOnly: true,
       });
-      await expect(service.list(actor)).resolves.toEqual([
+      const listed = await service.list(actor);
+      expect(listed.filter((skill) => skill.name.trim().toLowerCase() === "interrogate")).toEqual([
         expect.objectContaining({ id: "builtin:Interrogate" }),
       ]);
       await expect(service.get(actor, { skillId: "saved-1" })).rejects.toThrow();

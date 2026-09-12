@@ -41,6 +41,7 @@ import {
   registerOpenAiCompatibleCatalog,
   registerOpenAiCompatibleRuntime,
 } from "./pi-openai-compatible-provider.js";
+import { streamWithQuotaRetry } from "./pi-quota-retry.js";
 import {
   PiJsonlSessionRecorder,
   type PiSessionHandle,
@@ -237,7 +238,9 @@ export class PiAgentRuntime implements AgentRuntime {
           sessionId: conversationSessionId(request.threadId, request.botId),
           steeringMode: "all",
           streamFn: (m, ctx, options) =>
-            models.streamSimple(m, ctx, reliableStreamOptions(m, options)),
+            streamWithQuotaRetry(models, m, ctx, reliableStreamOptions(m, options), (text) =>
+              queue.push({ type: "progress", text }),
+            ),
           getApiKey: async () => apiKey,
           transformContext: async (messages) =>
             pruneComputerScreenshotContext(messages, request.model.maxImagesPerPrompt),
@@ -1008,7 +1011,14 @@ async function executeSubagent(host: ToolHost, executionId: string, args: Record
   const nested = new Agent({
     sessionId: conversationSessionId(host.request.threadId, host.request.botId, agentId),
     streamFn: (m, ctx, options) =>
-      selectedModel.models.streamSimple(m, ctx, reliableStreamOptions(m, options)),
+      streamWithQuotaRetry(
+        selectedModel.models,
+        m,
+        ctx,
+        reliableStreamOptions(m, options),
+        (progress) =>
+          host.queue.push({ type: "subagent", agentId, name, task, status: "running", progress }),
+      ),
     getApiKey: async () => selectedModel.apiKey,
     transformContext: async (messages) =>
       pruneComputerScreenshotContext(messages, host.request.model.maxImagesPerPrompt),
@@ -1617,8 +1627,8 @@ export function reliableStreamOptions(
 
   if (model.provider === "openai-codex" || model.api === "openai-codex-responses") {
     // Pi cannot fall back after a WebSocket has emitted its start event. Long tool
-    // runs then surface abnormal close 1006 as a terminal model error. SSE has
-    // bounded network retries and no long-lived connection between tool turns.
+    // runs then surface abnormal close 1006 as a terminal model error. SSE avoids
+    // keeping a connection open between tool turns.
     next = { ...next, transport: "sse" };
   }
 
