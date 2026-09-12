@@ -94,6 +94,21 @@ describe("skill tools", () => {
     prisma = makePrisma();
   });
 
+  it("makes Antigravity available through the shared catalog and skill_read", async () => {
+    const catalog = await listAgentSkillRecords(prisma as never, owner);
+    const skill = catalog.find((record) => record.name === "antigravity-research");
+    expect(skill).toMatchObject({ source: "builtin", readOnly: true });
+    const byName = await skillReadFromTool(prisma as never, owner, {
+      name: "antigravity-research",
+    });
+    const byId = await skillReadFromTool(prisma as never, owner, { skillId: skill!.id });
+    expect(byName).toEqual(byId);
+    expect(byName).toMatchObject({ name: skill!.name, content: skill!.content });
+    expect(await skillUpdateFromTool(prisma as never, owner, {
+      skillId: skill!.id, description: "Replace routing",
+    })).toEqual({ error: "Builtin and plugin skills are read-only." });
+  });
+
   it("creates, reads, updates, and deletes user skills", async () => {
     const created = await skillCreateFromTool(prisma as never, owner, {
       name: "Daily standup",

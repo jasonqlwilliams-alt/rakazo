@@ -239,7 +239,7 @@ export class PiAgentRuntime implements AgentRuntime {
           steeringMode: "all",
           streamFn: (m, ctx, options) =>
             streamWithQuotaRetry(models, m, ctx, reliableStreamOptions(m, options), (text) =>
-              queue.push({ type: "progress", text, activity: true }),
+              queue.push({ type: "progress", text }),
             ),
           getApiKey: async () => apiKey,
           transformContext: async (messages) =>

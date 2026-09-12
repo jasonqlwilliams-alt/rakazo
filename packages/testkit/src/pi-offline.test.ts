@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AgentRunRequest, AgentRuntimeEvent, ConnectorTool } from "@rakazo/adapter-kit";
 import { PiAgentRuntime } from "@rakazo/adapters";
+import { builtinAgentTools } from "../../adapters/src/builtin-tools.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type ModelEmulatorRequest, startModelEmulator } from "./model-emulator.js";
 
@@ -51,6 +52,75 @@ function latestToolResult(request: ModelEmulatorRequest) {
 }
 
 describe("real Pi against an offline model HTTP endpoint", () => {
+  it("keeps the original HTTP 503 diagnostic despite Retry-After", async () => {
+    const server = await startModelEmulator({
+      steps: [{
+        expect() {},
+        response: {
+          type: "error", status: 503, message: "No available provider",
+          headers: { "Retry-After": "10" },
+        },
+      }],
+    });
+    cleanups.push(() => server.close());
+    const events: AgentRuntimeEvent[] = [];
+    await expect(collect(new PiAgentRuntime().run(runRequest(server.model)), events))
+      .rejects.toThrow("No available provider");
+    expect(events.filter((event) => event.type === "progress")).toEqual([]);
+    server.assertComplete();
+  });
+
+  it("surfaces the mid-response receipt through real SSE without replay", async () => {
+    const server = await startModelEmulator({
+      steps: [{
+        expect() {},
+        response: { type: "stream-error", text: "Partial answer", message: "429 rate limit" },
+      }],
+    });
+    cleanups.push(() => server.close());
+    const events: AgentRuntimeEvent[] = [];
+    await expect(collect(new PiAgentRuntime().run(runRequest(server.model)), events))
+      .rejects.toThrow("Mid-response quota stop was not retried. Try again later.");
+    expect(events.filter((event) => event.type === "text")).toEqual([
+      { type: "text", text: "Partial answer" },
+    ]);
+    expect(events.filter((event) => event.type === "progress")).toEqual([]);
+    server.assertComplete();
+  });
+
+  it("retries a nested model call and reports its quota wait as subagent progress", async () => {
+    vi.stubEnv("RAKAZO_QUOTA_RETRY_MS", "1");
+    const server = await startModelEmulator({
+      steps: [
+        {
+          expect() {},
+          response: {
+            type: "tool", id: "delegate", name: "run_subagent",
+            arguments: { name: "Research", task: "Summarize the fixture." },
+          },
+        },
+        { expect() {}, response: { type: "error", status: 429, message: "Busy" } },
+        { expect() {}, response: { type: "text", text: "Research complete." } },
+        {
+          expect(request) {
+            expect(latestToolResult(request)?.content).toContain("Research complete.");
+          },
+          response: { type: "text", text: "Summary ready." },
+        },
+      ],
+    });
+    cleanups.push(() => server.close());
+    const events = await collect(new PiAgentRuntime().run(runRequest(server.model, {
+      tools: builtinAgentTools.filter((tool) => tool.name === "run_subagent"),
+    })));
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "subagent", name: "Research", status: "running",
+      progress: "Quota, retrying in 1s (1/3).",
+    }));
+    expect(events.at(-1)).toEqual({ type: "done", text: "Summary ready." });
+    server.assertComplete();
+  });
+
   it("retries the failed continuation without replaying a completed tool effect", async () => {
     vi.stubEnv("RAKAZO_QUOTA_RETRY_MS", "1");
     let writes = 0;
@@ -94,15 +164,17 @@ describe("real Pi against an offline model HTTP endpoint", () => {
     );
     server.assertComplete();
     expect(writes).toBe(1);
-    expect(events).toContainEqual({
-      type: "progress",
-      text: "Quota, retrying in 1s (1/3).",
-      activity: true,
-    });
+    expect(events.filter((event) => event.type === "progress" && !event.activity)).toEqual([
+      { type: "progress", text: "Quota, retrying in 1s (1/3)." },
+      { type: "progress", text: "" },
+    ]);
+    const resumedTextIndex = events.findIndex((event) => event.type === "text");
+    expect(resumedTextIndex).toBeGreaterThanOrEqual(0);
+    expect(events.slice(0, resumedTextIndex)).toContainEqual({ type: "progress", text: "" });
     expect(events.at(-1)).toEqual({ type: "done", text: "Saved." });
   });
 
-  it("preserves Retry-After from an actual failed HTTP response", async () => {
+  it("preserves Retry-After and clears visible quota progress on cancellation", async () => {
     vi.stubEnv("RAKAZO_QUOTA_RETRY_MS", "1");
     const controller = new AbortController();
     const events: AgentRuntimeEvent[] = [];
@@ -131,11 +203,10 @@ describe("real Pi against an offline model HTTP endpoint", () => {
       expect(controller.signal.aborted).toBe(true);
     }
     server.assertComplete();
-    expect(events).toContainEqual({
-      type: "progress",
-      text: "Quota, retrying in 90s (1/3).",
-      activity: true,
-    });
+    expect(events.filter((event) => event.type === "progress")).toEqual([
+      { type: "progress", text: "Quota, retrying in 90s (1/3)." },
+      { type: "progress", text: "" },
+    ]);
   });
 
   it("fails the run with the quota receipt when retries are exhausted", async () => {

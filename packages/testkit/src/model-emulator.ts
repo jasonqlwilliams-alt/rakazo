@@ -26,6 +26,7 @@ export type ModelEmulatorResponse =
       argumentChunks?: string[];
     }
   | { type: "error"; status: number; message: string; headers?: Record<string, string> }
+  | { type: "stream-error"; text: string; message: string }
   | { type: "disconnect"; text?: string }
   | { type: "hold"; text?: string; onOpen?: () => void; onClose?: () => void };
 
@@ -110,6 +111,10 @@ export async function startModelEmulator(options: {
         emit({}, "tool_calls");
       } else {
         if (reply.text) emit({ content: reply.text });
+        if (reply.type === "stream-error") {
+          response.end(`data: ${JSON.stringify({ error: { message: reply.message } })}\n\n`);
+          return;
+        }
         if (reply.type === "hold") {
           response.once("close", () => reply.onClose?.());
           reply.onOpen?.();
