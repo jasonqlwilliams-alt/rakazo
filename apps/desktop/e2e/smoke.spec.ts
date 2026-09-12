@@ -28,7 +28,6 @@ test("launches with a narrow preload bridge and an isolated renderer", async () 
 
       return {
         bridgeKeys: desktop ? Object.keys(desktop).sort() : [],
-        fileKeys: desktop?.file ? Object.keys(desktop.file).sort() : [],
         windowKeys: desktop ? Object.keys(desktop.window).sort() : [],
         updateKeys: desktop ? Object.keys(desktop.update).sort() : [],
         platform: desktop?.platform,
@@ -42,15 +41,7 @@ test("launches with a narrow preload bridge and an isolated renderer", async () 
       };
     });
 
-    expect(renderer.bridgeKeys).toEqual([
-      "file",
-      "localSettings",
-      "oauth",
-      "platform",
-      "update",
-      "window",
-    ]);
-    expect(renderer.fileKeys).toEqual(["pick"]);
+    expect(renderer.bridgeKeys).toEqual(["localSettings", "oauth", "platform", "update", "window"]);
     expect(renderer.windowKeys).toEqual(["close", "minimize", "state", "toggleMaximize"]);
     expect(renderer.updateKeys).toEqual(["check", "download", "install", "state"]);
     expect(renderer.platform).toBe(process.platform);

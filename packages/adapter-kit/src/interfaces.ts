@@ -263,12 +263,7 @@ export interface AgentHomeStore {
     context: AdapterContext,
     options?: { maxBytes?: number },
   ): Promise<string>;
-  writeFile(
-    botId: string,
-    path: string,
-    content: string | Uint8Array,
-    context: AdapterContext,
-  ): Promise<void>;
+  writeFile(botId: string, path: string, content: string, context: AdapterContext): Promise<void>;
   list(
     botId: string,
     path: string,

@@ -22,7 +22,6 @@ import {
 } from "./auto-update.js";
 import { openBrowserAuth } from "./browser-auth.js";
 import { DOCKER_INSTALL_LINKS, isDesktopSetupLink, runDocker } from "./docker-cli.js";
-import { desktopCookieHeader, imageMimeType, parsePickedFiles } from "./file-picker.js";
 import { requestLocalSettings } from "./local-settings.js";
 import {
   LocalStackController,
@@ -1172,85 +1171,6 @@ app.whenReady().then(async () => {
     // window behavior while the user keeps working after that failure.
     if (state.phase !== "ready" || state.message !== null) quitting = false;
     return state;
-  });
-  ipcMain.handle("desktop.file.pick", async (event, input: unknown) => {
-    const serverUrl = currentTargetUrl;
-    if (!fromMainWindow(event) || !serverUrl) {
-      throw new Error("File picking is only available from the active Rakazo window");
-    }
-    const botId =
-      input && typeof input === "object" && "botId" in input
-        ? String((input as { botId: unknown }).botId)
-        : "";
-    if (!botId) throw new Error("Choose an active bot before attaching photos");
-    const win = windowFrom(event);
-    const options = {
-      title: "Add photos to Rakazo",
-      properties: ["openFile", "multiSelections"] as Array<"openFile" | "multiSelections">,
-      filters: [
-        {
-          name: "Images",
-          extensions: [
-            "png",
-            "jpg",
-            "jpeg",
-            "gif",
-            "webp",
-            "bmp",
-            "tif",
-            "tiff",
-            "heic",
-            "heif",
-            "avif",
-          ],
-        },
-      ],
-    };
-    const selection = win
-      ? await dialog.showOpenDialog(win, options)
-      : await dialog.showOpenDialog(options);
-    if (selection.canceled || selection.filePaths.length === 0) return [];
-    if (selection.filePaths.length > 12) throw new Error("Choose no more than 12 images at once");
-
-    const form = new FormData();
-    form.set("botId", botId);
-    let total = 0;
-    for (const filePath of selection.filePaths) {
-      const mimeType = imageMimeType(filePath);
-      if (!mimeType) throw new Error(`${path.basename(filePath)} is not a supported image`);
-      const info = await stat(filePath);
-      if (info.size > 25 * 1024 * 1024) {
-        throw new Error(`${path.basename(filePath)} is larger than 25 MB`);
-      }
-      total += info.size;
-      if (total > 100 * 1024 * 1024) {
-        throw new Error("The selected images are larger than 100 MB together");
-      }
-      form.append(
-        "files",
-        new Blob([new Uint8Array(await readFile(filePath))], { type: mimeType }),
-        path.basename(filePath),
-      );
-    }
-
-    const cookies = await event.sender.session.cookies.get({ url: serverUrl });
-    const response = await fetch(new URL("/api/desktop-files", serverUrl), {
-      method: "POST",
-      headers: {
-        cookie: desktopCookieHeader(cookies),
-        origin: new URL(serverUrl).origin,
-      },
-      body: form,
-    });
-    const payload: unknown = await response.json().catch(() => null);
-    if (!response.ok) {
-      const message =
-        payload && typeof payload === "object" && "error" in payload
-          ? String((payload as { error: unknown }).error)
-          : "Could not attach photos";
-      throw new Error(message);
-    }
-    return parsePickedFiles(payload);
   });
   ipcMain.handle("desktop.setup.state", (event) => {
     if (!fromSetupWindow(event)) return null;

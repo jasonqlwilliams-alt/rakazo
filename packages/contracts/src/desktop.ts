@@ -36,23 +36,12 @@ export interface RakazoDesktopOAuthCallback {
   state?: string;
 }
 
-export interface DesktopPickedFile {
-  name: string;
-  path: string;
-  size: number;
-  mimeType: string;
-}
-
 export interface RakazoDesktop {
   /** Only the isolated local settings window is authorized to call this bridge. */
   localSettings?: {
     request: (pathname: string, body: string) => Promise<{ status: number; body: string }>;
   };
   platform: string;
-  /** Optional during rolling desktop upgrades; the web-safe input is the fallback. */
-  file?: {
-    pick: (input: { botId: string }) => Promise<DesktopPickedFile[]>;
-  };
   window: {
     close: () => Promise<void>;
     minimize: () => Promise<void>;
