@@ -104,9 +104,12 @@ describe("skill tools", () => {
     const byId = await skillReadFromTool(prisma as never, owner, { skillId: skill!.id });
     expect(byName).toEqual(byId);
     expect(byName).toMatchObject({ name: skill!.name, content: skill!.content });
-    expect(await skillUpdateFromTool(prisma as never, owner, {
-      skillId: skill!.id, description: "Replace routing",
-    })).toEqual({ error: "Builtin and plugin skills are read-only." });
+    expect(
+      await skillUpdateFromTool(prisma as never, owner, {
+        skillId: skill!.id,
+        description: "Replace routing",
+      }),
+    ).toEqual({ error: "Builtin and plugin skills are read-only." });
   });
 
   it("creates, reads, updates, and deletes user skills", async () => {

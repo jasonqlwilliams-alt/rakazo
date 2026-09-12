@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AgentRunRequest, AgentRuntimeEvent, ConnectorTool } from "@rakazo/adapter-kit";
 import { PiAgentRuntime } from "@rakazo/adapters";
-import { builtinAgentTools } from "../../adapters/src/builtin-tools.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { builtinAgentTools } from "../../adapters/src/builtin-tools.js";
 import { type ModelEmulatorRequest, startModelEmulator } from "./model-emulator.js";
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -54,33 +54,41 @@ function latestToolResult(request: ModelEmulatorRequest) {
 describe("real Pi against an offline model HTTP endpoint", () => {
   it("keeps the original HTTP 503 diagnostic despite Retry-After", async () => {
     const server = await startModelEmulator({
-      steps: [{
-        expect() {},
-        response: {
-          type: "error", status: 503, message: "No available provider",
-          headers: { "Retry-After": "10" },
+      steps: [
+        {
+          expect() {},
+          response: {
+            type: "error",
+            status: 503,
+            message: "No available provider",
+            headers: { "Retry-After": "10" },
+          },
         },
-      }],
+      ],
     });
     cleanups.push(() => server.close());
     const events: AgentRuntimeEvent[] = [];
-    await expect(collect(new PiAgentRuntime().run(runRequest(server.model)), events))
-      .rejects.toThrow("No available provider");
+    await expect(
+      collect(new PiAgentRuntime().run(runRequest(server.model)), events),
+    ).rejects.toThrow("No available provider");
     expect(events.filter((event) => event.type === "progress")).toEqual([]);
     server.assertComplete();
   });
 
   it("surfaces the mid-response receipt through real SSE without replay", async () => {
     const server = await startModelEmulator({
-      steps: [{
-        expect() {},
-        response: { type: "stream-error", text: "Partial answer", message: "429 rate limit" },
-      }],
+      steps: [
+        {
+          expect() {},
+          response: { type: "stream-error", text: "Partial answer", message: "429 rate limit" },
+        },
+      ],
     });
     cleanups.push(() => server.close());
     const events: AgentRuntimeEvent[] = [];
-    await expect(collect(new PiAgentRuntime().run(runRequest(server.model)), events))
-      .rejects.toThrow("Mid-response quota stop was not retried. Try again later.");
+    await expect(
+      collect(new PiAgentRuntime().run(runRequest(server.model)), events),
+    ).rejects.toThrow("Mid-response quota stop was not retried. Try again later.");
     expect(events.filter((event) => event.type === "text")).toEqual([
       { type: "text", text: "Partial answer" },
     ]);
@@ -95,7 +103,9 @@ describe("real Pi against an offline model HTTP endpoint", () => {
         {
           expect() {},
           response: {
-            type: "tool", id: "delegate", name: "run_subagent",
+            type: "tool",
+            id: "delegate",
+            name: "run_subagent",
             arguments: { name: "Research", task: "Summarize the fixture." },
           },
         },
@@ -110,13 +120,21 @@ describe("real Pi against an offline model HTTP endpoint", () => {
       ],
     });
     cleanups.push(() => server.close());
-    const events = await collect(new PiAgentRuntime().run(runRequest(server.model, {
-      tools: builtinAgentTools.filter((tool) => tool.name === "run_subagent"),
-    })));
-    expect(events).toContainEqual(expect.objectContaining({
-      type: "subagent", name: "Research", status: "running",
-      progress: "Quota, retrying in 1s (1/3).",
-    }));
+    const events = await collect(
+      new PiAgentRuntime().run(
+        runRequest(server.model, {
+          tools: builtinAgentTools.filter((tool) => tool.name === "run_subagent"),
+        }),
+      ),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "subagent",
+        name: "Research",
+        status: "running",
+        progress: "Quota, retrying in 1s (1/3).",
+      }),
+    );
     expect(events.at(-1)).toEqual({ type: "done", text: "Summary ready." });
     server.assertComplete();
   });

@@ -6,8 +6,8 @@ import type { ProductEvent, ThreadSnapshot } from "@rakazo/contracts";
 import { AppBootstrapSchema } from "@rakazo/contracts";
 import { PiAgentRuntime } from "../../../packages/adapters/src/pi-runtime";
 import { listAgentSkillRecords } from "../../../packages/adapters/src/skill-tools";
-import { startModelEmulator } from "../../../packages/testkit/src/model-emulator";
 import type { ModelEmulatorStep } from "../../../packages/testkit/src/model-emulator";
+import { startModelEmulator } from "../../../packages/testkit/src/model-emulator";
 import { reduceThreadSnapshot } from "../src/lib/thread-events";
 import { captureScreenshot } from "./helpers";
 
@@ -26,36 +26,84 @@ for (const scenario of cases) {
     const runtime = new PiAgentRuntime();
     const now = "2026-09-12T12:00:00.000Z";
     let snapshot: ThreadSnapshot = {
-      botId: "fixture-bot", threadId: "fixture-thread", cursor: -1,
-      messages: [], olderCursor: null, run: null,
+      botId: "fixture-bot",
+      threadId: "fixture-thread",
+      cursor: -1,
+      messages: [],
+      olderCursor: null,
+      run: null,
     };
     let seq = 0;
     const publish = (type: ProductEvent["type"], payload: ProductEvent["payload"]) => {
       snapshot = reduceThreadSnapshot(snapshot, {
-        id: `event-${++seq}`, seq, type, payload, spaceId: "fixture-space",
-        threadId: snapshot.threadId, botId: "fixture-bot", runId: "fixture-run", createdAt: now,
+        id: `event-${++seq}`,
+        seq,
+        type,
+        payload,
+        spaceId: "fixture-space",
+        threadId: snapshot.threadId,
+        botId: "fixture-bot",
+        runId: "fixture-run",
+        createdAt: now,
       })!;
     };
     const bot = {
-      id: "fixture-bot", spaceId: "fixture-space", name: "Research", title: "",
-      description: "", instructions: "Complete the requested task.", color: "gray",
-      notifyOnFinish: false, pinned: false, sectionId: null, archivedAt: null,
-      unread: false, parentBotId: null, memoryScope: null, threadId: snapshot.threadId,
-      preview: "", status: "idle", computerMode: "team", updatedAt: now, createdAt: now,
-      voiceId: null, autoSpeak: false, modelProvider: null, modelId: null,
-      thinkingLevel: null, teamChatAmbientEnabled: false, teamChatRules: "",
-      webhookConfigured: false, spawnKey: null,
+      id: "fixture-bot",
+      spaceId: "fixture-space",
+      name: "Research",
+      title: "",
+      description: "",
+      instructions: "Complete the requested task.",
+      color: "gray",
+      notifyOnFinish: false,
+      pinned: false,
+      sectionId: null,
+      archivedAt: null,
+      unread: false,
+      parentBotId: null,
+      memoryScope: null,
+      threadId: snapshot.threadId,
+      preview: "",
+      status: "idle",
+      computerMode: "team",
+      updatedAt: now,
+      createdAt: now,
+      voiceId: null,
+      autoSpeak: false,
+      modelProvider: null,
+      modelId: null,
+      thinkingLevel: null,
+      teamChatAmbientEnabled: false,
+      teamChatRules: "",
+      webhookConfigured: false,
+      spawnKey: null,
     };
     const me = {
-      userId: "fixture-user", email: "reader@example.test", name: "Reader",
-      spaceId: "fixture-space", isDeploymentOwner: false, needsModel: false,
-      defaultProvider: "openai-compatible", defaultModel: "offline-fixture",
-      computerHost: null, canChooseHostComputer: false, sandboxProvider: "fake", avatarStyle: "robot",
+      userId: "fixture-user",
+      email: "reader@example.test",
+      name: "Reader",
+      spaceId: "fixture-space",
+      isDeploymentOwner: false,
+      needsModel: false,
+      defaultProvider: "openai-compatible",
+      defaultModel: "offline-fixture",
+      computerHost: null,
+      canChooseHostComputer: false,
+      sandboxProvider: "fake",
+      avatarStyle: "robot",
     };
-    const bootstrap = () => AppBootstrapSchema.parse({
-      me, bots: [bot], groups: [], botSections: [], archivedBots: [], archivedGroups: [],
-      thread: snapshot, routines: [], spaces: [],
-    });
+    const bootstrap = () =>
+      AppBootstrapSchema.parse({
+        me,
+        bots: [bot],
+        groups: [],
+        botSections: [],
+        archivedBots: [],
+        archivedGroups: [],
+        thread: snapshot,
+        routines: [],
+        spaces: [],
+      });
     const skills = await listAgentSkillRecords(
       { agentSkill: { findMany: async () => [] } } as never,
       { spaceId: "fixture-space", userId: "fixture-user" },
@@ -67,61 +115,104 @@ for (const scenario of cases) {
     let work: Promise<void> | undefined;
     let error: string | undefined;
     let failedRequest: unknown;
-    const steps: ModelEmulatorStep[] = scenario === "retry" ? [
-      {
-        expect() {},
-        response: { type: "tool", id: "write-once", name: "write_file",
-          arguments: { path: "notes.txt", content: "hello" } },
-      },
-      {
-        expect(request) { failedRequest = request; },
-        response: { type: "error", status: 429, message: "Tokens per minute exceeded" },
-      },
-      {
-        expect(request) { expect(request).toEqual(failedRequest); },
-        response: { type: "text", text: "Saved." },
-      },
-    ] : scenario === "exhausted" ? Array.from({ length: 4 }, () => ({
-      expect() {}, response: { type: "error" as const, status: 429, message: "quota exceeded" },
-    })) : [{
-      expect() {},
-      response: scenario === "partial"
-        ? { type: "stream-error", text: "Partial answer", message: "429 rate limit" }
-        : { type: "error", status: 503, message: "No available provider",
-          headers: { "Retry-After": "10" } },
-    }];
+    const steps: ModelEmulatorStep[] =
+      scenario === "retry"
+        ? [
+            {
+              expect() {},
+              response: {
+                type: "tool",
+                id: "write-once",
+                name: "write_file",
+                arguments: { path: "notes.txt", content: "hello" },
+              },
+            },
+            {
+              expect(request) {
+                failedRequest = request;
+              },
+              response: { type: "error", status: 429, message: "Tokens per minute exceeded" },
+            },
+            {
+              expect(request) {
+                expect(request).toEqual(failedRequest);
+              },
+              response: { type: "text", text: "Saved." },
+            },
+          ]
+        : scenario === "exhausted"
+          ? Array.from({ length: 4 }, () => ({
+              expect() {},
+              response: { type: "error" as const, status: 429, message: "quota exceeded" },
+            }))
+          : [
+              {
+                expect() {},
+                response:
+                  scenario === "partial"
+                    ? { type: "stream-error", text: "Partial answer", message: "429 rate limit" }
+                    : {
+                        type: "error",
+                        status: 503,
+                        message: "No available provider",
+                        headers: { "Retry-After": "10" },
+                      },
+              },
+            ];
     const server = await startModelEmulator({
-      steps: steps.map((step) => ({ ...step, expect(request) {
-        requestTimes.push(performance.now() - startedAt);
-        return step.expect(request);
-      } })),
+      steps: steps.map((step) => ({
+        ...step,
+        expect(request) {
+          requestTimes.push(performance.now() - startedAt);
+          return step.expect(request);
+        },
+      })),
     });
     const run = async (prompt: string) => {
       startedAt = performance.now();
       publish("thread.message.created", { role: "user", blocks: [{ kind: "text", text: prompt }] });
       publish("run.started", { trigger: "user" });
       try {
-        for await (const event of runtime.run({
-          botId: "fixture-bot", threadId: snapshot.threadId, runId: "fixture-run",
-          prompt, instructions: bot.instructions, history: [], model: server.model,
-          tools: [{ name: "write_file", description: "Save a file", inputSchema: {
-            type: "object", properties: { path: { type: "string" }, content: { type: "string" } },
-            required: ["path", "content"], additionalProperties: false,
-          } }],
-          executeTool: async (_name, args) => {
-            expect(args.path).toBe("notes.txt");
-            writes++;
-            await writeFile(testInfo.outputPath("notes.txt"), String(args.content));
-            return { saved: true };
+        for await (const event of runtime.run(
+          {
+            botId: "fixture-bot",
+            threadId: snapshot.threadId,
+            runId: "fixture-run",
+            prompt,
+            instructions: bot.instructions,
+            history: [],
+            model: server.model,
+            tools: [
+              {
+                name: "write_file",
+                description: "Save a file",
+                inputSchema: {
+                  type: "object",
+                  properties: { path: { type: "string" }, content: { type: "string" } },
+                  required: ["path", "content"],
+                  additionalProperties: false,
+                },
+              },
+            ],
+            executeTool: async (_name, args) => {
+              expect(args.path).toBe("notes.txt");
+              writes++;
+              await writeFile(testInfo.outputPath("notes.txt"), String(args.content));
+              return { saved: true };
+            },
           },
-        }, { signal: controller.signal })) {
+          { signal: controller.signal },
+        )) {
           events.push({ elapsedMs: performance.now() - startedAt, event });
           if (event.type === "progress") {
             publish("thread.progress", { text: event.text, activity: event.activity });
           } else if (event.type === "text") {
             publish("thread.progress", { delta: event.text, streaming: true });
           } else if (event.type === "done") {
-            publish("thread.message.created", { role: "bot", blocks: [{ kind: "text", text: event.text }] });
+            publish("thread.message.created", {
+              role: "bot",
+              blocks: [{ kind: "text", text: event.text }],
+            });
             publish("run.completed", {});
           }
         }
@@ -131,10 +222,25 @@ for (const scenario of cases) {
       }
     };
     try {
-      await page.route("**/api/auth/get-session**", (route) => route.fulfill({ json: {
-        user: { id: me.userId, name: me.name, email: me.email, emailVerified: true, createdAt: now, updatedAt: now },
-        session: { id: "fixture-session", userId: me.userId, expiresAt: "2099-01-01T00:00:00Z" },
-      } }));
+      await page.route("**/api/auth/get-session**", (route) =>
+        route.fulfill({
+          json: {
+            user: {
+              id: me.userId,
+              name: me.name,
+              email: me.email,
+              emailVerified: true,
+              createdAt: now,
+              updatedAt: now,
+            },
+            session: {
+              id: "fixture-session",
+              userId: me.userId,
+              expiresAt: "2099-01-01T00:00:00Z",
+            },
+          },
+        }),
+      );
       await page.route("**/rpc/**", async (route) => {
         const procedure = new URL(route.request().url()).pathname.slice("/rpc/".length);
         let result: unknown = [];
@@ -153,7 +259,8 @@ for (const scenario of cases) {
         } else if (procedure === "spaces/list") {
           result = { spaces: [], current: { bots: [bot], groups: [], botSections: [] } };
         } else if (procedure === "agentSkills/list") result = skills;
-        else if (procedure === "computer/status" || procedure === "computer/screenUrl") result = null;
+        else if (procedure === "computer/status" || procedure === "computer/screenUrl")
+          result = null;
         await route.fulfill({ json: { json: result } });
       });
       await page.setViewportSize({ width: 1440, height: 900 });
@@ -173,13 +280,23 @@ for (const scenario of cases) {
       await page.getByRole("button", { name: "Send", exact: true }).click();
       await expect.poll(() => Boolean(work)).toBe(true);
       if (scenario === "retry") {
-        await expect.poll(() => events.some(({ event }) => event.type === "progress" && event.text === "Quota, retrying in 60s (1/3).")).toBe(true);
+        await expect
+          .poll(() =>
+            events.some(
+              ({ event }) =>
+                event.type === "progress" && event.text === "Quota, retrying in 60s (1/3).",
+            ),
+          )
+          .toBe(true);
         await page.reload();
-        await expect(page.getByText("Quota, retrying in 60s (1/3).", { exact: true }))
-          .toBeVisible({ timeout: 2_000 });
+        await expect(page.getByText("Quota, retrying in 60s (1/3).", { exact: true })).toBeVisible({
+          timeout: 2_000,
+        });
         await captureScreenshot(page, testInfo, "quota-wait-desktop");
         await page.setViewportSize({ width: 390, height: 844 });
-        await expect(page.getByText("Quota, retrying in 60s (1/3).", { exact: true })).toBeVisible();
+        await expect(
+          page.getByText("Quota, retrying in 60s (1/3).", { exact: true }),
+        ).toBeVisible();
         await captureScreenshot(page, testInfo, "quota-wait-mobile-web");
       }
       await work;
@@ -194,24 +311,39 @@ for (const scenario of cases) {
         await expect(page.getByText("Saved.", { exact: true })).toBeVisible();
         await expect(page.getByText(/^Quota, retrying/)).toHaveCount(0);
       } else {
-        const expected = scenario === "partial"
-          ? "Mid-response quota stop was not retried. Try again later."
-          : scenario === "exhausted"
-            ? "Quota retry failed after 3 retries. Try again later."
-            : "No available provider";
+        const expected =
+          scenario === "partial"
+            ? "Mid-response quota stop was not retried. Try again later."
+            : scenario === "exhausted"
+              ? "Quota retry failed after 3 retries. Try again later."
+              : "No available provider";
         expect(error).toContain(expected);
         await expect(page.getByTestId("composer-error")).toContainText(expected);
         if (scenario !== "exhausted") expect(requestTimes).toHaveLength(1);
       }
       await captureScreenshot(page, testInfo, `quota-${scenario}-result`);
       const receiptPath = testInfo.outputPath("runtime-receipt.json");
-      await writeFile(receiptPath, JSON.stringify({
-        scenario, transport: "real Pi against loopback HTTP/SSE", storage: "RPC fixture",
-        requestTimesMs: requestTimes, toolWrites: writes,
-        persistedText: writes ? await readFile(testInfo.outputPath("notes.txt"), "utf8") : null,
-        error: error ?? null, events,
-      }, null, 2));
-      await testInfo.attach("runtime-receipt", { path: receiptPath, contentType: "application/json" });
+      await writeFile(
+        receiptPath,
+        JSON.stringify(
+          {
+            scenario,
+            transport: "real Pi against loopback HTTP/SSE",
+            storage: "RPC fixture",
+            requestTimesMs: requestTimes,
+            toolWrites: writes,
+            persistedText: writes ? await readFile(testInfo.outputPath("notes.txt"), "utf8") : null,
+            error: error ?? null,
+            events,
+          },
+          null,
+          2,
+        ),
+      );
+      await testInfo.attach("runtime-receipt", {
+        path: receiptPath,
+        contentType: "application/json",
+      });
     } finally {
       controller.abort();
       await work;
