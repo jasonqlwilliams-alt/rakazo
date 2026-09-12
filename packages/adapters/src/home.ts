@@ -127,7 +127,7 @@ export class LocalAgentHomeStore implements AgentHomeStore {
   async writeFile(
     botId: string,
     filePath: string,
-    content: string | Uint8Array,
+    content: string,
     _context: AdapterContext,
   ): Promise<void> {
     await this.withBotWrite(botId, async () => {
@@ -139,8 +139,7 @@ export class LocalAgentHomeStore implements AgentHomeStore {
         0o666,
       );
       try {
-        if (typeof content === "string") await handle.writeFile(content, "utf8");
-        else await handle.writeFile(content);
+        await handle.writeFile(content, "utf8");
       } finally {
         await handle.close();
       }
