@@ -134,7 +134,6 @@ function databaseErrorCode(error: unknown): string {
   return "delivery_error";
 }
 
-/** Prefer the full bot transcript for a run so interim progress is not mistaken for the sole result. */
 async function botRunOutcomeText(
   prisma: {
     message: {
