@@ -174,6 +174,86 @@ describe("real Pi against an offline model HTTP endpoint", () => {
     });
   });
 
+  it("runs no replayed tool call until the consumer has applied the retraction", async () => {
+    vi.stubEnv("RAKAZO_QUOTA_RETRY_MS", "1");
+    const server = await startModelEmulator({
+      steps: [
+        {
+          expect() {},
+          response: { type: "stream-error", text: "Saving now. ", message: "429 rate limit" },
+        },
+        {
+          expect() {},
+          response: {
+            type: "tool",
+            id: "update",
+            name: "message_user",
+            arguments: { text: "Saved it." },
+          },
+        },
+        { expect() {}, response: { type: "text", text: "Done." } },
+      ],
+    });
+    cleanups.push(() => server.close());
+    const messageUser: ConnectorTool = {
+      name: "message_user",
+      description: "Post a short progress update",
+      inputSchema: {
+        type: "object",
+        properties: { text: { type: "string" } },
+        required: ["text"],
+      },
+    };
+    // Stand in for the executor: its unpublished text, and a publish from message_user.
+    let unpublished = "";
+    const published: string[] = [];
+    let toolRan!: () => void;
+    const toolRunning = new Promise<void>((resolve) => {
+      toolRan = resolve;
+    });
+    const events = new PiAgentRuntime().run(
+      runRequest(server.model, {
+        tools: [messageUser],
+        executeTool: async () => {
+          toolRan();
+          published.push(unpublished);
+          unpublished = "";
+          return { ok: true };
+        },
+      }),
+    );
+    for await (const event of events) {
+      if (event.type === "text") unpublished += event.text;
+      if (event.type === "retract") {
+        // The executor is mid-await (a lease read or event append) when the replay arrives.
+        await Promise.race([toolRunning, new Promise((resolve) => setTimeout(resolve, 300))]);
+        unpublished = unpublished.slice(0, unpublished.length - event.chars);
+      }
+    }
+    server.assertComplete();
+    expect(published).toEqual([""]);
+  });
+
+  it("settles the run when its consumer stops reading at a retraction", async () => {
+    vi.stubEnv("RAKAZO_QUOTA_RETRY_MS", "1");
+    const server = await startModelEmulator({
+      steps: [
+        {
+          expect() {},
+          response: { type: "stream-error", text: "Saving now. ", message: "429 rate limit" },
+        },
+        { expect() {}, response: { type: "text", text: "Saved." } },
+      ],
+    });
+    cleanups.push(() => server.close());
+    const seen: string[] = [];
+    for await (const event of new PiAgentRuntime().run(runRequest(server.model))) {
+      seen.push(event.type);
+      if (event.type === "retract") break;
+    }
+    expect(seen.at(-1)).toBe("retract");
+  });
+
   it("drops a nested model call's discarded text from the subagent result", async () => {
     vi.stubEnv("RAKAZO_QUOTA_RETRY_MS", "1");
     const server = await startModelEmulator({

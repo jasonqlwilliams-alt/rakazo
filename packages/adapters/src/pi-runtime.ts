@@ -291,8 +291,11 @@ export class PiAgentRuntime implements AgentRuntime {
             requestTextStart = streamed.length;
           }
           if (startsQuotaReplay(event)) {
-            queue.push({ type: "retract", chars: streamed.length - requestTextStart });
+            const chars = streamed.length - requestTextStart;
             streamed = streamed.slice(0, requestTextStart);
+            // The replay's tool calls run, and can publish narration, only after the
+            // consumer has dropped the discarded text.
+            await queue.pushAndWait({ type: "retract", chars }, signal);
           }
           if (event.type === "message_end") {
             await piSession?.appendMessage(event.message);
@@ -1548,6 +1551,8 @@ function sanitizeProviderError(provider: string, message: string): string {
 
 interface EventQueue {
   push(event: AgentRuntimeEvent): void;
+  /** Resolves once the consumer has handled the event, stopped reading, or the run aborted. */
+  pushAndWait(event: AgentRuntimeEvent, signal: AbortSignal): Promise<void>;
   fail(error: Error): void;
   close(): void;
   iterate(): AsyncIterable<AgentRuntimeEvent>;
@@ -1610,14 +1615,34 @@ function createGate(max: number) {
 }
 
 function createQueue(): EventQueue {
-  const items: AgentRuntimeEvent[] = [];
+  const items: Array<{ event: AgentRuntimeEvent; handled?: () => void }> = [];
+  const waiting = new Set<() => void>();
   let wake: (() => void) | undefined;
   let closed = false;
+  let released = false;
   let failure: Error | undefined;
+  const push = (event: AgentRuntimeEvent) => {
+    items.push({ event });
+    wake?.();
+  };
   return {
-    push(event) {
-      items.push(event);
-      wake?.();
+    push,
+    pushAndWait(event, signal) {
+      if (released || signal.aborted) {
+        push(event);
+        return Promise.resolve();
+      }
+      return new Promise<void>((resolve) => {
+        const handled = () => {
+          waiting.delete(handled);
+          signal.removeEventListener("abort", handled);
+          resolve();
+        };
+        waiting.add(handled);
+        signal.addEventListener("abort", handled, { once: true });
+        items.push({ event, handled });
+        wake?.();
+      });
     },
     fail(error) {
       failure = error;
@@ -1629,16 +1654,25 @@ function createQueue(): EventQueue {
       wake?.();
     },
     async *iterate() {
-      while (true) {
-        if (items.length) {
-          yield items.shift()!;
-          continue;
+      try {
+        while (true) {
+          const item = items.shift();
+          if (item) {
+            // A consumer asks for the next event only after it has handled this one.
+            yield item.event;
+            item.handled?.();
+            continue;
+          }
+          if (failure) throw failure;
+          if (closed) return;
+          await new Promise<void>((resolve) => {
+            wake = resolve;
+          });
         }
-        if (failure) throw failure;
-        if (closed) return;
-        await new Promise<void>((resolve) => {
-          wake = resolve;
-        });
+      } finally {
+        // A consumer that stopped reading must not strand a waiting producer.
+        released = true;
+        for (const handled of waiting) handled();
       }
     },
   };
