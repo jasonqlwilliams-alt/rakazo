@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { ComposioEmulator, createJobReconciler } from "@rakazo/adapters";
@@ -114,7 +114,9 @@ describeDatabase("worker outcome product recovery", () => {
         return Boolean(outcome?.botOutcomeFailedAt);
       });
       for (let tick = 0; tick < 10; tick++) await reconciler.reconcileOnce();
-      const failureReceipt = await prisma.run.findUniqueOrThrow({ where: { id: failedOutcome.id } });
+      const failureReceipt = await prisma.run.findUniqueOrThrow({
+        where: { id: failedOutcome.id },
+      });
       const errors = sink.events.filter(
         (event) => event.receipt === `bot-outcome:${failedOutcome.id}`,
       );
@@ -215,7 +217,11 @@ describeDatabase("worker outcome product recovery", () => {
             id: routine.id,
             initiallyActive: routine.active,
             activated: { active: activated.active, nextRunAt: activated.nextRunAt },
-            fires: fires.map((fire) => ({ id: fire.id, status: fire.status, trigger: fire.trigger })),
+            fires: fires.map((fire) => ({
+              id: fire.id,
+              status: fire.status,
+              trigger: fire.trigger,
+            })),
             paused: {
               active: paused.active,
               nextRunAt: paused.nextRunAt,
