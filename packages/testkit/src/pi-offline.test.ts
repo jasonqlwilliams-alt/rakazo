@@ -134,25 +134,90 @@ describe("real Pi against an offline model HTTP endpoint", () => {
     expect(events.at(-1)).toEqual({ type: "done", text: "Saved." });
   });
 
-  it("surfaces the mid-response receipt through real SSE without replay", async () => {
+  it("replays a request after streamed text hit a quota stop without repeating the text", async () => {
+    vi.stubEnv("RAKAZO_QUOTA_RETRY_MS", "1");
+    let failedRequest: ModelEmulatorRequest | undefined;
     const server = await startModelEmulator({
       steps: [
         {
-          expect() {},
-          response: { type: "stream-error", text: "Partial answer", message: "429 rate limit" },
+          expect(request) {
+            failedRequest = request;
+          },
+          response: { type: "stream-error", text: "Saving now. ", message: "429 rate limit" },
+        },
+        {
+          expect(request) {
+            expect(request).toEqual(failedRequest);
+          },
+          response: { type: "text", text: "Saving it now. Saved." },
         },
       ],
     });
     cleanups.push(() => server.close());
-    const events: AgentRuntimeEvent[] = [];
-    await expect(
-      collect(new PiAgentRuntime().run(runRequest(server.model)), events),
-    ).rejects.toThrow("Mid-response quota stop was not retried. Try again later.");
-    expect(events.filter((event) => event.type === "text")).toEqual([
-      { type: "text", text: "Partial answer" },
-    ]);
-    expect(events.filter((event) => event.type === "progress")).toEqual([]);
+    const events = await collect(new PiAgentRuntime().run(runRequest(server.model)));
     server.assertComplete();
+    expect(
+      events.filter(
+        (event) => event.type === "text" || event.type === "retract" || event.type === "done",
+      ),
+    ).toEqual([
+      { type: "text", text: "Saving now. " },
+      { type: "retract", chars: "Saving now. ".length },
+      { type: "text", text: "Saving it now. Saved." },
+      { type: "done", text: "Saving it now. Saved." },
+    ]);
+    // The retraction lands after the quota notice and before any replayed text.
+    const retract = events.findIndex((event) => event.type === "retract");
+    expect(events.slice(0, retract)).toContainEqual({
+      type: "progress",
+      text: "Quota, retrying in 1s (1/3).",
+    });
+  });
+
+  it("drops a nested model call's discarded text from the subagent result", async () => {
+    vi.stubEnv("RAKAZO_QUOTA_RETRY_MS", "1");
+    const server = await startModelEmulator({
+      steps: [
+        {
+          expect() {},
+          response: {
+            type: "tool",
+            id: "delegate",
+            name: "run_subagent",
+            arguments: { name: "Research", task: "Summarize the fixture." },
+          },
+        },
+        {
+          expect() {},
+          response: { type: "stream-error", text: "Research is ", message: "429 rate limit" },
+        },
+        { expect() {}, response: { type: "text", text: "Research complete." } },
+        {
+          expect(request) {
+            expect(latestToolResult(request)?.content).toBe("Research complete.");
+          },
+          response: { type: "text", text: "Summary ready." },
+        },
+      ],
+    });
+    cleanups.push(() => server.close());
+    const events = await collect(
+      new PiAgentRuntime().run(
+        runRequest(server.model, {
+          tools: builtinAgentTools.filter((tool) => tool.name === "run_subagent"),
+        }),
+      ),
+    );
+    server.assertComplete();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "subagent",
+        status: "completed",
+        result: "Research complete.",
+      }),
+    );
+    expect(events.filter((event) => event.type === "retract")).toEqual([]);
+    expect(events.at(-1)).toEqual({ type: "done", text: "Summary ready." });
   });
 
   it("retries a nested model call and reports its quota wait as subagent progress", async () => {

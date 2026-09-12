@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import {
   Agent,
   type AgentMessage,
@@ -41,7 +42,7 @@ import {
   registerOpenAiCompatibleCatalog,
   registerOpenAiCompatibleRuntime,
 } from "./pi-openai-compatible-provider.js";
-import { streamWithQuotaRetry } from "./pi-quota-retry.js";
+import { QUOTA_REPLAY, streamWithQuotaRetry } from "./pi-quota-retry.js";
 import {
   PiJsonlSessionRecorder,
   type PiSessionHandle,
@@ -280,11 +281,19 @@ export class PiAgentRuntime implements AgentRuntime {
         signal.addEventListener("abort", onAbort);
 
         let streamed = "";
+        let requestTextStart = 0;
         let toolCalls = 0;
         let toolActivityShowing = false;
         let silentToolContinuations = 0;
         let toolWorkPendingFinal = false;
         agent.subscribe(async (event) => {
+          if (event.type === "message_start" && event.message.role === "assistant") {
+            requestTextStart = streamed.length;
+          }
+          if (startsQuotaReplay(event)) {
+            queue.push({ type: "retract", chars: streamed.length - requestTextStart });
+            streamed = streamed.slice(0, requestTextStart);
+          }
           if (event.type === "message_end") {
             await piSession?.appendMessage(event.message);
           }
@@ -1040,8 +1049,13 @@ async function executeSubagent(host: ToolHost, executionId: string, args: Record
   host.nestedAgents.add(nested);
 
   let streamed = "";
+  let requestTextStart = 0;
   let lastPush = 0;
   nested.subscribe((event) => {
+    if (event.type === "message_start" && event.message.role === "assistant") {
+      requestTextStart = streamed.length;
+    }
+    if (startsQuotaReplay(event)) streamed = streamed.slice(0, requestTextStart);
     if (event.type === "tool_execution_start") {
       if (!consumeToolCall(host)) return;
       const toolName = "toolName" in event && event.toolName ? String(event.toolName) : "a tool";
@@ -1144,6 +1158,17 @@ async function executeSubagent(host: ToolHost, executionId: string, args: Record
     host.nestedAgents.delete(nested);
     host.subagentGate.release();
   }
+}
+
+/** A quota replay discarded the text streamed so far for this model request. */
+function startsQuotaReplay(event: AgentEvent): boolean {
+  const marked =
+    event.type === "message_update"
+      ? event.assistantMessageEvent
+      : event.type === "message_end"
+        ? event.message
+        : undefined;
+  return Boolean(marked && QUOTA_REPLAY in marked);
 }
 
 /** Reuse the tool's own documented `path` shape so the model sees one description. */

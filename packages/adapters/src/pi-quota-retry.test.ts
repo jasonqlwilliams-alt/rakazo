@@ -2,7 +2,12 @@ import type { AssistantMessage, Context, Models, SimpleStreamOptions } from "@ea
 import { AssistantMessageEventStream } from "@earendil-works/pi-ai/utils/event-stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { openAiCompatibleModel } from "./pi-openai-compatible-provider.js";
-import { classifyQuotaError, quotaRetryConfig, streamWithQuotaRetry } from "./pi-quota-retry.js";
+import {
+  classifyQuotaError,
+  QUOTA_REPLAY,
+  quotaRetryConfig,
+  streamWithQuotaRetry,
+} from "./pi-quota-retry.js";
 
 const model = openAiCompatibleModel("fixture", "http://127.0.0.1:1/v1");
 const context: Context = { messages: [{ role: "user", content: "fixture", timestamp: 0 }] };
@@ -201,10 +206,11 @@ describe("one model request quota retry", () => {
   );
 
   it.each([
+    ["text", "text_delta"],
     ["thinking", "thinking_delta"],
     ["toolCall", "toolcall_end"],
   ] as const)(
-    "replays the request after a quota stop in a partial %s stream that showed no text",
+    "replays the request after a quota stop in a partial %s stream",
     async (partial, eventType) => {
       vi.useFakeTimers();
       const f = fixture([{ error: "429 rate limit", partial }, {}]);
@@ -212,40 +218,53 @@ describe("one model request quota retry", () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(f.progress).toHaveBeenCalledWith("Quota, retrying in 60s (1/3).");
       await vi.advanceTimersByTimeAsync(60_000);
-      expect((await stream.result()).stopReason).toBe("stop");
+      const result = await stream.result();
+      expect(result.stopReason).toBe("stop");
       expect(f.streamSimple).toHaveBeenCalledTimes(2);
       expect(f.streamSimple.mock.calls[1]?.[1]).toBe(context);
       expect(f.progress).toHaveBeenLastCalledWith("");
       const events = [];
-      for await (const event of stream) events.push(event.type);
+      for await (const event of stream) events.push(event);
       // Pi adds a partial assistant message per start, so the replay reuses the first one.
-      expect(events).toEqual(["start", eventType, "done"]);
+      expect(events.map((event) => event.type)).toEqual(["start", eventType, "done"]);
+      expect(QUOTA_REPLAY in events[1]!).toBe(false);
+      // A replay whose first event is done carries the mark on its message.
+      expect(QUOTA_REPLAY in result).toBe(true);
     },
   );
 
-  it.each([["text", "text_delta"]] as const)(
-    "reports a quota stop without replaying a partial %s stream",
-    async (partial, eventType) => {
-      vi.useFakeTimers();
-      const f = fixture([{ error: "429 rate limit", partial }]);
-      const stream = f.run();
-      await vi.advanceTimersByTimeAsync(0);
-      expect(f.progress).not.toHaveBeenCalled();
-      expect(vi.getTimerCount()).toBe(0);
-      const result = await stream.result();
-      expect(result).toMatchObject({
-        stopReason: "error",
-        content: [],
-        errorMessage: "Mid-response quota stop was not retried. Try again later.",
-      });
-      const events = [];
-      for await (const event of stream) events.push(event);
-      expect(events.map((event) => event.type)).toEqual(["start", eventType, "error"]);
-      expect(events.at(-1)).toEqual({ type: "error", reason: "error", error: result });
-      await vi.advanceTimersByTimeAsync(60_000);
-      expect(f.streamSimple).toHaveBeenCalledTimes(1);
-    },
-  );
+  it("marks only the first event of a replayed attempt", async () => {
+    vi.useFakeTimers();
+    const f = fixture([{ error: "429 rate limit", partial: "text" }, { partial: "text" }]);
+    const stream = f.run();
+    await vi.advanceTimersByTimeAsync(60_000);
+    const result = await stream.result();
+    const events = [];
+    for await (const event of stream) events.push(event);
+    expect(events.map((event) => event.type)).toEqual([
+      "start",
+      "text_delta",
+      "text_delta",
+      "done",
+    ]);
+    expect(events.map((event) => QUOTA_REPLAY in event)).toEqual([false, false, true, false]);
+    expect(QUOTA_REPLAY in result).toBe(false);
+  });
+
+  it("ends with the retry receipt when replays after text are exhausted", async () => {
+    vi.useFakeTimers();
+    const f = fixture(
+      Array.from({ length: 4 }, () => ({ error: "429 rate limit", partial: "text" as const })),
+    );
+    const stream = f.run();
+    await vi.advanceTimersByTimeAsync(180_000);
+    expect(await stream.result()).toMatchObject({
+      stopReason: "error",
+      content: [],
+      errorMessage: "Quota retry failed after 3 retries. Try again later.",
+    });
+    expect(f.streamSimple).toHaveBeenCalledTimes(4);
+  });
 
   it("cancels the wait without another request", async () => {
     vi.useFakeTimers();

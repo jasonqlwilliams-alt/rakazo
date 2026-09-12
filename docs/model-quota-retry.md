@@ -53,13 +53,14 @@ stream. It does not retry `agent.prompt`, a tool call, or a whole run. Previousl
 completed tool results remain in the request context and existing effect IDs are
 unchanged. Pi executes tool calls only after a successful model completion.
 
-Retries are pre-content-only by design. Once a stream has emitted text, reasoning,
-or tool-call events, Rakazo leaves that attempt unretried. A quota stop at that
-point uses the same failure reporting path as exhausted retries, with the message
-`Mid-response quota stop was not retried. Try again later.` This notice appears
-only on failure to explain why no retry followed the quota stop. Rakazo does not
-resume the stream or replay partial output or tool calls; previously completed
-effects remain intact.
+A quota stop partway through a response replays the same request under the same
+retry count. None of its tool calls ran, and thinking is never shown, so only
+streamed text can repeat. The runtime emits a `retract` event for that text
+before the replayed response streams; the executor removes it from the turn and
+restores the live text the quota notice replaced. If that text is no longer
+unpublished, the run fails with `Mid-response quota stop was not retried. Try again later.`
+rather than guessing. Rakazo never asks a provider to continue a partial
+response; previously completed effects remain intact.
 
 [OpenRouter documents mid-stream errors](https://openrouter.ai/docs/api_reference/errors-and-debugging#mid-stream-errors),
 including rate-limit failures after streaming begins. These arrive in the stream
@@ -72,8 +73,8 @@ multiply the configured retry count.
 
 Tests use synthetic streams with fake timers and the real Pi/OpenAI-compatible
 transport against a loopback HTTP fixture. They cover a successful retry, longer
-headers, non-quota failure, cancellation, exhausted retries, the failure receipt
-without replay after partial text, reasoning, or tool-call output, and a failed
+headers, non-quota failure, cancellation, exhausted retries, replays after partial
+text, reasoning, or tool-call output without repeated text or effects, and a failed
 continuation after a tool write that must execute exactly once.
 
 # Large sweeps through Antigravity

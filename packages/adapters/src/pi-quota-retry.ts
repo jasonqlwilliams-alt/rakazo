@@ -114,7 +114,14 @@ async function waitForRetry(ms: number, signal?: AbortSignal) {
   }
 }
 
-/** Retry one model request before any text is visible; never replay an agent turn. */
+/**
+ * Marks the first event Pi receives from a replayed attempt: on the forwarded
+ * event, or on the message of a replay whose first event is done. Text already
+ * streamed for this request belongs to a discarded attempt.
+ */
+export const QUOTA_REPLAY = Symbol("rakazo.quotaReplay");
+
+/** Replay one model request after a quota stop; never replay an agent turn. */
 export function streamWithQuotaRetry(
   models: Pick<Models, "streamSimple">,
   model: Model<Api>,
@@ -153,9 +160,9 @@ export function streamWithQuotaRetry(
         signal?.throwIfAborted();
         let response: ProviderResponse | undefined;
         let started: Extract<AssistantMessageEvent, { type: "start" }> | undefined;
-        let textShown = false;
         let failure: AssistantMessage | undefined;
         let thrown: unknown;
+        let replayMarked = false;
         const attemptOptions: SimpleStreamOptions = {
           ...options,
           maxRetries: 0,
@@ -199,9 +206,14 @@ export function streamWithQuotaRetry(
               output.push(started);
               startForwarded = true;
             }
-            // Pi runs tool calls only after done and shows thinking to no one, so
-            // only streamed text makes a failed attempt unsafe to replay.
-            if (event.type === "text_delta" && event.delta) textShown = true;
+            // Pi runs tool calls only after done, so a replay cannot repeat an
+            // effect. Streamed text can repeat: tag the replay so consumers drop it.
+            if (retries > 0 && !replayMarked) {
+              Object.defineProperty(event.type === "done" ? event.message : event, QUOTA_REPLAY, {
+                value: true,
+              });
+              replayMarked = true;
+            }
             output.push(event);
             if (event.type === "done") return;
           }
@@ -220,7 +232,7 @@ export function streamWithQuotaRetry(
           });
           return;
         }
-        if (textShown || retries >= config.maxRetries) {
+        if (retries >= config.maxRetries) {
           output.push({
             type: "error",
             reason: "error",
@@ -228,9 +240,7 @@ export function streamWithQuotaRetry(
               ...failure,
               stopReason: "error",
               content: [],
-              errorMessage: textShown
-                ? "Mid-response quota stop was not retried. Try again later."
-                : `Quota retry failed after ${retries} retries. Try again later.`,
+              errorMessage: `Quota retry failed after ${retries} retries. Try again later.`,
             },
           });
           return;

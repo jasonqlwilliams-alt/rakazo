@@ -145,20 +145,36 @@ for (const scenario of cases) {
               expect() {},
               response: { type: "error" as const, status: 429, message: "quota exceeded" },
             }))
-          : [
-              {
-                expect() {},
-                response:
-                  scenario === "partial"
-                    ? { type: "stream-error", text: "Partial answer", message: "429 rate limit" }
-                    : {
-                        type: "error",
-                        status: 503,
-                        message: "No available provider",
-                        headers: { "Retry-After": "10" },
-                      },
-              },
-            ];
+          : scenario === "partial"
+            ? [
+                {
+                  expect(request) {
+                    failedRequest = request;
+                  },
+                  response: {
+                    type: "stream-error",
+                    text: "Partial answer",
+                    message: "429 rate limit",
+                  },
+                },
+                {
+                  expect(request) {
+                    expect(request).toEqual(failedRequest);
+                  },
+                  response: { type: "text", text: "Full answer." },
+                },
+              ]
+            : [
+                {
+                  expect() {},
+                  response: {
+                    type: "error",
+                    status: 503,
+                    message: "No available provider",
+                    headers: { "Retry-After": "10" },
+                  },
+                },
+              ];
     const server = await startModelEmulator({
       steps: steps.map((step) => ({
         ...step,
@@ -169,6 +185,7 @@ for (const scenario of cases) {
       })),
     });
     const run = async (prompt: string) => {
+      let streamedText = "";
       startedAt = performance.now();
       publish("thread.message.created", { role: "user", blocks: [{ kind: "text", text: prompt }] });
       publish("run.started", { trigger: "user" });
@@ -207,7 +224,11 @@ for (const scenario of cases) {
           if (event.type === "progress") {
             publish("thread.progress", { text: event.text, activity: event.activity });
           } else if (event.type === "text") {
+            streamedText += event.text;
             publish("thread.progress", { delta: event.text, streaming: true });
+          } else if (event.type === "retract") {
+            streamedText = streamedText.slice(0, streamedText.length - event.chars);
+            publish("thread.progress", { text: streamedText, streaming: true });
           } else if (event.type === "done") {
             publish("thread.message.created", {
               role: "bot",
@@ -310,13 +331,16 @@ for (const scenario of cases) {
         expect(await readFile(testInfo.outputPath("notes.txt"), "utf8")).toBe("hello");
         await expect(page.getByText("Saved.", { exact: true })).toBeVisible();
         await expect(page.getByText(/^Quota, retrying/)).toHaveCount(0);
+      } else if (scenario === "partial") {
+        expect(error).toBeUndefined();
+        expect(requestTimes).toHaveLength(2);
+        await expect(page.getByText("Full answer.", { exact: true })).toBeVisible();
+        await expect(page.getByText(/Partial answer/)).toHaveCount(0);
       } else {
         const expected =
-          scenario === "partial"
-            ? "Mid-response quota stop was not retried. Try again later."
-            : scenario === "exhausted"
-              ? "Quota retry failed after 3 retries. Try again later."
-              : "No available provider";
+          scenario === "exhausted"
+            ? "Quota retry failed after 3 retries. Try again later."
+            : "No available provider";
         expect(error).toContain(expected);
         await expect(page.getByTestId("composer-error")).toContainText(expected);
         if (scenario !== "exhausted") expect(requestTimes).toHaveLength(1);

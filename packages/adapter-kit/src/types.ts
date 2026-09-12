@@ -430,6 +430,8 @@ export interface ScriptedTurn {
 
 export type AgentRuntimeEvent =
   | { type: "text"; text: string }
+  /** Drop the last `chars` of streamed text: a replayed model request discarded them. */
+  | { type: "retract"; chars: number }
   | {
       type: "progress";
       text: string;

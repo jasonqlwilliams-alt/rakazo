@@ -3,7 +3,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { ComposioEmulator } from "@rakazo/adapters";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { createApp } from "../../../apps/api/src/app.ts";
 import { sessionCookieHeader } from "./index.js";
 import { startModelEmulator } from "./model-emulator.js";
 
@@ -46,53 +47,7 @@ describe.skipIf(!databaseAvailable)("offline Pi product journey", () => {
         },
       ],
     });
-    const dataDir = await mkdtemp(path.join(tmpdir(), "rakazo-offline-product-"));
-    let stop: (() => Promise<void>) | undefined;
-    try {
-      const { createApp } = await import("../../../apps/api/src/app.ts");
-      const handles = await createApp({
-        databaseUrl: process.env.DATABASE_URL!,
-        realtimeDatabaseUrl: process.env.DATABASE_URL!,
-        authUrl: fixtureOrigin,
-        webOrigin: fixtureOrigin,
-        dataDir,
-        sandboxProvider: "fake",
-        agentRuntime: "pi",
-        wakeupDriver: "memory",
-        signupsEnabled: "true",
-        composio: new ComposioEmulator(),
-        encryptionKey: "offline-model-fixture-encryption-key",
-      });
-      stop = handles.stop;
-      const signup = await handles.app.request("/api/auth/sign-up/email", {
-        method: "POST",
-        headers: { "content-type": "application/json", origin: fixtureOrigin },
-        body: JSON.stringify({
-          email: `offline-pi-${randomUUID()}@rakazo.test`,
-          password: "password12",
-          name: "Offline fixture",
-        }),
-      });
-      expect(signup.status).toBeLessThan(400);
-      const cookie = sessionCookieHeader(signup);
-      await rpc(handles.app, cookie, "models/connect", {
-        provider: model.model.provider,
-        modelId: model.model.id,
-        baseUrl: model.baseUrl,
-        apiKey: fixtureKey,
-      });
-      const bot = await rpc<{ id: string }>(handles.app, cookie, "bots/create", {
-        name: "File fixture",
-        title: "",
-        description: "",
-        instructions: "Complete the task.",
-        notifyOnFinish: false,
-      });
-      await rpc(handles.app, cookie, "bots/update", {
-        botId: bot.id,
-        modelProvider: model.model.provider,
-        modelId: model.model.id,
-      });
+    await withOfflineProduct(model, fixtureKey, async ({ handles, cookie, bot }) => {
       const sent = await rpc<{ runId: string }>(handles.app, cookie, "threads/send", {
         botId: bot.id,
         text: "Save hello to notes/result.txt.",
@@ -131,16 +86,123 @@ describe.skipIf(!databaseAvailable)("offline Pi product journey", () => {
       });
       expect(tools).toHaveLength(1);
       expect(JSON.stringify(tools[0])).toContain("write_file");
+    });
+  }, 30_000);
+
+  it("replays a quota-stopped response through the real executor without repeating its text", async () => {
+    const fixtureKey = "offline-product-fixture-key";
+    const model = await startModelEmulator({
+      apiKey: fixtureKey,
+      steps: [
+        {
+          expect() {},
+          response: { type: "stream-error", text: "Saving now. ", message: "429 rate limit" },
+        },
+        { expect() {}, response: { type: "text", text: "Saving it now. Saved." } },
+      ],
+    });
+    vi.stubEnv("RAKAZO_QUOTA_RETRY_MS", "1");
+    try {
+      await withOfflineProduct(model, fixtureKey, async ({ handles, cookie, bot }) => {
+        const sent = await rpc<{ runId: string }>(handles.app, cookie, "threads/send", {
+          botId: bot.id,
+          text: "Save hello to notes/result.txt.",
+        });
+        await expect
+          .poll(
+            async () =>
+              (
+                await handles.prisma.run.findUnique({
+                  where: { id: sent.runId },
+                  select: { status: true },
+                })
+              )?.status,
+            { timeout: 15_000, interval: 100 },
+          )
+          .toBe("completed");
+        model.assertComplete();
+        const finals = await handles.prisma.message.findMany({
+          where: { runId: sent.runId, role: "bot" },
+          select: { blocks: true },
+        });
+        expect(finals.map((message) => message.blocks)).toEqual([
+          [{ kind: "text", text: "Saving it now. Saved." }],
+        ]);
+      });
     } finally {
-      try {
-        await stop?.();
-      } finally {
-        await model.close();
-        await rm(dataDir, { recursive: true, force: true });
-      }
+      vi.unstubAllEnvs();
     }
   }, 30_000);
 });
+
+type OfflineProduct = {
+  handles: Awaited<ReturnType<typeof createApp>>;
+  cookie: string;
+  bot: { id: string };
+};
+
+async function withOfflineProduct(
+  model: Awaited<ReturnType<typeof startModelEmulator>>,
+  fixtureKey: string,
+  journey: (product: OfflineProduct) => Promise<void>,
+) {
+  const dataDir = await mkdtemp(path.join(tmpdir(), "rakazo-offline-product-"));
+  let stop: (() => Promise<void>) | undefined;
+  try {
+    const { createApp } = await import("../../../apps/api/src/app.ts");
+    const handles = await createApp({
+      databaseUrl: process.env.DATABASE_URL!,
+      realtimeDatabaseUrl: process.env.DATABASE_URL!,
+      authUrl: fixtureOrigin,
+      webOrigin: fixtureOrigin,
+      dataDir,
+      sandboxProvider: "fake",
+      agentRuntime: "pi",
+      wakeupDriver: "memory",
+      signupsEnabled: "true",
+      composio: new ComposioEmulator(),
+      encryptionKey: "offline-model-fixture-encryption-key",
+    });
+    stop = handles.stop;
+    const signup = await handles.app.request("/api/auth/sign-up/email", {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: fixtureOrigin },
+      body: JSON.stringify({
+        email: `offline-pi-${randomUUID()}@rakazo.test`,
+        password: "password12",
+        name: "Offline fixture",
+      }),
+    });
+    expect(signup.status).toBeLessThan(400);
+    const cookie = sessionCookieHeader(signup);
+    await rpc(handles.app, cookie, "models/connect", {
+      provider: model.model.provider,
+      modelId: model.model.id,
+      baseUrl: model.baseUrl,
+      apiKey: fixtureKey,
+    });
+    const bot = await rpc<{ id: string }>(handles.app, cookie, "bots/create", {
+      name: "File fixture",
+      title: "",
+      description: "",
+      instructions: "Complete the task.",
+      notifyOnFinish: false,
+    });
+    await rpc(handles.app, cookie, "bots/update", {
+      botId: bot.id,
+      modelProvider: model.model.provider,
+      modelId: model.model.id,
+    });
+    await journey({ handles, cookie, bot });
+  } finally {
+    try {
+      await stop?.();
+    } finally {
+      await model.close();
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  }
+}
 
 async function rpc<T>(
   app: App,
