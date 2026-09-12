@@ -1,3 +1,4 @@
+import type { BotMessageIntent } from "@rakazo/contracts";
 import type { PrismaClient } from "@rakazo/db";
 import { createLogger, createTestSink, installLogger } from "@rakazo/logging";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -50,6 +51,7 @@ function deps(
         .mockResolvedValue(options.senderRunning === false ? null : { id: "run-1" }),
       findUnique: vi.fn().mockResolvedValue({ status: "running" }),
       create: vi.fn().mockResolvedValue({ id: "run-2" }),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     bot: {
       findFirst: vi.fn().mockResolvedValue(options.targetArchived ? null : { id: "bot-target" }),
@@ -606,7 +608,7 @@ describe("automatic outcome return", () => {
       }),
     );
     expect(harness.enqueue).toHaveBeenCalledOnce();
-    expect(harness.deps.prisma.run.updateMany).toHaveBeenCalledWith({
+    expect(harness.tx.run.updateMany).toHaveBeenCalledWith({
       where: {
         id: run.id,
         status: { in: ["completed", "failed"] },
@@ -703,18 +705,15 @@ describe("automatic outcome return", () => {
 });
 
 function reconciliationHarness() {
-  const harness = deps({
-    hopBlocks: [
-      {
-        kind: "bot_message_received",
-        fromBotId: "bot-target",
-        fromBotName: "Coordinator",
-        text: "research this",
-        hop: 1,
-        intent: "request",
-      },
-    ],
-  });
+  const source = {
+    kind: "bot_message_received",
+    fromBotId: "bot-target",
+    fromBotName: "Coordinator",
+    text: "research this",
+    hop: 1,
+    intent: "request" as BotMessageIntent | undefined,
+  };
+  const harness = deps({ hopBlocks: [source] });
   const terminal = {
     ...run,
     sourceMessageId: "source" as string | null,
@@ -770,7 +769,16 @@ function reconciliationHarness() {
     ),
   });
   let receipts = 0;
-  const updateMany = vi.fn(async ({ where, data }) => {
+  const applyRunUpdate = ({
+    where,
+    data,
+  }: {
+    where: Record<string, any>;
+    data: Record<string, any>;
+  }) => {
+    if (where.status?.in && !where.status.in.includes(terminal.status)) return { count: 0 };
+    if (where.OR && terminal.botOutcomeReturnedAt && !terminal.botOutcomeFailedAt)
+      return { count: 0 };
     if (where.botOutcomeReturnedAt === null && terminal.botOutcomeReturnedAt) return { count: 0 };
     if (where.botOutcomeFailedAt === null && terminal.botOutcomeFailedAt) return { count: 0 };
     if (
@@ -790,16 +798,22 @@ function reconciliationHarness() {
       else Object.assign(terminal, { [key]: value });
     }
     return { count: 1 };
+  };
+  const updateMany = vi.fn(async (args) => applyRunUpdate(args));
+  const transaction = vi.fn(async (fn: (client: typeof harness.tx) => unknown) => {
+    const start = harness.tx.message.create.mock.calls.length;
+    const updateStart = harness.tx.run.updateMany.mock.calls.length;
+    const result = await fn(harness.tx);
+    for (const [args] of harness.tx.run.updateMany.mock.calls.slice(updateStart)) {
+      applyRunUpdate(args);
+    }
+    for (const [{ data }] of harness.tx.message.create.mock.calls.slice(start)) {
+      deliveries.push({ ...data, spaceId: run.spaceId, userId: run.userId });
+    }
+    return result;
   });
   Object.assign(harness.deps.prisma, {
-    $transaction: vi.fn(async (fn: (client: unknown) => unknown) => {
-      const start = harness.tx.message.create.mock.calls.length;
-      const result = await fn(harness.tx);
-      for (const [{ data }] of harness.tx.message.create.mock.calls.slice(start)) {
-        deliveries.push({ ...data, spaceId: run.spaceId, userId: run.userId });
-      }
-      return result;
-    }),
+    $transaction: transaction,
     run: {
       updateMany,
       findFirst: vi.fn(async () =>
@@ -832,12 +846,22 @@ function reconciliationHarness() {
   } as unknown as Parameters<typeof createBackgroundJobHandlers>[0]);
   return {
     ...harness,
+    source,
     terminal,
     deliveries,
     updateMany,
+    transaction,
     receipts: () => receipts,
     reconcile: () => handlers["run.continue"]({ runId: terminal.id }),
   };
+}
+
+function barrier() {
+  let release!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { promise, release };
 }
 
 describe("outcome reconciliation persistence", () => {
@@ -1016,13 +1040,172 @@ describe("outcome reconciliation persistence", () => {
     expect(harness.tx.run.create).not.toHaveBeenCalled();
   });
 
+  it.each(["delivery", "exhaustion"])(
+    "commits outcome success when %s finishes first after an empty recovery read",
+    async (first) => {
+      vi.useFakeTimers();
+      const harness = reconciliationHarness();
+      harness.terminal.botOutcomeAttempts = 3;
+      harness.terminal.botOutcomeNextAttemptAt = new Date(Date.now() + 300_000);
+      const deliveryReady = barrier();
+      const releaseDelivery = barrier();
+      const recoveryRead = barrier();
+      const releaseExhaustion = barrier();
+      const commit = harness.transaction.getMockImplementation()!;
+      harness.transaction.mockImplementation(async (fn) => {
+        await commit(async (tx) => {
+          const result = await fn(tx);
+          deliveryReady.release();
+          await releaseDelivery.promise;
+          return result;
+        });
+        throw new Error("Worker crashed after commit");
+      });
+      const crashed = expect(
+        returnBotMessageOutcome(harness.deps, harness.terminal, sender, "Finished.", "status"),
+      ).rejects.toThrow("Worker crashed after commit");
+      await deliveryReady.promise;
+      expect(harness.deliveries).toHaveLength(0);
+      expect(harness.terminal.botOutcomeReturnedAt).toBeNull();
+
+      const readMessages = vi.mocked(harness.deps.prisma.message.findMany);
+      const read = readMessages.getMockImplementation()!;
+      readMessages.mockImplementationOnce(async (args) => {
+        const messages = await read(args);
+        recoveryRead.release();
+        await releaseExhaustion.promise;
+        return messages;
+      });
+      vi.setSystemTime(Date.now() + 300_000);
+      const exhaustion = harness.reconcile();
+      await recoveryRead.promise;
+      if (first === "delivery") {
+        releaseDelivery.release();
+        await crashed;
+        releaseExhaustion.release();
+        await exhaustion;
+      } else {
+        releaseExhaustion.release();
+        await exhaustion;
+        expect(harness.terminal.botOutcomeFailedAt).toBeInstanceOf(Date);
+        releaseDelivery.release();
+        await crashed;
+      }
+      await harness.reconcile();
+
+      expect(harness.deliveries).toHaveLength(2);
+      expect(harness.terminal.status).toBe("completed");
+      expect(harness.terminal.botOutcomeReturnedAt).toBeInstanceOf(Date);
+      expect(harness.terminal.botOutcomeFailedAt).toBeNull();
+      expect(harness.terminal.botOutcomeNextAttemptAt).toBeNull();
+      expect(harness.terminal.botOutcomeAttempts).toBe(3);
+      expect(harness.transaction).toHaveBeenCalledOnce();
+      expect(harness.tx.message.create).toHaveBeenCalledTimes(2);
+      expect(harness.tx.run.create).toHaveBeenCalledOnce();
+      expect(harness.enqueue).not.toHaveBeenCalled();
+      expect(harness.receipts()).toBe(first === "exhaustion" ? 1 : 0);
+    },
+  );
+
+  it.each(["marker write", "transaction commit"])(
+    "rolls back automatic delivery when the %s fails on the final attempt",
+    async (failure) => {
+      const harness = reconciliationHarness();
+      harness.terminal.botOutcomeAttempts = 2;
+      const error = Object.assign(new Error("Database unavailable"), { code: "P1017" });
+      if (failure === "marker write") {
+        harness.tx.run.updateMany.mockRejectedValueOnce(error);
+      } else {
+        harness.transaction.mockImplementationOnce(async (fn) => {
+          await fn(harness.tx);
+          throw error;
+        });
+      }
+
+      await harness.reconcile();
+      await harness.reconcile();
+
+      expect(harness.deliveries).toHaveLength(0);
+      expect(harness.terminal.botOutcomeAttempts).toBe(3);
+      expect(harness.terminal.botOutcomeFailedAt).toBeInstanceOf(Date);
+      expect(harness.terminal.botOutcomeReturnedAt).toBeInstanceOf(Date);
+      expect(harness.terminal.botOutcomeError).toBe("P1017");
+      expect(harness.receipts()).toBe(1);
+      expect(harness.transaction).toHaveBeenCalledOnce();
+      expect(harness.notify).not.toHaveBeenCalled();
+      expect(harness.enqueue).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(
+    (["status", "result", "fyi", "absent"] as const).flatMap((source) => [
+      { source, crashed: false },
+      { source, crashed: true },
+    ]),
+  )(
+    "completes a no-reply $source outcome after a final crash: $crashed",
+    async ({ source, crashed }) => {
+      vi.useFakeTimers();
+      const harness = reconciliationHarness();
+      if (source === "absent") harness.terminal.sourceMessageId = null;
+      else harness.source.intent = source;
+      harness.terminal.botOutcomeAttempts = crashed ? 3 : 2;
+      if (crashed) {
+        harness.terminal.botOutcomeNextAttemptAt = new Date(Date.now() + 300_000);
+        await harness.reconcile();
+        expect(harness.terminal.botOutcomeReturnedAt).toBeNull();
+        vi.setSystemTime(Date.now() + 300_000);
+      } else {
+        const update = harness.updateMany.getMockImplementation()!;
+        let failed = false;
+        harness.updateMany.mockImplementation(async (args) => {
+          if (args.data.botOutcomeReturnedAt && args.data.botOutcomeFailedAt === null && !failed) {
+            failed = true;
+            throw Object.assign(new Error("Completion marker unavailable"), { code: "P1017" });
+          }
+          return update(args);
+        });
+      }
+
+      await harness.reconcile();
+      await harness.reconcile();
+
+      expect(harness.terminal.botOutcomeReturnedAt).toBeInstanceOf(Date);
+      expect(harness.terminal.botOutcomeFailedAt).toBeNull();
+      expect(harness.terminal.botOutcomeNextAttemptAt).toBeNull();
+      expect(harness.terminal.botOutcomeAttempts).toBe(3);
+      expect(harness.receipts()).toBe(crashed ? 0 : 1);
+      expect(harness.deliveries).toHaveLength(0);
+      expect(harness.transaction).not.toHaveBeenCalled();
+      expect(harness.tx.run.create).not.toHaveBeenCalled();
+      expect(harness.enqueue).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["request", "question", undefined] as const)(
+    "retains the reply obligation for source intent %s after exhaustion",
+    async (intent) => {
+      const harness = reconciliationHarness();
+      harness.source.intent = intent;
+      harness.terminal.botOutcomeAttempts = 3;
+
+      await harness.reconcile();
+
+      expect(harness.terminal.botOutcomeFailedAt).toBeInstanceOf(Date);
+      expect(harness.terminal.botOutcomeError).toBe("attempts_exhausted");
+      expect(harness.terminal.botOutcomeAttempts).toBe(3);
+      expect(harness.transaction).not.toHaveBeenCalled();
+      expect(harness.enqueue).not.toHaveBeenCalled();
+    },
+  );
+
   it.each([
     { surviving: "both", clearedSource: false },
     { surviving: "inbound", clearedSource: false },
     { surviving: "inbound", clearedSource: true },
     { surviving: "outbound", clearedSource: true },
   ])(
-    "recovers a final-attempt crash with $surviving receipts and cleared source: $clearedSource",
+    "recovers a legacy final-attempt crash with $surviving receipts and cleared source: $clearedSource",
     async ({ surviving, clearedSource }) => {
       vi.useFakeTimers();
       const harness = reconciliationHarness();
@@ -1042,6 +1225,8 @@ describe("outcome reconciliation persistence", () => {
       );
       expect(delivered.ok).toBe(true);
       expect(harness.deliveries).toHaveLength(2);
+      harness.terminal.botOutcomeReturnedAt = null;
+      harness.terminal.botOutcomeNextAttemptAt = new Date(Date.now() + 300_000);
       if (surviving !== "both") {
         const clearedThread = surviving === "outbound" ? "thread-target" : run.threadId;
         harness.deliveries.splice(
@@ -1077,22 +1262,20 @@ describe("outcome reconciliation persistence", () => {
     { markerFailures: 1, delivery: "explicit" },
     { markerFailures: 2, delivery: "explicit" },
   ])(
-    "recovers a committed $delivery result after $markerFailures final completion-marker failures",
+    "recovers a legacy $delivery result after $markerFailures final completion-marker failures",
     async ({ markerFailures, delivery }) => {
       vi.useFakeTimers();
       const harness = reconciliationHarness();
       harness.terminal.botOutcomeAttempts = 2;
-      if (delivery === "explicit") {
-        harness.terminal.status = "running";
-        const delivered = await messageBot(harness.deps, harness.terminal, sender, {
-          bot_id: "bot-target",
-          message: "Finished.",
-          intent: "result",
-          deliveryKey: "execution-1",
-        });
-        expect(delivered.ok).toBe(true);
-        harness.terminal.status = "completed";
-      }
+      harness.terminal.status = "running";
+      const delivered = await messageBot(harness.deps, harness.terminal, sender, {
+        bot_id: "bot-target",
+        message: "Finished.",
+        intent: delivery === "explicit" ? "result" : "status",
+        deliveryKey: delivery === "explicit" ? "execution-1" : `auto-outcome:${run.id}`,
+      });
+      expect(delivered.ok).toBe(true);
+      harness.terminal.status = "completed";
       const update = harness.updateMany.getMockImplementation()!;
       let failuresLeft = markerFailures;
       harness.updateMany.mockImplementation(async (args) => {
@@ -1128,7 +1311,9 @@ describe("outcome reconciliation persistence", () => {
       expect(harness.terminal.botOutcomeError).toBe("P1017");
       expect(harness.receipts()).toBe(1);
       expect(harness.tx.message.create).toHaveBeenCalledTimes(2);
-      expect(harness.deps.prisma.$transaction).toHaveBeenCalledOnce();
+      expect(harness.deps.prisma.$transaction).toHaveBeenCalledTimes(
+        delivery === "explicit" ? 1 : 2,
+      );
       expect(harness.tx.run.create).toHaveBeenCalledOnce();
       expect(harness.enqueue).toHaveBeenCalledOnce();
       expect(
@@ -1143,7 +1328,6 @@ describe("outcome reconciliation persistence", () => {
   ])("ignores an inbound receipt owned by $spaceId/$userId", async (owner) => {
     const harness = reconciliationHarness();
     harness.terminal.botOutcomeAttempts = 3;
-    harness.terminal.sourceMessageId = null;
     harness.deliveries.push({
       threadId: "thread-other",
       clientNonce: `bot-message:auto-outcome:${run.id}`,

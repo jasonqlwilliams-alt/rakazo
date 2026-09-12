@@ -75,14 +75,19 @@ The executor makes its initial return attempt. Recovery uses the existing
 30 then 60 seconds after retryable failures. A `P2002` without a matching
 inbound or outbound delivery nonce is permanently skipped on its first recovery
 attempt; a sequence clash is not assumed to prove prior delivery. Each claim
-has a five-minute recovery lease; a crash consumes that attempt. Before marking
-an exhausted outcome failed, recovery checks for a committed delivery nonce and
-repairs its completion marker without another delivery attempt. The inbound
+has a five-minute recovery lease; a crash consumes that attempt. Automatic
+outcome delivery commits its messages and success marker in one transaction.
+A late commit clears a failure marker written by exhaustion; exhaustion cannot
+overwrite an already committed success. For existing deliveries without a
+success marker, recovery checks committed receipts and repairs the marker
+without another delivery attempt. The inbound
 nonce remains discoverable within the run's workspace and user after sender
 history clearing removes the source message and outbound receipt. Committed
 explicit results to the requesting bot use the same success check as normal
-outcome handling. This also recovers a final-attempt delivery whose
-completion-marker update failed. The reconciler repairs missed queue wakes, but
+outcome handling. Missing sources and incoming status, result, or FYI messages
+require no reply and are marked handled during recovery. This also recovers a
+final-attempt delivery whose completion-marker update failed. The reconciler
+repairs missed queue wakes, but
 cannot reset the budget. Transaction conflicts still use the existing bounded
 transaction retry inside message delivery. Only the first recovery failure
 writes a diagnostic code and emits the untruncated structured error receipt,
@@ -118,7 +123,10 @@ with an explicit failure marker rather than represented as successful delivery.
 Final-attempt regressions cover a crash after commit, either surviving delivery
 receipt after history clearing, automatic and explicit completion-marker
 failures, receipt ownership, and an unmatched conflict that rolls back the
-outbound receipt. Recovery preserves the three-attempt budget in each case.
+outbound receipt. Deterministic races cover delivery committing before and
+after exhaustion, including a worker crash immediately after commit. Further
+regressions cover transaction rollback and no-reply marker failures. Recovery
+preserves the three-attempt budget in each case.
 
 The initial filing contained no Prisma code or constraint. Its follow-up
 identifies `P2002` on `(threadId, seq)` in the outbound create, matching the

@@ -1,5 +1,6 @@
 import { runContinueJob } from "@rakazo/adapter-kit";
 import type { BotMessageIntent, MessageBlock } from "@rakazo/contracts";
+import type { BotMessageContext } from "@rakazo/core";
 import {
   BOT_MESSAGE_MAX_LENGTH,
   botMessageContext,
@@ -291,6 +292,12 @@ export async function messageBot(
           runId: run.id,
           payload: { messageId: outbound.id, role: "bot", blocks: [outboundBlock] },
         });
+        if (
+          options?.allowTerminalSource === true &&
+          input.deliveryKey === `auto-outcome:${run.id}`
+        ) {
+          await markBotOutcomeReturned(tx, run.id);
+        }
         return {
           ok: true as const,
           runId: nextRun.id,
@@ -356,14 +363,9 @@ export async function returnBotMessageOutcome(
   intent: "result" | "status" = "result",
 ) {
   const source = await loadBotMessageContext(deps.prisma, run.sourceMessageId);
-  if (!source) {
+  if (!needsBotMessageOutcome(source)) {
     await markBotOutcomeReturned(deps.prisma, run.id);
     // Handled: nothing to deliver. Return true so callers do not release a reservation.
-    return true;
-  }
-  const sourceIntent = source.intent ?? "request";
-  if (sourceIntent !== "request" && sourceIntent !== "question") {
-    await markBotOutcomeReturned(deps.prisma, run.id);
     return true;
   }
   if (await hasExplicitBotMessageOutcome(deps.prisma, run, source.fromBotId)) {
@@ -383,7 +385,7 @@ export async function returnBotMessageOutcome(
     },
     { allowTerminalSource: true },
   );
-  if (outcome.ok) await markBotOutcomeReturned(deps.prisma, run.id);
+  if (outcome.ok && "replayed" in outcome) await markBotOutcomeReturned(deps.prisma, run.id);
   return outcome.ok;
 }
 
@@ -417,11 +419,23 @@ export async function recoverBotMessageOutcome(
   }
   if (!receipt) {
     const source = await loadBotMessageContext(prisma, run.sourceMessageId);
-    if (!source || !(await hasExplicitBotMessageOutcome(prisma, run, source.fromBotId)))
+    if (
+      needsBotMessageOutcome(source) &&
+      !(await hasExplicitBotMessageOutcome(prisma, run, source.fromBotId))
+    )
       return false;
   }
   await markBotOutcomeReturned(prisma, run.id);
   return true;
+}
+
+function needsBotMessageOutcome(
+  source: BotMessageContext | undefined,
+): source is BotMessageContext {
+  return (
+    source !== undefined &&
+    (source.intent === undefined || source.intent === "request" || source.intent === "question")
+  );
 }
 
 async function hasExplicitBotMessageOutcome(
@@ -443,7 +457,7 @@ async function hasExplicitBotMessageOutcome(
   );
 }
 
-async function markBotOutcomeReturned(prisma: PrismaClient, runId: string) {
+async function markBotOutcomeReturned(prisma: Pick<PrismaClient, "run">, runId: string) {
   await prisma.run.updateMany({
     where: {
       id: runId,
