@@ -401,6 +401,48 @@ export async function returnBotMessageOutcome(
   return outcome.ok;
 }
 
+export async function recoverBotMessageOutcome(
+  prisma: PrismaClient,
+  run: {
+    id: string;
+    spaceId: string;
+    threadId: string;
+    userId: string;
+    sourceMessageId?: string | null;
+  },
+) {
+  let receipt = await prisma.message.findUnique({
+    where: {
+      threadId_clientNonce: {
+        threadId: run.threadId,
+        clientNonce: `bot-message-outbound:auto-outcome:${run.id}`,
+      },
+    },
+    select: { id: true },
+  });
+  if (!receipt) {
+    const source = await loadBotMessageContext(prisma, run.sourceMessageId);
+    if (!source) return false;
+    const targetThread = await prisma.thread.findFirst({
+      where: { botId: source.fromBotId, spaceId: run.spaceId, userId: run.userId },
+      select: { id: true },
+    });
+    if (!targetThread) return false;
+    receipt = await prisma.message.findUnique({
+      where: {
+        threadId_clientNonce: {
+          threadId: targetThread.id,
+          clientNonce: `bot-message:auto-outcome:${run.id}`,
+        },
+      },
+      select: { id: true },
+    });
+  }
+  if (!receipt) return false;
+  await markBotOutcomeReturned(prisma, run.id);
+  return true;
+}
+
 async function markBotOutcomeReturned(prisma: PrismaClient, runId: string) {
   await prisma.run.updateMany({
     where: {

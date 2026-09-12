@@ -1,7 +1,7 @@
 import { runContinueJob } from "@rakazo/adapter-kit";
 import type { MessageBlock } from "@rakazo/contracts";
 import { getLogger } from "@rakazo/logging";
-import { returnBotMessageOutcome } from "./bot-messages.js";
+import { recoverBotMessageOutcome, returnBotMessageOutcome } from "./bot-messages.js";
 import type { ExecutorDeps } from "./executor.js";
 import { isUserProgressClientNonce } from "./user-progress.js";
 
@@ -34,6 +34,7 @@ export async function reconcileBotMessageOutcome(deps: OutcomeDeps, runId: strin
     botOutcomeNextAttemptAt: run.botOutcomeNextAttemptAt,
   };
   if (run.botOutcomeAttempts >= MAX_ATTEMPTS) {
+    if (await recoverBotMessageOutcome(deps.prisma, run)) return;
     // The last worker died after claiming its final attempt.
     if (!run.botOutcomeError) await recordFailure(deps, run.id, "attempts_exhausted");
     await deps.prisma.run.updateMany({
@@ -79,6 +80,7 @@ export async function reconcileBotMessageOutcome(deps: OutcomeDeps, runId: strin
   // A unique conflict without either delivery receipt is not proof of delivery.
   // Repeating it cannot advance a rolled-back sequence counter; skip with a receipt.
   const exhausted = failure === "P2002" || attempt >= MAX_ATTEMPTS;
+  if (exhausted && (await recoverBotMessageOutcome(deps.prisma, run))) return;
   const nextAttemptAt = new Date(Date.now() + 30_000 * 2 ** (attempt - 1));
   const updated = await deps.prisma.run.updateMany({
     where: {

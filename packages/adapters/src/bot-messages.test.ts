@@ -717,7 +717,7 @@ function reconciliationHarness() {
   });
   const terminal = {
     ...run,
-    sourceMessageId: "source",
+    sourceMessageId: "source" as string | null,
     trigger: "bot_message",
     status: "completed",
     error: null,
@@ -728,6 +728,19 @@ function reconciliationHarness() {
     botOutcomeFailedAt: null as Date | null,
     botOutcomeError: null as string | null,
   };
+  const deliveries: Array<{ threadId: string; clientNonce?: string }> = [];
+  const lookup = harness.tx.message.findUnique.getMockImplementation()!;
+  harness.tx.message.findUnique.mockImplementation(async (args) => {
+    const key = args.where?.threadId_clientNonce as
+      | { threadId: string; clientNonce: string }
+      | undefined;
+    if (!key) return lookup(args);
+    return deliveries.some(
+      (message) => message.threadId === key.threadId && message.clientNonce === key.clientNonce,
+    )
+      ? { id: "committed-message" }
+      : null;
+  });
   let receipts = 0;
   const updateMany = vi.fn(async ({ where, data }) => {
     if (where.botOutcomeReturnedAt === null && terminal.botOutcomeReturnedAt) return { count: 0 };
@@ -751,6 +764,23 @@ function reconciliationHarness() {
     return { count: 1 };
   });
   Object.assign(harness.deps.prisma, {
+    $transaction: vi.fn(async (fn: (client: unknown) => unknown) => {
+      const start = harness.tx.message.create.mock.calls.length;
+      const result = await fn(harness.tx);
+      for (const [{ data }] of harness.tx.message.create.mock.calls.slice(start)) {
+        deliveries.push({ threadId: data.threadId, clientNonce: data.clientNonce });
+      }
+      return result;
+    }),
+    thread: {
+      findFirst: vi.fn(async ({ where }) =>
+        where.botId === "bot-target" &&
+        where.spaceId === run.spaceId &&
+        where.userId === run.userId
+          ? { id: "thread-target" }
+          : null,
+      ),
+    },
     run: {
       updateMany,
       findFirst: vi.fn(async () =>
@@ -784,6 +814,7 @@ function reconciliationHarness() {
   return {
     ...harness,
     terminal,
+    deliveries,
     updateMany,
     receipts: () => receipts,
     reconcile: () => handlers["run.continue"]({ runId: terminal.id }),
@@ -847,6 +878,25 @@ describe("outcome reconciliation persistence", () => {
     expect(harness.tx.message.create).toHaveBeenCalledTimes(3);
     expect(harness.terminal.botOutcomeFailedAt).toBeInstanceOf(Date);
     expect(harness.terminal.botOutcomeReturnedAt).toBeInstanceOf(Date);
+    expect(harness.receipts()).toBe(1);
+  });
+
+  it("does not recover a rolled-back outbound receipt after an inbound sequence conflict", async () => {
+    const harness = reconciliationHarness();
+    harness.tx.message.create
+      .mockResolvedValueOnce({ id: "outbound", seq: 1 })
+      .mockRejectedValueOnce(Object.assign(new Error("Sequence conflict"), { code: "P2002" }));
+
+    await harness.reconcile();
+    await harness.reconcile();
+
+    expect(harness.deliveries).toHaveLength(0);
+    expect(harness.tx.message.create).toHaveBeenCalledTimes(2);
+    expect(harness.tx.run.create).not.toHaveBeenCalled();
+    expect(harness.terminal.botOutcomeAttempts).toBe(1);
+    expect(harness.terminal.botOutcomeFailedAt).toBeInstanceOf(Date);
+    expect(harness.terminal.botOutcomeReturnedAt).toBeInstanceOf(Date);
+    expect(harness.terminal.botOutcomeError).toBe("P2002");
     expect(harness.receipts()).toBe(1);
   });
 
@@ -942,7 +992,110 @@ describe("outcome reconciliation persistence", () => {
     expect(harness.terminal.botOutcomeError).toBe("attempts_exhausted");
     expect(harness.receipts()).toBe(1);
     expect(harness.tx.message.create).not.toHaveBeenCalled();
+    expect(harness.terminal.botOutcomeAttempts).toBe(3);
+    expect(harness.deps.prisma.$transaction).not.toHaveBeenCalled();
+    expect(harness.tx.run.create).not.toHaveBeenCalled();
   });
+
+  it.each(["both", "inbound", "outbound"])(
+    "recovers a final-attempt crash from the surviving %s receipt without redelivery",
+    async (surviving) => {
+      vi.useFakeTimers();
+      const harness = reconciliationHarness();
+      harness.terminal.botOutcomeAttempts = 3;
+      harness.terminal.botOutcomeNextAttemptAt = new Date(Date.now() + 300_000);
+      const delivered = await messageBot(
+        harness.deps,
+        harness.terminal,
+        sender,
+        {
+          bot_id: "bot-target",
+          message: "Finished.",
+          intent: "status",
+          deliveryKey: `auto-outcome:${run.id}`,
+        },
+        { allowTerminalSource: true },
+      );
+      expect(delivered.ok).toBe(true);
+      expect(harness.deliveries).toHaveLength(2);
+      if (surviving !== "both") {
+        const clearedThread = surviving === "outbound" ? "thread-target" : run.threadId;
+        harness.deliveries.splice(
+          harness.deliveries.findIndex((message) => message.threadId === clearedThread),
+          1,
+        );
+      }
+      if (surviving === "outbound") harness.terminal.sourceMessageId = null;
+      vi.mocked(harness.deps.prisma.bot.findMany).mockResolvedValue([]);
+
+      await harness.reconcile();
+      expect(harness.terminal.botOutcomeReturnedAt).toBeNull();
+      vi.setSystemTime(Date.now() + 300_000);
+      await harness.reconcile();
+      await harness.reconcile();
+
+      expect(harness.terminal.botOutcomeReturnedAt).toBeInstanceOf(Date);
+      expect(harness.terminal.botOutcomeFailedAt).toBeNull();
+      expect(harness.terminal.botOutcomeNextAttemptAt).toBeNull();
+      expect(harness.terminal.botOutcomeAttempts).toBe(3);
+      expect(harness.terminal.botOutcomeError).toBeNull();
+      expect(harness.receipts()).toBe(0);
+      expect(harness.tx.message.create).toHaveBeenCalledTimes(2);
+      expect(harness.deps.prisma.$transaction).toHaveBeenCalledOnce();
+      expect(harness.tx.run.create).toHaveBeenCalledOnce();
+      expect(harness.enqueue).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each([1, 2])(
+    "recovers a committed final attempt after %i completion-marker failures",
+    async (markerFailures) => {
+      vi.useFakeTimers();
+      const harness = reconciliationHarness();
+      harness.terminal.botOutcomeAttempts = 2;
+      const update = harness.updateMany.getMockImplementation()!;
+      let failuresLeft = markerFailures;
+      harness.updateMany.mockImplementation(async (args) => {
+        if (
+          args.data.botOutcomeReturnedAt &&
+          args.data.botOutcomeFailedAt === null &&
+          failuresLeft > 0
+        ) {
+          failuresLeft--;
+          throw Object.assign(new Error("Completion marker unavailable"), { code: "P1017" });
+        }
+        return update(args);
+      });
+
+      if (markerFailures === 1) {
+        await harness.reconcile();
+      } else {
+        await expect(harness.reconcile()).rejects.toThrow("Completion marker unavailable");
+        expect(harness.terminal.botOutcomeReturnedAt).toBeNull();
+        expect(harness.terminal.botOutcomeFailedAt).toBeNull();
+        await harness.reconcile();
+        vi.setSystemTime(Date.now() + 300_000);
+        await harness.reconcile();
+      }
+      await harness.reconcile();
+
+      expect(failuresLeft).toBe(0);
+      expect(harness.deliveries).toHaveLength(2);
+      expect(harness.terminal.botOutcomeReturnedAt).toBeInstanceOf(Date);
+      expect(harness.terminal.botOutcomeFailedAt).toBeNull();
+      expect(harness.terminal.botOutcomeNextAttemptAt).toBeNull();
+      expect(harness.terminal.botOutcomeAttempts).toBe(3);
+      expect(harness.terminal.botOutcomeError).toBe("P1017");
+      expect(harness.receipts()).toBe(1);
+      expect(harness.tx.message.create).toHaveBeenCalledTimes(2);
+      expect(harness.deps.prisma.$transaction).toHaveBeenCalledOnce();
+      expect(harness.tx.run.create).toHaveBeenCalledOnce();
+      expect(harness.enqueue).toHaveBeenCalledOnce();
+      expect(
+        harness.updateMany.mock.calls.some(([{ data }]) => data.botOutcomeFailedAt instanceof Date),
+      ).toBe(false);
+    },
+  );
 
   it("keeps the retry durable when enqueue fails", async () => {
     vi.useFakeTimers();

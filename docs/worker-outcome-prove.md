@@ -75,7 +75,10 @@ The executor makes its initial return attempt. Recovery uses the existing
 30 then 60 seconds after retryable failures. A `P2002` without a matching
 inbound or outbound delivery nonce is permanently skipped on its first recovery
 attempt; a sequence clash is not assumed to prove prior delivery. Each claim
-has a five-minute recovery lease; a crash consumes that attempt. The reconciler
+has a five-minute recovery lease; a crash consumes that attempt. Before marking
+an exhausted outcome failed, recovery checks for a committed delivery nonce and
+repairs its completion marker without another delivery attempt. This also
+recovers a final-attempt delivery whose completion-marker update failed. The reconciler
 repairs missed queue wakes, but
 cannot reset the budget. Transaction conflicts still use the existing bounded
 transaction retry inside message delivery. Only the first recovery failure
@@ -109,6 +112,9 @@ without a reply link. Both inbound and outbound messages now have stable
 `(threadId, clientNonce)` receipts. Either surviving receipt prevents replay
 from duplicating the recipient wake; an unmatched sequence conflict is skipped
 with an explicit failure marker rather than represented as successful delivery.
+Final-attempt regressions cover a crash after commit, either surviving delivery
+receipt, completion-marker failures, and an unmatched conflict that rolls back
+the outbound receipt. Recovery preserves the three-attempt budget in each case.
 
 The initial filing contained no Prisma code or constraint. Its follow-up
 identifies `P2002` on `(threadId, seq)` in the outbound create, matching the
