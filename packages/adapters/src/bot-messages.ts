@@ -1,5 +1,6 @@
 import { runContinueJob } from "@rakazo/adapter-kit";
 import type { BotMessageIntent, MessageBlock } from "@rakazo/contracts";
+import type { BotMessageContext } from "@rakazo/core";
 import {
   BOT_MESSAGE_MAX_LENGTH,
   botMessageContext,
@@ -9,10 +10,10 @@ import {
   nextBotMessageHop,
   resolveBotAddress,
 } from "@rakazo/core";
+import type { PrismaClient } from "@rakazo/db";
 import {
   appendEventInTransaction,
   createThreadMessageInTransaction,
-  type PrismaClient,
   withTransactionRetry,
 } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
@@ -124,6 +125,9 @@ export async function messageBot(
   // A tool call can be re-executed after a lease expiry, so a delivery has to be
   // replayable: without this the recipient is messaged twice and woken twice.
   const deliveryKey = input.deliveryKey ? `bot-message:${input.deliveryKey}` : undefined;
+  const outboundDeliveryKey = input.deliveryKey
+    ? `bot-message-outbound:${input.deliveryKey}`
+    : undefined;
   const replayed = () =>
     ({
       ok: true as const,
@@ -172,6 +176,13 @@ export async function messageBot(
             select: { id: true },
           });
           if (already) return { ok: true as const, replayed: true as const };
+          const outbound = await tx.message.findUnique({
+            where: {
+              threadId_clientNonce: { threadId: run.threadId, clientNonce: outboundDeliveryKey! },
+            },
+            select: { id: true },
+          });
+          if (outbound) return { ok: true as const, replayed: true as const };
         }
 
         const senderStillRunning = await tx.run.findFirst({
@@ -208,6 +219,7 @@ export async function messageBot(
           threadId: run.threadId,
           role: "bot",
           blocks: [outboundBlock],
+          clientNonce: outboundDeliveryKey,
           botId: run.botId,
           runId: run.id,
         });
@@ -221,14 +233,22 @@ export async function messageBot(
           returnToMessageId: outbound.id,
         };
         // This is the recipient's prompt, but it is still unread peer activity.
+        // JSON return addresses outlive the referenced message. Keep a surviving
+        // parent locked through the insert; a deleted parent degrades to an unthreaded reply.
+        const returnTo =
+          sourceContext?.fromBotId === target.id && intent !== "fyi"
+            ? sourceContext.returnToMessageId
+            : undefined;
+        const parents = returnTo
+          ? await tx.$queryRaw<
+              Array<{ id: string }>
+            >`SELECT id FROM messages WHERE id = ${returnTo} AND "threadId" = ${targetThreadId} FOR KEY SHARE`
+          : [];
         const inbound = await createThreadMessageInTransaction(tx, {
           threadId: targetThreadId,
           role: "user",
           blocks: [inboundBlock],
-          replyToMessageId:
-            sourceContext?.fromBotId === target.id && intent !== "fyi"
-              ? sourceContext.returnToMessageId
-              : undefined,
+          replyToMessageId: parents.length ? returnTo : undefined,
           clientNonce: deliveryKey,
           markUnread: true,
         });
@@ -272,6 +292,12 @@ export async function messageBot(
           runId: run.id,
           payload: { messageId: outbound.id, role: "bot", blocks: [outboundBlock] },
         });
+        if (
+          options?.allowTerminalSource === true &&
+          input.deliveryKey === `auto-outcome:${run.id}`
+        ) {
+          await markBotOutcomeReturned(tx, run.id);
+        }
         return {
           ok: true as const,
           runId: nextRun.id,
@@ -289,6 +315,13 @@ export async function messageBot(
         select: { id: true },
       });
       if (winner) return replayed();
+      const outbound = await deps.prisma.message.findUnique({
+        where: {
+          threadId_clientNonce: { threadId: run.threadId, clientNonce: outboundDeliveryKey! },
+        },
+        select: { id: true },
+      });
+      if (outbound) return replayed();
     }
     throw error;
   }
@@ -330,31 +363,12 @@ export async function returnBotMessageOutcome(
   intent: "result" | "status" = "result",
 ) {
   const source = await loadBotMessageContext(deps.prisma, run.sourceMessageId);
-  if (!source) {
+  if (!needsBotMessageOutcome(source)) {
     await markBotOutcomeReturned(deps.prisma, run.id);
     // Handled: nothing to deliver. Return true so callers do not release a reservation.
     return true;
   }
-  const sourceIntent = source.intent ?? "request";
-  if (sourceIntent !== "request" && sourceIntent !== "question") {
-    await markBotOutcomeReturned(deps.prisma, run.id);
-    return true;
-  }
-  const sent = await deps.prisma.message.findMany({
-    where: { threadId: run.threadId, runId: run.id },
-    select: { blocks: true },
-  });
-  // Only an explicit result counts as a terminal outcome. Interim message_bot
-  // status updates must not suppress the automatic final return.
-  const alreadyReturned = sent.some((message) =>
-    (Array.isArray(message.blocks) ? (message.blocks as MessageBlock[]) : []).some(
-      (block) =>
-        block.kind === "bot_message_sent" &&
-        block.toBotId === source.fromBotId &&
-        block.intent === "result",
-    ),
-  );
-  if (alreadyReturned) {
+  if (await hasExplicitBotMessageOutcome(deps.prisma, run, source.fromBotId)) {
     await markBotOutcomeReturned(deps.prisma, run.id);
     return true;
   }
@@ -371,18 +385,91 @@ export async function returnBotMessageOutcome(
     },
     { allowTerminalSource: true },
   );
-  if (outcome.ok) await markBotOutcomeReturned(deps.prisma, run.id);
+  if (outcome.ok && "replayed" in outcome) await markBotOutcomeReturned(deps.prisma, run.id);
   return outcome.ok;
 }
 
-async function markBotOutcomeReturned(prisma: PrismaClient, runId: string) {
+export async function recoverBotMessageOutcome(
+  prisma: PrismaClient,
+  run: {
+    id: string;
+    spaceId: string;
+    threadId: string;
+    userId: string;
+    sourceMessageId?: string | null;
+  },
+) {
+  let receipt = await prisma.message.findUnique({
+    where: {
+      threadId_clientNonce: {
+        threadId: run.threadId,
+        clientNonce: `bot-message-outbound:auto-outcome:${run.id}`,
+      },
+    },
+    select: { id: true },
+  });
+  if (!receipt) {
+    receipt = await prisma.message.findFirst({
+      where: {
+        clientNonce: `bot-message:auto-outcome:${run.id}`,
+        thread: { spaceId: run.spaceId, userId: run.userId },
+      },
+      select: { id: true },
+    });
+  }
+  if (!receipt) {
+    const source = await loadBotMessageContext(prisma, run.sourceMessageId);
+    if (
+      needsBotMessageOutcome(source) &&
+      !(await hasExplicitBotMessageOutcome(prisma, run, source.fromBotId))
+    )
+      return false;
+  }
+  await markBotOutcomeReturned(prisma, run.id);
+  return true;
+}
+
+function needsBotMessageOutcome(
+  source: BotMessageContext | undefined,
+): source is BotMessageContext {
+  return (
+    source !== undefined &&
+    (source.intent === undefined || source.intent === "request" || source.intent === "question")
+  );
+}
+
+async function hasExplicitBotMessageOutcome(
+  prisma: PrismaClient,
+  run: { id: string; threadId: string },
+  toBotId: string,
+) {
+  const sent = await prisma.message.findMany({
+    where: { threadId: run.threadId, runId: run.id },
+    select: { blocks: true },
+  });
+  // Only an explicit result counts as a terminal outcome. Interim message_bot
+  // status updates must not suppress the automatic final return.
+  return sent.some((message) =>
+    (Array.isArray(message.blocks) ? (message.blocks as MessageBlock[]) : []).some(
+      (block) =>
+        block.kind === "bot_message_sent" && block.toBotId === toBotId && block.intent === "result",
+    ),
+  );
+}
+
+async function markBotOutcomeReturned(prisma: Pick<PrismaClient, "run">, runId: string) {
   await prisma.run.updateMany({
     where: {
       id: runId,
       status: { in: ["completed", "failed"] },
-      botOutcomeReturnedAt: null,
+      OR: [{ botOutcomeReturnedAt: null }, { botOutcomeFailedAt: { not: null } }],
     },
-    data: { botOutcomeReturnedAt: new Date() },
+    data: {
+      botOutcomeReturnedAt: new Date(),
+      // A late successful attempt is authoritative even if recovery exhausted its lease.
+      botOutcomeFailedAt: null,
+      botOutcomeNextAttemptAt: null,
+    },
   });
 }
 

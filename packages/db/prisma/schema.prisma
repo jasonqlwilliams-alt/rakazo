@@ -606,6 +606,10 @@ model Run {
   startedAt            DateTime?
   completedAt          DateTime?
   botOutcomeReturnedAt DateTime?
+  botOutcomeAttempts Int @default(0)
+  botOutcomeNextAttemptAt DateTime?
+  botOutcomeFailedAt DateTime?
+  botOutcomeError String?
   messagingMirroredAt  DateTime?
   teamChatMirroredAt   DateTime?
   createdAt            DateTime         @default(now())

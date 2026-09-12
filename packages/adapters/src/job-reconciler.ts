@@ -1,16 +1,9 @@
-import {
-  type JobPublisher,
-  messagingDeliverJob,
-  routineWakeupJob,
-  runContinueJob,
-} from "@rakazo/adapter-kit";
-import type { MessageBlock } from "@rakazo/contracts";
-import type { Pool, PrismaClient, ThreadEvents } from "@rakazo/db";
+import type { JobPublisher } from "@rakazo/adapter-kit";
+import { messagingDeliverJob, routineWakeupJob, runContinueJob } from "@rakazo/adapter-kit";
+import type { Pool, PrismaClient } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import type { PoolClient } from "pg";
-import { returnBotMessageOutcome } from "./bot-messages.js";
 import { scheduleComputerControlExpiry } from "./computer-control.js";
-import { isUserProgressClientNonce } from "./user-progress.js";
 
 const DEFAULT_INTERVAL_MS = 30_000;
 const DEFAULT_BATCH_SIZE = 100;
@@ -102,7 +95,6 @@ export function createJobReconciler(
   deps: {
     prisma: PrismaClient;
     jobs: JobPublisher;
-    events?: ThreadEvents;
     leadership?: ReconciliationLeadership;
     reconcileComputerUpdates?: () => Promise<void>;
     reconcileCloudAgents?: () => Promise<void>;
@@ -240,65 +232,19 @@ export function createJobReconciler(
         }),
       ]);
 
-      const events = deps.events;
-      if (events) {
-        const outcomes = await deps.prisma.run.findMany({
-          where: {
-            trigger: "bot_message",
-            status: { in: ["completed", "failed"] },
-            botOutcomeReturnedAt: null,
-          },
-          orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
-          take: batchSize,
-          select: {
-            id: true,
-            spaceId: true,
-            threadId: true,
-            botId: true,
-            userId: true,
-            sourceMessageId: true,
-            status: true,
-            error: true,
-            bot: { select: { name: true } },
-          },
-        });
-        await Promise.all(
-          outcomes.map(async (run) => {
-            const transcript =
-              run.status === "failed"
-                ? { text: "", progressOnly: false }
-                : await botRunOutcomeText(deps.prisma, run.id);
-            const text =
-              run.status === "failed"
-                ? `Could not complete the delegated request: ${run.error ?? "unknown error"}`
-                : transcript.text ||
-                  "The delegated bot completed its turn without a written summary.";
-            // Same stable delivery key as the executor path (auto-outcome:<runId>), so a
-            // concurrent or earlier return is replayed instead of double-posted. Progress-only
-            // transcripts (all mid-turn user-progress messages) return as status.
-            const intent =
-              run.status === "failed" || !transcript.text.trim() || transcript.progressOnly
-                ? "status"
-                : ("result" as const);
-            const returned = await returnBotMessageOutcome(
-              { prisma: deps.prisma, jobs: deps.jobs, events },
-              run,
-              { id: run.botId, name: run.bot.name },
-              text,
-              intent,
-            ).catch((error) => {
-              getLogger().error("bot message outcome reconciliation", error);
-              return false;
-            });
-            if (!returned) {
-              await deps.prisma.run.updateMany({
-                where: { id: run.id, botOutcomeReturnedAt: null },
-                data: { updatedAt: new Date() },
-              });
-            }
-          }),
-        );
-      }
+      const outcomes = await deps.prisma.run.findMany({
+        where: {
+          trigger: "bot_message",
+          status: { in: ["completed", "failed"] },
+          botOutcomeReturnedAt: null,
+          botOutcomeFailedAt: null,
+          OR: [{ botOutcomeNextAttemptAt: null }, { botOutcomeNextAttemptAt: { lte: now } }],
+        },
+        orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
+        take: batchSize,
+        select: { id: true },
+      });
+      await Promise.all(outcomes.map((run) => deps.jobs.enqueue(runContinueJob(run.id))));
 
       await Promise.all([
         ...runs.map((run) => deps.jobs.enqueue(runContinueJob(run.id))),
@@ -365,48 +311,4 @@ export function createJobReconciler(
       await deps.leadership?.release();
     },
   };
-}
-
-/** Prefer the full bot transcript for a run so interim progress is not mistaken for the sole result. */
-async function botRunOutcomeText(
-  prisma: {
-    message: {
-      findMany: (args: {
-        where: { runId: string; role: "bot" };
-        orderBy: { seq: "asc" };
-        select: { blocks: true; clientNonce: true };
-      }) => Promise<Array<{ blocks: unknown; clientNonce: string | null }>>;
-    };
-  },
-  runId: string,
-): Promise<{ text: string; progressOnly: boolean }> {
-  const messages = await prisma.message.findMany({
-    where: { runId, role: "bot" },
-    orderBy: { seq: "asc" },
-    select: { blocks: true, clientNonce: true },
-  });
-  const progressParts: string[] = [];
-  const finalParts: string[] = [];
-  for (const message of messages) {
-    const text = messageText(message.blocks);
-    if (!text) continue;
-    if (isUserProgressClientNonce(message.clientNonce)) progressParts.push(text);
-    else finalParts.push(text);
-  }
-  // Prefer the latest non-progress reply when present so earlier untagged mid-run
-  // publishes (for example pre-takeover narration) do not contaminate the result.
-  // Progress-only turns still join progress beats as status.
-  if (finalParts.length > 0) {
-    return { text: finalParts[finalParts.length - 1]!, progressOnly: false };
-  }
-  return { text: progressParts.join("\n\n"), progressOnly: progressParts.length > 0 };
-}
-
-function messageText(blocks: unknown): string {
-  if (!Array.isArray(blocks)) return "";
-  return (blocks as MessageBlock[])
-    .filter((block): block is Extract<MessageBlock, { kind: "text" }> => block.kind === "text")
-    .map((block) => block.text)
-    .join("")
-    .trim();
 }
