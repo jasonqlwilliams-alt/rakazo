@@ -26,7 +26,13 @@ function message(errorMessage?: string): AssistantMessage {
     },
   };
 }
-function fixture(replies: Array<{ error?: string; partial?: boolean; retryAfter?: string }>) {
+function fixture(
+  replies: Array<{
+    error?: string;
+    partial?: "text" | "thinking" | "toolCall";
+    retryAfter?: string;
+  }>,
+) {
   const streamSimple = vi.fn<Models["streamSimple"]>((_model, _context, options) => {
     const reply = replies.shift();
     if (!reply) throw new Error("Unexpected model call");
@@ -39,9 +45,21 @@ function fixture(replies: Array<{ error?: string; partial?: boolean; retryAfter?
           model,
         );
       stream.push({ type: "start", partial: result });
-      if (reply.partial) {
+      if (reply.partial === "text") {
         result.content = [{ type: "text", text: "partial" }];
         stream.push({ type: "text_delta", delta: "partial", contentIndex: 0, partial: result });
+      } else if (reply.partial === "thinking") {
+        result.content = [{ type: "thinking", thinking: "partial" }];
+        stream.push({ type: "thinking_delta", delta: "partial", contentIndex: 0, partial: result });
+      } else if (reply.partial === "toolCall") {
+        const toolCall = {
+          type: "toolCall" as const,
+          id: "call",
+          name: "write",
+          arguments: { value: "partial" },
+        };
+        result.content = [toolCall];
+        stream.push({ type: "toolcall_end", toolCall, contentIndex: 0, partial: result });
       }
       if (reply.error) stream.push({ type: "error", reason: "error", error: result });
       else stream.push({ type: "done", reason: "stop", message: result });
@@ -119,12 +137,15 @@ describe("one model request quota retry", () => {
     },
   );
 
-  it("does not delay a non-quota error", async () => {
-    const f = fixture([{ error: "401 Unauthorized" }]);
-    expect((await f.run().result()).errorMessage).toBe("401 Unauthorized");
-    expect(f.progress).not.toHaveBeenCalled();
-    expect(f.streamSimple).toHaveBeenCalledTimes(1);
-  });
+  it.each([undefined, "text", "thinking", "toolCall"] as const)(
+    "does not delay or rewrite a non-quota error after %s output",
+    async (partial) => {
+      const f = fixture([{ error: "401 Unauthorized", partial }]);
+      expect((await f.run().result()).errorMessage).toBe("401 Unauthorized");
+      expect(f.progress).not.toHaveBeenCalled();
+      expect(f.streamSimple).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("emits a clear final receipt after three retries", async () => {
     vi.useFakeTimers();
@@ -137,12 +158,33 @@ describe("one model request quota retry", () => {
     expect(f.streamSimple).toHaveBeenCalledTimes(4);
   });
 
-  it("does not replay a partial stream", async () => {
-    const f = fixture([{ error: "429 rate limit", partial: true }]);
-    expect((await f.run().result()).errorMessage).toBe("429 rate limit");
-    expect(f.streamSimple).toHaveBeenCalledTimes(1);
-    expect(f.progress).not.toHaveBeenCalled();
-  });
+  it.each([
+    ["text", "text_delta"],
+    ["thinking", "thinking_delta"],
+    ["toolCall", "toolcall_end"],
+  ] as const)(
+    "reports a quota stop without replaying a partial %s stream",
+    async (partial, eventType) => {
+      vi.useFakeTimers();
+      const f = fixture([{ error: "429 rate limit", partial }]);
+      const stream = f.run();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(f.progress).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+      const result = await stream.result();
+      expect(result).toMatchObject({
+        stopReason: "error",
+        content: [],
+        errorMessage: "Mid-response quota stop was not retried. Try again later.",
+      });
+      const events = [];
+      for await (const event of stream) events.push(event);
+      expect(events.map((event) => event.type)).toEqual(["start", eventType, "error"]);
+      expect(events.at(-1)).toEqual({ type: "error", reason: "error", error: result });
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(f.streamSimple).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("cancels the wait without another request", async () => {
     vi.useFakeTimers();

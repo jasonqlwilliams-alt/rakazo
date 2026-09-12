@@ -43,16 +43,28 @@ stream. It does not retry `agent.prompt`, a tool call, or a whole run. Previousl
 completed tool results remain in the request context and existing effect IDs are
 unchanged. Pi executes tool calls only after a successful model completion.
 
-Once a stream has emitted text, reasoning, or tool-call events, Rakazo leaves that
-attempt unretried and uses the existing failure path. This avoids repeating
-partial output or effects. Other runtime implementations and history compaction
-are outside this retry wrapper. Provider SDK retries are disabled within wrapped
-calls so they cannot multiply the configured retry count.
+Retries are pre-content-only by design. Once a stream has emitted text, reasoning,
+or tool-call events, Rakazo leaves that attempt unretried. A quota stop at that
+point uses the same run failure receipt as exhausted retries, with the message
+`Mid-response quota stop was not retried. Try again later.` This notice appears
+only on failure to explain why no retry followed the quota stop. Rakazo does not
+resume the stream or replay partial output or tool calls; previously completed
+effects remain intact.
+
+[OpenRouter documents mid-stream errors](https://openrouter.ai/docs/api_reference/errors-and-debugging#mid-stream-errors),
+including rate-limit failures after streaming begins. These arrive in the stream
+while the HTTP status remains `200 OK`, so a successful HTTP status does not rule
+out a later quota stop.
+
+Other runtime implementations and history compaction are outside this retry
+wrapper. Provider SDK retries are disabled within wrapped calls so they cannot
+multiply the configured retry count.
 
 Tests use synthetic streams with fake timers and the real Pi/OpenAI-compatible
 transport against a loopback HTTP fixture. They cover a successful retry, longer
-headers, non-quota failure, cancellation, exhausted retries, partial streams, and
-a failed continuation after a tool write that must execute exactly once.
+headers, non-quota failure, cancellation, exhausted retries, the failure receipt
+without replay after partial text, reasoning, or tool-call output, and a failed
+continuation after a tool write that must execute exactly once.
 
 # Large sweeps through Antigravity
 

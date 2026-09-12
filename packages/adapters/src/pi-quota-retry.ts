@@ -206,7 +206,7 @@ export function streamWithQuotaRetry(
         }
         if (signal?.aborted) throw signal.reason;
         const quota = classifyQuotaError({ error: thrown ?? failure, response });
-        if (!quota || emitted || failure.stopReason === "aborted") {
+        if (!quota || failure.stopReason === "aborted") {
           output.push({
             type: "error",
             reason: failure.stopReason === "aborted" ? "aborted" : "error",
@@ -214,7 +214,7 @@ export function streamWithQuotaRetry(
           });
           return;
         }
-        if (retries >= config.maxRetries) {
+        if (emitted || retries >= config.maxRetries) {
           output.push({
             type: "error",
             reason: "error",
@@ -222,7 +222,9 @@ export function streamWithQuotaRetry(
               ...failure,
               stopReason: "error",
               content: [],
-              errorMessage: `Quota retry failed after ${retries} retries. Try again later.`,
+              errorMessage: emitted
+                ? "Mid-response quota stop was not retried. Try again later."
+                : `Quota retry failed after ${retries} retries. Try again later.`,
             },
           });
           return;
