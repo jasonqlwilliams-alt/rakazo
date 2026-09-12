@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Prisma } from "./client.js";
-import { createThreadMessageInTransaction } from "./messages.js";
+import type { Prisma, PrismaClient } from "./client.js";
+import {
+  archivalHistoryExclusion,
+  createThreadMessageInTransaction,
+  loadRunHistoryMessages,
+} from "./messages.js";
 
 function transaction() {
   return {
@@ -33,4 +37,31 @@ describe("createThreadMessageInTransaction", () => {
       expect.objectContaining({ data: expect.objectContaining({ unread: true }) }),
     );
   });
+});
+
+describe("run history archive exclusion", () => {
+  it.each([undefined, "channel-1"])(
+    "excludes archives before limiting history for channel %s",
+    async (channelId) => {
+      const findMany = vi.fn().mockResolvedValue([]);
+      await loadRunHistoryMessages(
+        { message: { findMany } } as unknown as PrismaClient,
+        { id: "run-1", threadId: "thread-1" },
+        200,
+        channelId,
+      );
+      const query = findMany.mock.calls[0]![0];
+      expect(query).toMatchObject({
+        where: { threadId: "thread-1", ...archivalHistoryExclusion() },
+        orderBy: { seq: "desc" },
+        take: 200,
+      });
+      if (channelId)
+        expect(query.where.OR).toEqual([
+          { role: "user", blocks: { array_contains: [{ kind: "channel_message", channelId }] } },
+          { role: "bot", runId: "run-1" },
+        ]);
+      else expect(query.where).not.toHaveProperty("OR");
+    },
+  );
 });

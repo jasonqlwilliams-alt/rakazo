@@ -9,7 +9,7 @@ import { storeBotInboxImages } from "./inbox-files.js";
 const context = {
   operationId: "attach-test",
   traceId: "attach-test",
-  workspaceId: "workspace-1",
+  spaceId: "workspace-1",
   userId: "user-1",
   botId: "bot-1",
   signal: new AbortController().signal,

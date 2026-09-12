@@ -7,9 +7,9 @@ import {
   botFieldsAfterPatchAreSeparate,
   CreateBotInput,
   CreateGroupInput,
-  DirectMessageBlockSchema,
   CreateRoutineInput,
   canReactToThreadMessage,
+  DirectMessageBlockSchema,
   McpServerConfigInput,
   MessageBlock,
   ModelConnectInputSchema,
@@ -147,7 +147,7 @@ describe("contracts", () => {
     ).toBe(false);
   });
 
-  it("normalizes bot creation fields without losing the longer instruction copy", () => {
+  it("normalizes bot creation fields without copying the blurb into instructions", () => {
     const profile = normalizeCreateBotProfile({
       name: `  ${"N".repeat(100)}  `,
       title: `  ${"T".repeat(BOT_TITLE_MAX_LENGTH + 10)}  `,
@@ -157,7 +157,7 @@ describe("contracts", () => {
     expect(profile.name).toHaveLength(80);
     expect(profile.title).toHaveLength(BOT_TITLE_MAX_LENGTH);
     expect(profile.description).toHaveLength(BOT_DESCRIPTION_MAX_LENGTH);
-    expect(profile.instructions).toHaveLength(BOT_INSTRUCTIONS_MAX_LENGTH);
+    expect(profile).not.toHaveProperty("instructions");
   });
 
   it("accepts the same title limit when creating and updating bots", () => {
@@ -269,6 +269,8 @@ describe("contracts", () => {
         direction: "received",
       }),
     ).toMatchObject({ kind: "direct_message", direction: "received" });
+  });
+
   it("requires a distinct, non-empty bot order", () => {
     expect(ReorderBotsInput.safeParse({ botIds: ["bot-2", "bot-1"] }).success).toBe(true);
     expect(ReorderBotsInput.safeParse({ botIds: [] }).success).toBe(false);

@@ -5521,7 +5521,7 @@ export const MessageView = memo(function MessageView({
               type="button"
               onClick={() => onOpenBot(otherBotId)}
               title={`Open ${otherName}`}
-              className="flex w-full items-baseline justify-center gap-2 py-1 text-center text-[13.5px] text-[#85858A] hover:text-[#DFDFE2]"
+              className="flex w-full items-baseline justify-center gap-2 py-1 text-center text-[13.5px] text-muted-foreground hover:text-foreground"
             >
               <span className="shrink-0 text-[#E65707]">[agent]</span>
               <span className="shrink-0 text-[#A8A8AD]">

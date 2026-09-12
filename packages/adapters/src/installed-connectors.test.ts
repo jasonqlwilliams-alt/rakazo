@@ -42,7 +42,7 @@ describe("OpenAPI connector import", () => {
     };
     const provider = new InstalledConnectorProvider(prisma as never, {} as never);
     const context = {
-      workspaceId: "workspace-1",
+      spaceId: "workspace-1",
       userId: "user-1",
       signal: new AbortController().signal,
     } as never;
@@ -173,7 +173,7 @@ describe("OpenAPI connector import", () => {
     });
     const provider = new InstalledConnectorProvider(prisma as never, {} as never, { fetch });
     const context = {
-      workspaceId: "workspace-1",
+      spaceId: "workspace-1",
       userId: "user-1",
       signal: new AbortController().signal,
     } as never;
@@ -301,7 +301,7 @@ describe("OpenAPI connector import", () => {
     };
     const provider = new InstalledConnectorProvider(prisma as never, {} as never);
     const context = {
-      workspaceId: "workspace-1",
+      spaceId: "workspace-1",
       userId: "user-1",
       signal: new AbortController().signal,
     } as never;
@@ -370,7 +370,7 @@ describe("OpenAPI connector import", () => {
       },
     });
     const context = {
-      workspaceId: "workspace-1",
+      spaceId: "workspace-1",
       userId: "user-1",
       signal: new AbortController().signal,
     } as never;
@@ -411,7 +411,7 @@ describe("OpenAPI connector import", () => {
     );
     await expect(
       provider.discoverTools({
-        workspaceId: "workspace-1",
+        spaceId: "workspace-1",
         userId: "user-1",
         signal: new AbortController().signal,
       } as never),
@@ -446,7 +446,7 @@ describe("OpenAPI connector import", () => {
     const fetch = vi.fn().mockResolvedValue(Response.json({ ok: true }));
     const provider = new InstalledConnectorProvider(prisma as never, {} as never, { fetch });
     const context = {
-      workspaceId: "workspace-1",
+      spaceId: "workspace-1",
       userId: "user-1",
       signal: new AbortController().signal,
     } as never;

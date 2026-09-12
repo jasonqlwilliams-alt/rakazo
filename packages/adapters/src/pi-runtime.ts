@@ -26,9 +26,9 @@ import type {
   ConnectorTool,
 } from "@rakazo/adapter-kit";
 import { DEFAULT_MEMORY_PATH, resolveMemoryPath } from "@rakazo/adapter-kit";
-import { builtinAgentTools, DELEGATION_TOOL_NAMES, SUBAGENT_EXCLUDED_TOOL_NAMES } from "./builtin-tools.js";
 import { getLogger } from "@rakazo/logging";
 import { isToolPauseResult } from "./approval-effect.js";
+import { builtinAgentTools, SUBAGENT_EXCLUDED_TOOL_NAMES } from "./builtin-tools.js";
 import { DEFAULT_OPENROUTER_MODEL_ID } from "./deployment-model.js";
 import {
   normalizeOpenAiToolParameters,

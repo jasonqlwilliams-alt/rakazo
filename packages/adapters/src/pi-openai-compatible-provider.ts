@@ -173,12 +173,6 @@ export function createOpenAiCompatibleFetch(
       isIP(hostname) === 0
         ? new Agent({ connect: { lookup: createOpenAiCompatibleLookup(url, resolve) } })
         : undefined;
-    // A dispatcher must be driven by the fetch implementation from the same
-    // undici package. Preserve injected fetches and the dispatcher-free IP path.
-    const useUndiciFetch = dispatcher !== undefined && baseFetch === globalThis.fetch;
-    const fetchImpl = useUndiciFetch
-      ? (undiciFetch as unknown as typeof globalThis.fetch)
-      : baseFetch;
     try {
       const response = await baseFetch(url, {
         ...(await requestInitFor(input, init)),

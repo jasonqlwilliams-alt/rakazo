@@ -4,27 +4,26 @@ import { ONCE_ROUTINE_CRON } from "@rakazo/core";
 import type { PrismaClient } from "@rakazo/db";
 import { describe, expect, it, vi } from "vitest";
 import {
+  appendToolCompletionAudit,
   archivalHistoryExclusion,
   blocksToText,
   createRunExecutor,
-  MAX_MODEL_TOOL_BYTES,
-  MAX_MODEL_TOOL_COUNT,
-  modelToolMaxBytes,
-  selectModelTools,
-  toolSchemaBytes,
-  appendToolCompletionAudit,
   createRunWorkspaceCheckpoint,
   loadCurrentTurnImages,
+  MAX_MODEL_TOOL_BYTES,
+  MAX_MODEL_TOOL_COUNT,
   missingTurnImagesInstruction,
+  modelToolMaxBytes,
   runNotificationsEnabled,
   selectBuiltinToolsForRun,
+  selectModelTools,
   settleSteeringAttachmentLoads,
   threadContextForRun,
   toolCompletionAuditPayload,
   toolCompletionFromResult,
+  toolSchemaBytes,
 } from "./executor.js";
 import { serializeModelSecret } from "./pi-oauth.js";
-
 
 function tool(name: string, description = name): ConnectorTool {
   return { name, description, inputSchema: { type: "object", properties: {} } };

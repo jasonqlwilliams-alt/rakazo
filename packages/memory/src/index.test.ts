@@ -187,5 +187,9 @@ function storeWithDocument(existing: Record<string, unknown> | undefined) {
     },
     memoryRevision: { create: vi.fn().mockResolvedValue({}) },
   };
-  return { store: new MarkdownMemoryStore(prisma as never), prisma };
+  const transactional = {
+    ...prisma,
+    $transaction: vi.fn(async (fn: (tx: typeof prisma) => unknown) => fn(prisma)),
+  };
+  return { store: new MarkdownMemoryStore(transactional as never), prisma };
 }

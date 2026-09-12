@@ -492,7 +492,7 @@ export async function createApp(
       const form = await c.req.raw.formData();
       const botId = String(form.get("botId") ?? "");
       const bot = await prisma.bot.findFirst({
-        where: { id: botId, workspaceId: actor.workspaceId, archivedAt: null },
+        where: { id: botId, spaceId: actor.spaceId, archivedAt: null },
         include: { computer: true },
       });
       if (!bot) return c.json({ error: "Bot not found" }, 404);
@@ -522,7 +522,7 @@ export async function createApp(
       const context = {
         operationId: `desktop-files:${randomUUID()}`,
         traceId: `desktop-files:${bot.id}`,
-        workspaceId: actor.workspaceId,
+        spaceId: actor.spaceId,
         userId: actor.userId,
         botId: bot.id,
         signal: c.req.raw.signal,
@@ -547,7 +547,7 @@ export async function createApp(
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not attach photos";
       if (/image|choose|larger than/i.test(message)) return c.json({ error: message }, 400);
-      console.error("desktop photo copy", error);
+      logger.error("desktop photo copy", error);
       return c.json({ error: "Could not copy photos into the bot home" }, 500);
     }
   });

@@ -235,7 +235,6 @@ export default function BotSettingsScreen() {
         name?: string;
         title?: string;
         description?: string;
-        instructions?: string;
         color?: string;
         modelProvider?: string | null;
         modelId?: string | null;
@@ -245,8 +244,6 @@ export default function BotSettingsScreen() {
       if (profile.title !== bot.title) input.title = profile.title;
       if (profile.description !== (bot.description ?? "")) {
         input.description = profile.description;
-        // Keep instructions in sync with description (same as web BotSettings).
-        input.instructions = profile.instructions;
       }
       if (color !== bot.color) input.color = color;
       const modelChanged =

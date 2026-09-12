@@ -12,14 +12,14 @@ vi.mock("./child-bots.js", async (importOriginal) => {
 const ELEUSIS = {
   id: "bot-eleusis",
   name: "Eleusis",
-  workspaceId: "workspace-450778",
+  spaceId: "space-450778",
   userId: "user-1",
   threadId: "thread-eleusis",
 };
 const THOR = {
   id: "bot-thor",
   name: "Thor",
-  workspaceId: "workspace-450778",
+  spaceId: "space-450778",
   userId: "user-1",
   threadId: "thread-thor",
 };
@@ -27,7 +27,7 @@ const THOR = {
 interface SeedBot {
   id: string;
   name: string;
-  workspaceId: string;
+  spaceId: string;
   userId: string;
   threadId: string | null;
   archivedAt?: Date | null;
@@ -43,7 +43,7 @@ interface MessageRow {
 
 interface DirectThreadRow {
   id: string;
-  workspaceId: string;
+  spaceId: string;
   firstBotId: string;
   secondBotId: string;
   nextMessageSeq: number;
@@ -70,7 +70,7 @@ function createStore(bots: SeedBot[], seeded: Array<Omit<MessageRow, "id">> = []
   // The sender is already mid-turn when it calls the tool. Kept out of `runs` so the
   // ids this store hands out stay run-1, run-2, ... for the delivery assertions.
   const callerRuns: Array<Record<string, unknown>> = [
-    { id: "run-eleusis", workspaceId: ELEUSIS.workspaceId, status: "running" },
+    { id: "run-eleusis", spaceId: ELEUSIS.spaceId, status: "running" },
   ];
   const seqByThread = new Map<string, number>();
   const botCreate = vi.fn();
@@ -79,8 +79,8 @@ function createStore(bots: SeedBot[], seeded: Array<Omit<MessageRow, "id">> = []
   const append = vi.fn().mockResolvedValue(undefined);
 
   const row = (bot: SeedBot) => ({ ...bot, thread: bot.threadId ? { id: bot.threadId } : null });
-  const scoped = (bot: SeedBot, where: { workspaceId?: string; userId?: string }) =>
-    bot.workspaceId === where.workspaceId && bot.userId === where.userId;
+  const scoped = (bot: SeedBot, where: { spaceId?: string; userId?: string }) =>
+    bot.spaceId === where.spaceId && bot.userId === where.userId;
 
   const tx = {
     thread: {
@@ -103,18 +103,18 @@ function createStore(bots: SeedBot[], seeded: Array<Omit<MessageRow, "id">> = []
         create,
       }: {
         where: {
-          workspaceId_firstBotId_secondBotId: {
-            workspaceId: string;
+          spaceId_firstBotId_secondBotId: {
+            spaceId: string;
             firstBotId: string;
             secondBotId: string;
           };
         };
         create: Omit<DirectThreadRow, "id" | "nextMessageSeq">;
       }) => {
-        const key = where.workspaceId_firstBotId_secondBotId;
+        const key = where.spaceId_firstBotId_secondBotId;
         const found = directThreads.find(
           (thread) =>
-            thread.workspaceId === key.workspaceId &&
+            thread.spaceId === key.spaceId &&
             thread.firstBotId === key.firstBotId &&
             thread.secondBotId === key.secondBotId,
         );
@@ -195,12 +195,12 @@ function createStore(bots: SeedBot[], seeded: Array<Omit<MessageRow, "id">> = []
       findUnique: async ({
         where,
       }: {
-        where: { workspaceId_clientNonce: { workspaceId: string; clientNonce: string } };
+        where: { spaceId_clientNonce: { spaceId: string; clientNonce: string } };
       }) =>
         runs.find(
           (run) =>
-            run.clientNonce === where.workspaceId_clientNonce.clientNonce &&
-            run.workspaceId === where.workspaceId_clientNonce.workspaceId,
+            run.clientNonce === where.spaceId_clientNonce.clientNonce &&
+            run.spaceId === where.spaceId_clientNonce.spaceId,
         ) ?? null,
       updateMany: runUpdateMany,
     },
@@ -260,7 +260,7 @@ describe("peer message delivery", () => {
     expect(store.directThreads).toEqual([
       expect.objectContaining({
         id: "direct-thread-1",
-        workspaceId: ELEUSIS.workspaceId,
+        spaceId: ELEUSIS.spaceId,
         firstBotId: ELEUSIS.id,
         secondBotId: THOR.id,
       }),
@@ -447,11 +447,11 @@ describe("peer resolution", () => {
     expect(store.runs).toHaveLength(0);
   });
 
-  it("cannot reach a bot in another workspace, by id or by name", async () => {
+  it("cannot reach a bot in another space, by id or by name", async () => {
     const foreign = {
       id: "bot-foreign",
       name: "Thor",
-      workspaceId: "workspace-27224",
+      spaceId: "space-27224",
       userId: "user-2",
       threadId: "thread-foreign",
     };
@@ -461,7 +461,7 @@ describe("peer resolution", () => {
       error: expect.stringContaining("No bot named"),
     });
     expect(await send(store, { name: undefined, botId: foreign.id })).toMatchObject({
-      error: expect.stringContaining("in this workspace"),
+      error: expect.stringContaining("in this space"),
     });
     expect(store.on(foreign.threadId)).toHaveLength(0);
     expect(store.runs).toHaveLength(0);

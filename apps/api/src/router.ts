@@ -1421,7 +1421,7 @@ export function createRouter(deps: RouterDeps) {
             sender: {
               id: sender.id,
               name: sender.name,
-              workspaceId: sender.workspaceId,
+              spaceId: sender.spaceId,
               userId: sender.userId,
             },
             messageKey: input.clientNonce ?? randomUUID(),

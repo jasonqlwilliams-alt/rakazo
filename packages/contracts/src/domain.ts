@@ -321,7 +321,6 @@ export function normalizeCreateBotProfile(
     name: input.name.trim().slice(0, BOT_NAME_MAX_LENGTH),
     title: input.title.trim().slice(0, BOT_TITLE_MAX_LENGTH),
     description: description.slice(0, BOT_DESCRIPTION_MAX_LENGTH),
-    instructions: description.slice(0, BOT_INSTRUCTIONS_MAX_LENGTH),
   };
 }
 

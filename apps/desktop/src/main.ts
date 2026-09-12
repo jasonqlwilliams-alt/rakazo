@@ -20,9 +20,9 @@ import {
   type ElectronAutoUpdater,
   LAUNCH_CHECK_DELAY_MS,
 } from "./auto-update.js";
-import { desktopCookieHeader, imageMimeType, parsePickedFiles } from "./file-picker.js";
 import { openBrowserAuth } from "./browser-auth.js";
 import { DOCKER_INSTALL_LINKS, isDesktopSetupLink, runDocker } from "./docker-cli.js";
+import { desktopCookieHeader, imageMimeType, parsePickedFiles } from "./file-picker.js";
 import { requestLocalSettings } from "./local-settings.js";
 import {
   LocalStackController,

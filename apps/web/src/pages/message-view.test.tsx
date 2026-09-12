@@ -24,7 +24,7 @@ vi.mock("@lingui/react/macro", () => ({
 }));
 
 /** The exact chrome of the right-aligned bubble the user's own turns render in. */
-const USER_BUBBLE = ["justify-end", "bg-[#F1F1EF]"] as const;
+const USER_BUBBLE = ["justify-end", "bg-chat-user"] as const;
 
 const SPAWN_PROMPT =
   "You are Thor. Digest is loaded (profile.md, history/digest.md, relationships.md).";
@@ -40,9 +40,27 @@ function message(role: ThreadMessage["role"], blocks: MessageBlock[]): ThreadMes
   };
 }
 
+const messageProps = {
+  artifactTarget: { botId: "bot-1" },
+  onOpenPeerMessages: vi.fn(),
+  peerBot: vi.fn(),
+  onRefresh: vi.fn(),
+  onBotChanged: vi.fn(),
+  onAddRoutine: vi.fn(),
+  voiceReady: false,
+  speaking: false,
+  onSpeak: vi.fn(),
+};
+
 function render(message: ThreadMessage, onOpenBot = vi.fn()) {
   return renderToStaticMarkup(
-    <MessageView canAnswer={false} message={message} onAnswer={vi.fn()} onOpenBot={onOpenBot} />,
+    <MessageView
+      {...messageProps}
+      canAnswer={false}
+      message={message}
+      onAnswer={vi.fn()}
+      onOpenBot={onOpenBot}
+    />,
   );
 }
 
@@ -53,7 +71,7 @@ describe("the spawn opener in a child bot's thread", () => {
     expect(html).toContain(SPAWN_PROMPT);
     // Centered and muted, like the other setup lines — no bubble chrome of any kind.
     expect(html).toContain("justify-center");
-    expect(html).toContain("#85858A");
+    expect(html).toContain("text-muted-foreground");
     expect(html).not.toContain("rounded-[20px]");
     for (const chrome of USER_BUBBLE) expect(html).not.toContain(chrome);
   });
@@ -70,7 +88,7 @@ describe("the spawn opener in a child bot's thread", () => {
   });
 
   it("shows why both halves of the fix are needed: role alone leaves a bubble", () => {
-    // `role: "user"` + a text block is the defect — the spawn prompt in Jason's own bubble.
+    // `role: "user"` + a text block is the defect — the spawn prompt in the user's own bubble.
     const asUserText = render(message("user", [{ kind: "text", text: SPAWN_PROMPT }]));
     for (const chrome of USER_BUBBLE) expect(asUserText).toContain(chrome);
 
@@ -115,7 +133,7 @@ describe("agent note in the thread", () => {
     expect(html).toContain("CROSSCHAT-PROOF hold the venue list");
     // A log line, closer to `meta` than to a bubble: centered, muted, no bubble chrome.
     expect(html).toContain("justify-center");
-    expect(html).toContain("#85858A");
+    expect(html).toContain("text-muted-foreground");
     expect(html).not.toContain("rounded-[20px]");
   });
 
@@ -139,11 +157,11 @@ describe("agent note in the thread", () => {
     // renderToStaticMarkup does not fire handlers, so assert the wiring by invoking the
     // rendered element's own onClick.
     const fromSender = vi.fn();
-    elementFor(noteMessage("sent", "bot"), fromSender)?.props.onClick?.();
+    elementFor(noteMessage("sent", "bot"), fromSender)?.props?.onClick?.();
     expect(fromSender).toHaveBeenCalledWith("bot-thor");
 
     const fromReceiver = vi.fn();
-    elementFor(noteMessage("received", "system"), fromReceiver)?.props.onClick?.();
+    elementFor(noteMessage("received", "system"), fromReceiver)?.props?.onClick?.();
     expect(fromReceiver).toHaveBeenCalledWith("bot-eleusis");
   });
 });
@@ -153,6 +171,7 @@ function elementFor(message: ThreadMessage, onOpenBot: () => void) {
   // MessageView is wrapped in memo(), so the callable component is its inner `type`.
   const render = (MessageView as unknown as { type: (props: unknown) => unknown }).type;
   const rendered = render({
+    ...messageProps,
     canAnswer: false,
     message,
     onAnswer: vi.fn(),

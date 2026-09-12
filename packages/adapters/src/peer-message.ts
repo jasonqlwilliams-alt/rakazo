@@ -1,7 +1,9 @@
 import type { JobPublisher } from "@rakazo/adapter-kit";
 import { runContinueJob } from "@rakazo/adapter-kit";
-import { DIRECT_MESSAGE_MAX_LENGTH, type DirectMessageBlock } from "@rakazo/contracts";
+import type { DirectMessageBlock } from "@rakazo/contracts";
+import { DIRECT_MESSAGE_MAX_LENGTH } from "@rakazo/contracts";
 import type { Prisma, PrismaClient } from "@rakazo/db";
+import { getLogger } from "@rakazo/logging";
 
 export const MAX_DIRECT_MESSAGE_LENGTH = DIRECT_MESSAGE_MAX_LENGTH;
 
@@ -14,7 +16,7 @@ export interface PeerMessageInput {
   sender: {
     id: string;
     name: string;
-    workspaceId: string;
+    spaceId: string;
     userId: string;
   };
   /** Stable per-tool-call key, so a replayed send does not wake the peer twice. */
@@ -39,7 +41,7 @@ export interface PeerMessageResult {
 }
 
 /**
- * Send a direct message from one bot to an existing peer bot in the same workspace.
+ * Send a direct message from one bot to an existing peer bot in the same space.
  *
  * Stores the message once in a peer-to-peer thread, distinct from either bot's
  * user thread, and wakes the target without copying either user's conversation.
@@ -79,7 +81,7 @@ export async function sendPeerMessage(
   try {
     committed = await deps.prisma.$transaction((tx) =>
       persistDirectMessage(tx, {
-        workspaceId: input.sender.workspaceId,
+        spaceId: input.sender.spaceId,
         firstBotId,
         secondBotId,
         senderBotId: input.sender.id,
@@ -95,8 +97,8 @@ export async function sendPeerMessage(
   } catch (error) {
     const thread = await deps.prisma.directThread.findUnique({
       where: {
-        workspaceId_firstBotId_secondBotId: {
-          workspaceId: input.sender.workspaceId,
+        spaceId_firstBotId_secondBotId: {
+          spaceId: input.sender.spaceId,
           firstBotId,
           secondBotId,
         },
@@ -118,14 +120,14 @@ export async function sendPeerMessage(
   if (!committed.duplicate) {
     await deps.jobs
       .enqueue(runContinueJob(committed.message.recipientRunId))
-      .catch((error) => console.error("peer message enqueue", error));
+      .catch((error) => getLogger().error("peer message enqueue", error));
   }
 
   return delivered(target, committed.thread.id, committed.message, committed.duplicate);
 }
 
 interface PersistDirectMessageInput {
-  workspaceId: string;
+  spaceId: string;
   firstBotId: string;
   secondBotId: string;
   senderBotId: string;
@@ -144,14 +146,14 @@ async function persistDirectMessage(
 ) {
   const thread = await tx.directThread.upsert({
     where: {
-      workspaceId_firstBotId_secondBotId: {
-        workspaceId: input.workspaceId,
+      spaceId_firstBotId_secondBotId: {
+        spaceId: input.spaceId,
         firstBotId: input.firstBotId,
         secondBotId: input.secondBotId,
       },
     },
     create: {
-      workspaceId: input.workspaceId,
+      spaceId: input.spaceId,
       firstBotId: input.firstBotId,
       secondBotId: input.secondBotId,
     },
@@ -174,7 +176,7 @@ async function persistDirectMessage(
   });
   const task = await tx.task.create({
     data: {
-      workspaceId: input.workspaceId,
+      spaceId: input.spaceId,
       botId: input.recipientBotId,
       threadId: input.recipientThreadId,
       userId: input.recipientUserId,
@@ -184,7 +186,7 @@ async function persistDirectMessage(
   });
   const run = await tx.run.create({
     data: {
-      workspaceId: input.workspaceId,
+      spaceId: input.spaceId,
       botId: input.recipientBotId,
       threadId: input.recipientThreadId,
       taskId: task.id,
@@ -255,9 +257,9 @@ async function resolvePeer(
   const name = input.name?.trim();
   if (!botId && !name) return { error: "Pass bot_id or the peer bot's exact name." };
 
-  // Every lookup is scoped to this bot's own workspace and user, so a bot id from
-  // another workspace simply does not resolve.
-  const scope = { workspaceId: input.sender.workspaceId, userId: input.sender.userId } as const;
+  // Every lookup is scoped to this bot's own space and user, so a bot id from
+  // another space simply does not resolve.
+  const scope = { spaceId: input.sender.spaceId, userId: input.sender.userId } as const;
 
   if (botId) {
     const bot = await prisma.bot.findFirst({
@@ -266,7 +268,7 @@ async function resolvePeer(
     });
     if (!bot) {
       return {
-        error: `No bot with id ${botId} in this workspace. send_to_bot only reaches bots that already exist here; it never creates one.`,
+        error: `No bot with id ${botId} in this space. send_to_bot only reaches bots that already exist here; it never creates one.`,
       };
     }
     if (name && name !== bot.name) {
@@ -283,7 +285,7 @@ async function resolvePeer(
   });
   if (matches.length === 0) {
     return {
-      error: `No bot named "${name}" in this workspace. Names are exact and case-sensitive. send_to_bot never creates a bot.`,
+      error: `No bot named "${name}" in this space. Names are exact and case-sensitive. send_to_bot never creates a bot.`,
     };
   }
   if (matches.length > 1) {

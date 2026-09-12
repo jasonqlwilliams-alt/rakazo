@@ -1,6 +1,6 @@
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { OPENAI_COMPATIBLE_PROVIDER_ID } from "@rakazo/contracts";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { buildModelConnectPlaintext } from "./model-connect.js";
 import { listPiCatalog } from "./pi-models.js";
 import { parseModelSecret, secretValuesToRedact, serializeModelSecret } from "./pi-oauth.js";
@@ -126,6 +126,20 @@ describe("openai-compatible provider", () => {
       if (previous === undefined) delete process.env.RAKAZO_OPENAI_COMPAT_ALLOW_PUBLIC;
       else process.env.RAKAZO_OPENAI_COMPAT_ALLOW_PUBLIC = previous;
     }
+  });
+
+  it("preserves an injected fetch for hostname requests", async () => {
+    const injected = vi.fn(async () => new Response(null, { status: 204 }));
+    const resolver = vi.fn(async () => [{ address: "127.0.0.1", family: 4 as const }]);
+    const safeFetch = createOpenAiCompatibleFetch(injected, resolver);
+    await expect(safeFetch("http://localhost:8000/v1/models")).resolves.toMatchObject({
+      status: 204,
+    });
+    expect(injected).toHaveBeenCalledWith(
+      new URL("http://localhost:8000/v1/models"),
+      expect.objectContaining({ dispatcher: expect.anything(), redirect: "error" }),
+    );
+    expect(resolver).not.toHaveBeenCalled();
   });
 
   it("drives the guarded dispatcher with a fetch from the same undici", async () => {
