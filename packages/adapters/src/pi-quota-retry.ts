@@ -78,7 +78,7 @@ export function classifyQuotaError(
     }
   }
   inspect(error, 0);
-  return quota || delay !== undefined ? { retryAfterMs: delay ?? 0 } : undefined;
+  return quota ? { retryAfterMs: delay ?? 0 } : undefined;
 }
 
 export function quotaRetryConfig(env: NodeJS.ProcessEnv = process.env) {

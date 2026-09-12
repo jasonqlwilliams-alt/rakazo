@@ -6,9 +6,17 @@ request. No polling bot, chat loop, extra model call to decide whether to retry,
 or quota purchase is involved. The same credential and model handle the retry.
 
 The classifier accepts HTTP 429, `insufficient_quota`, `RESOURCE_EXHAUSTED`,
-rate-limit/TPM error messages, nested OpenRouter provider errors, and valid
-`Retry-After` headers. Numeric header values are seconds; HTTP dates are also
-supported. The delay is the greater of the configured wait and `Retry-After`.
+and quota/rate-limit/TPM error messages, including nested OpenRouter provider
+errors. `Retry-After` alone never classifies a failure as quota. After quota
+classification, a valid header sets the wait floor: numeric values are seconds,
+and HTTP dates are also supported. The delay is the greater of the configured
+wait and `Retry-After`.
+
+Non-quota failures such as HTTP 503 `No available provider` keep their original
+diagnostic and do not enter this retry loop, even with `Retry-After` present.
+[OpenRouter also uses this header for 503 responses](https://openrouter.ai/docs/api_reference/errors-and-debugging#retry-after-header);
+it does not identify the failure category.
+
 For OpenAI-completions transports (including OpenRouter and OpenAI-compatible
 connections), Rakazo observes failed HTTP headers before Pi flattens errors.
 Other Pi transports use the error metadata and response callbacks they expose;

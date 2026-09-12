@@ -29,6 +29,7 @@ function message(errorMessage?: string): AssistantMessage {
 function fixture(
   replies: Array<{
     error?: string;
+    status?: number;
     partial?: "text" | "thinking" | "toolCall";
     retryAfter?: string;
   }>,
@@ -41,7 +42,7 @@ function fixture(
     void (async () => {
       if (reply.retryAfter)
         await options?.onResponse?.(
-          { status: 429, headers: { "Retry-After": reply.retryAfter } },
+          { status: reply.status ?? 429, headers: { "Retry-After": reply.retryAfter } },
           model,
         );
       stream.push({ type: "start", partial: result });
@@ -87,17 +88,32 @@ describe("quota classification and configuration", () => {
     { message: "Too many requests" },
     { metadata: { raw: '{"error":{"message":"tokens-per-minute exceeded"}}' } },
     { message: "TPM limit exceeded" },
-    { headers: { "Retry-After": "90" } },
+    { status: 429, headers: { "Retry-After": "90" } },
   ])("recognizes %j", (error) => expect(classifyQuotaError(error)).toBeDefined());
+
+  it.each([
+    { headers: { "Retry-After": "90" } },
+    { status: 503, message: "No available provider", headers: { "Retry-After": "10" } },
+    {
+      status: 503,
+      message: "No available provider",
+      headers: new Headers({ "Retry-After": "Thu, 01 Jan 2026 00:01:30 GMT" }),
+    },
+  ])("does not classify Retry-After alone as quota: %j", (error) => {
+    expect(classifyQuotaError(error)).toBeUndefined();
+  });
 
   it("parses Retry-After dates and ignores invalid headers", () => {
     const now = Date.parse("2026-01-01T00:00:00Z");
     expect(
       classifyQuotaError(
-        { headers: new Headers({ "Retry-After": "Thu, 01 Jan 2026 00:01:30 GMT" }) },
+        { status: 429, headers: new Headers({ "Retry-After": "Thu, 01 Jan 2026 00:01:30 GMT" }) },
         now,
       ),
     ).toEqual({ retryAfterMs: 90_000 });
+    expect(classifyQuotaError({ status: 429, headers: { "Retry-After": "invalid" } })).toEqual({
+      retryAfterMs: 0,
+    });
     expect(classifyQuotaError({ headers: { "Retry-After": "invalid" } })).toBeUndefined();
     expect(classifyQuotaError({ message: "401 Unauthorized" })).toBeUndefined();
   });
@@ -157,6 +173,32 @@ describe("one model request quota retry", () => {
     );
     expect(f.streamSimple).toHaveBeenCalledTimes(4);
   });
+
+  it.each(["response", "exception"] as const)(
+    "preserves a 503 %s with Retry-After without waiting or retrying",
+    async (source) => {
+      vi.useFakeTimers();
+      const f = fixture([{ error: "No available provider", status: 503, retryAfter: "10" }]);
+      if (source === "exception") {
+        f.streamSimple.mockImplementationOnce(() => {
+          throw Object.assign(new Error("No available provider"), {
+            status: 503,
+            headers: new Headers({ "Retry-After": "10" }),
+          });
+        });
+      }
+      const stream = f.run();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(f.progress).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+      expect(await stream.result()).toMatchObject({
+        stopReason: "error",
+        errorMessage: "No available provider",
+      });
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(f.streamSimple).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it.each([
     ["text", "text_delta"],
