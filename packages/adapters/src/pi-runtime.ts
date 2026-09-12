@@ -41,6 +41,7 @@ import {
   registerOpenAiCompatibleCatalog,
   registerOpenAiCompatibleRuntime,
 } from "./pi-openai-compatible-provider.js";
+import { streamWithQuotaRetry } from "./pi-quota-retry.js";
 import {
   PiJsonlSessionRecorder,
   type PiSessionHandle,
@@ -237,7 +238,9 @@ export class PiAgentRuntime implements AgentRuntime {
           sessionId: conversationSessionId(request.threadId, request.botId),
           steeringMode: "all",
           streamFn: (m, ctx, options) =>
-            models.streamSimple(m, ctx, reliableStreamOptions(m, options)),
+            streamWithQuotaRetry(models, m, ctx, reliableStreamOptions(m, options), (text) =>
+              queue.push({ type: "progress", text, activity: true }),
+            ),
           getApiKey: async () => apiKey,
           transformContext: async (messages) =>
             pruneComputerScreenshotContext(messages, request.model.maxImagesPerPrompt),
@@ -1008,7 +1011,14 @@ async function executeSubagent(host: ToolHost, executionId: string, args: Record
   const nested = new Agent({
     sessionId: conversationSessionId(host.request.threadId, host.request.botId, agentId),
     streamFn: (m, ctx, options) =>
-      selectedModel.models.streamSimple(m, ctx, reliableStreamOptions(m, options)),
+      streamWithQuotaRetry(
+        selectedModel.models,
+        m,
+        ctx,
+        reliableStreamOptions(m, options),
+        (progress) =>
+          host.queue.push({ type: "subagent", agentId, name, task, status: "running", progress }),
+      ),
     getApiKey: async () => selectedModel.apiKey,
     transformContext: async (messages) =>
       pruneComputerScreenshotContext(messages, host.request.model.maxImagesPerPrompt),

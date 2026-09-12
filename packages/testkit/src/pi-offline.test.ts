@@ -4,12 +4,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AgentRunRequest, AgentRuntimeEvent, ConnectorTool } from "@rakazo/adapter-kit";
 import { PiAgentRuntime } from "@rakazo/adapters";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { type ModelEmulatorRequest, startModelEmulator } from "./model-emulator.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
   await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
+  vi.unstubAllEnvs();
 });
 
 const writeTool: ConnectorTool = {
@@ -50,6 +51,108 @@ function latestToolResult(request: ModelEmulatorRequest) {
 }
 
 describe("real Pi against an offline model HTTP endpoint", () => {
+  it("retries the failed continuation without replaying a completed tool effect", async () => {
+    vi.stubEnv("RAKAZO_QUOTA_RETRY_MS", "1");
+    let writes = 0;
+    let failedRequest: ModelEmulatorRequest | undefined;
+    const server = await startModelEmulator({
+      steps: [
+        {
+          expect() {},
+          response: {
+            type: "tool",
+            id: "quota-write",
+            name: "write_file",
+            arguments: { path: "notes.txt", content: "hello" },
+          },
+        },
+        {
+          expect(request) {
+            failedRequest = request;
+            expect(latestToolResult(request)?.tool_call_id).toBe("quota-write");
+          },
+          response: { type: "error", status: 429, message: "Tokens per minute exceeded" },
+        },
+        {
+          expect(request) {
+            expect(request).toEqual(failedRequest);
+          },
+          response: { type: "text", text: "Saved." },
+        },
+      ],
+    });
+    cleanups.push(() => server.close());
+    const events = await collect(
+      new PiAgentRuntime().run(
+        runRequest(server.model, {
+          executeTool: async () => {
+            writes++;
+            return { saved: true };
+          },
+        }),
+      ),
+    );
+    server.assertComplete();
+    expect(writes).toBe(1);
+    expect(events).toContainEqual({
+      type: "progress",
+      text: "Quota, retrying in 1s (1/3).",
+      activity: true,
+    });
+    expect(events.at(-1)).toEqual({ type: "done", text: "Saved." });
+  });
+
+  it("preserves Retry-After from an actual failed HTTP response", async () => {
+    vi.stubEnv("RAKAZO_QUOTA_RETRY_MS", "1");
+    const controller = new AbortController();
+    const events: AgentRuntimeEvent[] = [];
+    const server = await startModelEmulator({
+      steps: [
+        {
+          expect() {},
+          response: {
+            type: "error",
+            status: 429,
+            message: "Busy",
+            headers: { "Retry-After": "90" },
+          },
+        },
+      ],
+    });
+    cleanups.push(() => server.close());
+    try {
+      for await (const event of new PiAgentRuntime().run(runRequest(server.model), {
+        signal: controller.signal,
+      })) {
+        events.push(event);
+        if (event.type === "progress" && event.text.startsWith("Quota,")) controller.abort();
+      }
+    } catch {
+      expect(controller.signal.aborted).toBe(true);
+    }
+    server.assertComplete();
+    expect(events).toContainEqual({
+      type: "progress",
+      text: "Quota, retrying in 90s (1/3).",
+      activity: true,
+    });
+  });
+
+  it("fails the run with the quota receipt when retries are exhausted", async () => {
+    vi.stubEnv("RAKAZO_QUOTA_RETRY_MS", "1");
+    const server = await startModelEmulator({
+      steps: Array.from({ length: 4 }, () => ({
+        expect() {},
+        response: { type: "error" as const, status: 429, message: "quota exceeded" },
+      })),
+    });
+    cleanups.push(() => server.close());
+    await expect(collect(new PiAgentRuntime().run(runRequest(server.model)))).rejects.toThrow(
+      "Quota retry failed after 3 retries. Try again later.",
+    );
+    server.assertComplete();
+  });
+
   it("assembles fragmented tool arguments, executes the write, and sends its result back", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "rakazo-pi-offline-"));
     cleanups.push(() => rm(dir, { recursive: true, force: true }));
