@@ -1,4 +1,5 @@
 import type { PrismaClient } from "@rakazo/db";
+import { createLogger, createTestSink, installLogger } from "@rakazo/logging";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createBackgroundJobHandlers } from "./background-job-handlers.js";
 import {
@@ -588,6 +589,14 @@ describe("automatic outcome return", () => {
       "The answer is 42.",
     );
     expect(returned).toBe(true);
+    expect(harness.tx.message.create).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        data: expect.objectContaining({
+          clientNonce: `bot-message-outbound:auto-outcome:${run.id}`,
+        }),
+      }),
+    );
     expect(harness.tx.run.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ trigger: "bot_message" }) }),
     );
@@ -601,7 +610,7 @@ describe("automatic outcome return", () => {
       where: {
         id: run.id,
         status: { in: ["completed", "failed"] },
-        botOutcomeReturnedAt: null,
+        OR: [{ botOutcomeReturnedAt: null }, { botOutcomeFailedAt: { not: null } }],
       },
       data: {
         botOutcomeReturnedAt: expect.any(Date),
@@ -782,15 +791,22 @@ function reconciliationHarness() {
 }
 
 describe("outcome reconciliation persistence", () => {
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    installLogger(createLogger({ service: "rakazo-worker", level: "off", sinks: [] }));
+  });
 
-  it("bounds a message.create constraint failure across reconciliation restarts", async () => {
+  it("skips a permanent sequence conflict once across reconciliation restarts", async () => {
     vi.useFakeTimers();
     const harness = reconciliationHarness();
+    const sink = createTestSink();
+    installLogger(createLogger({ service: "rakazo-worker", sinks: [sink] }));
+    const diagnostic = `Unique constraint failed on threadId, seq. ${"diagnostic detail ".repeat(1_000)}`;
     harness.tx.message.create.mockRejectedValue(
-      Object.assign(new Error("Unique constraint failed on threadId, seq"), {
+      Object.assign(new Error(diagnostic), {
         code: "P2002",
         meta: { target: ["threadId", "seq"] },
+        clientVersion: "test-version",
       }),
     );
     for (let tick = 0; tick < 10; tick++) {
@@ -798,14 +814,40 @@ describe("outcome reconciliation persistence", () => {
       await harness.reconcile();
       vi.setSystemTime(Date.now() + 10 * 60_000);
     }
-    expect(harness.tx.message.create).toHaveBeenCalledTimes(3);
+    expect(harness.tx.message.create).toHaveBeenCalledTimes(1);
     expect(harness.terminal.botOutcomeFailedAt).toBeInstanceOf(Date);
-    expect(harness.terminal.botOutcomeReturnedAt).toBeNull();
+    expect(harness.terminal.botOutcomeReturnedAt).toBeInstanceOf(Date);
+    expect(harness.terminal.botOutcomeAttempts).toBe(1);
+    expect(harness.tx.run.create).not.toHaveBeenCalled();
+    const receipts = sink.events.filter((event) => event.receipt === `bot-outcome:${run.id}`);
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0]?.error?.message).toBe(diagnostic);
+    expect(receipts[0]?.prismaError).toMatchObject({
+      code: "P2002",
+      meta: { target: ["threadId", "seq"] },
+      clientVersion: "test-version",
+    });
     expect(harness.terminal.botOutcomeError).toBe("P2002");
     expect(harness.receipts()).toBe(1);
     expect(
       harness.enqueue.mock.calls.filter(([job]) => job.name === "routine.wakeup"),
     ).toHaveLength(10);
+  });
+
+  it("bounds other create failures before marking them skipped", async () => {
+    vi.useFakeTimers();
+    const harness = reconciliationHarness();
+    harness.tx.message.create.mockRejectedValue(
+      Object.assign(new Error("Connection lost"), { code: "P1017" }),
+    );
+    for (let tick = 0; tick < 10; tick++) {
+      await harness.reconcile();
+      vi.setSystemTime(Date.now() + 60_000);
+    }
+    expect(harness.tx.message.create).toHaveBeenCalledTimes(3);
+    expect(harness.terminal.botOutcomeFailedAt).toBeInstanceOf(Date);
+    expect(harness.terminal.botOutcomeReturnedAt).toBeInstanceOf(Date);
+    expect(harness.receipts()).toBe(1);
   });
 
   it("waits for backoff, recovers a transient failure, and never delivers again", async () => {
@@ -852,6 +894,27 @@ describe("outcome reconciliation persistence", () => {
     await harness.reconcile();
     await harness.reconcile();
     expect(harness.terminal.botOutcomeReturnedAt).toBeInstanceOf(Date);
+    expect(harness.tx.message.create).not.toHaveBeenCalled();
+    expect(harness.tx.run.create).not.toHaveBeenCalled();
+    expect(harness.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("recognizes the outbound receipt even when the inbound history was cleared", async () => {
+    const harness = reconciliationHarness();
+    const lookup = harness.tx.message.findUnique.getMockImplementation()!;
+    harness.tx.message.findUnique.mockImplementation(async (args) => {
+      const key = args.where?.threadId_clientNonce as
+        | { threadId: string; clientNonce: string }
+        | undefined;
+      if (!key) return lookup(args);
+      return key.threadId === run.threadId &&
+        key.clientNonce === `bot-message-outbound:auto-outcome:${run.id}`
+        ? { id: "committed-outbound" }
+        : null;
+    });
+    await harness.reconcile();
+    expect(harness.terminal.botOutcomeReturnedAt).toBeInstanceOf(Date);
+    expect(harness.terminal.botOutcomeFailedAt).toBeNull();
     expect(harness.tx.message.create).not.toHaveBeenCalled();
     expect(harness.tx.run.create).not.toHaveBeenCalled();
     expect(harness.enqueue).not.toHaveBeenCalled();

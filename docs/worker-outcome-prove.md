@@ -44,14 +44,19 @@ change bot configuration from chat, or pause a Grokbot twin while preparing it.
 4. Follow the run to a terminal state. If it delegated, follow each resulting
    `trigger: "bot_message"` run too. An automatic return uses nonce
    `bot-message:auto-outcome:<delegated-run-id>` in the requester's thread.
-   Confirm a single return and recipient wake, and `botOutcomeReturnedAt` on
-   the delegated run. Explicit results and intentionally skipped returns also
-   set this timestamp without creating an automatic return.
-5. Observe the worker for at least two reconciliation intervals after completion
-   (30 seconds each by default), and check the receipt fields below. Require no
-   repeated create-error flood, no dead-letter for the proved delegation, and
-   continued worker dispatch. A dead-letter proves containment, not successful
-   delivery. Keep every other routine and every Grokbot twin unchanged; any
+   Confirm a single return and recipient wake, and `botOutcomeReturnedAt` with
+   `botOutcomeFailedAt: null` on the delegated run. The sender echo has nonce
+   `bot-message-outbound:auto-outcome:<delegated-run-id>`. Explicit results and
+   intentionally skipped returns also set the returned timestamp; it alone is
+   not proof of successful delivery.
+5. Require zero outcome-reconciliation errors for at least 15 minutes under
+   representative load, or after a deliberately completed `bot_message` run
+   approved for this check. Check the receipt fields below and verify zero
+   completed/failed `bot_message` runs with `botOutcomeReturnedAt: null`.
+   Require no skipped failure for the proved delegation and continued worker
+   dispatch. A quiet worker after manually clearing a backlog is not a pass.
+   A skipped failure proves containment, not successful delivery. Keep every
+   other routine and every Grokbot twin unchanged; any
    subsequent twin pause is a separate decision after this proof succeeds.
 
 ## Receipts and rollback
@@ -67,14 +72,19 @@ FROM runs WHERE id = '<delegated-run-id>';
 
 The executor makes its initial return attempt. Recovery uses the existing
 `run.continue` queue, with at most three persisted recovery attempts, delayed
-30 then 60 seconds after failures. Each claim has a five-minute recovery lease;
-a crash consumes that attempt. The reconciler repairs missed queue wakes, but
+30 then 60 seconds after retryable failures. A `P2002` without a matching
+inbound or outbound delivery nonce is permanently skipped on its first recovery
+attempt; a sequence clash is not assumed to prove prior delivery. Each claim
+has a five-minute recovery lease; a crash consumes that attempt. The reconciler
+repairs missed queue wakes, but
 cannot reset the budget. Transaction conflicts still use the existing bounded
 transaction retry inside message delivery. Only the first recovery failure
-writes a diagnostic code and emits a receipt log; query dumps and peer content
-are not stored in it. `botOutcomeFailedAt` is the dead-letter marker, distinct
-from a successful `botOutcomeReturnedAt`; it preserves the original run status.
-Do not clear these fields to retry indefinitely.
+writes a diagnostic code and emits the untruncated structured error receipt,
+including Prisma code and metadata, through the logger's normal secret
+redaction. The database stores only the code. A skipped failure sets both
+`botOutcomeFailedAt` and `botOutcomeReturnedAt`, preserving the original run
+status and closing the pending-outcome scan. Successful delivery clears the
+failed marker. Do not clear these fields to retry indefinitely.
 
 On any unexpected behavior, pause the selected routine through the same RPC and
 verify the paused state. Pausing does not cancel an in-flight run or reverse its
@@ -88,18 +98,21 @@ routine as a workaround or pause the Grokbot twin.
 `packages/adapters/src/bot-messages.test.ts` drives real outcome delivery with a
 fake database enforcing representative message-create failures. Before the fix,
 a persistent `(threadId, seq)` conflict caused ten inserts in ten reconciliation
-ticks, with no terminal marker or budget. Recovery now stops at three attempts,
-including across reconciler restarts, while routine wakeups continue.
+ticks, with no terminal marker or budget. Recovery now skips that permanent
+conflict once with a diagnostic receipt. Other failures stop after three
+attempts, including across restarts, while routine wakeups continue.
 
 A separate regression reproduces the foreign-key failure from a deleted request
 message whose ID remains in a peer message's JSON return address. The fix checks
 and locks a surviving parent in the destination thread; otherwise it delivers
-without a reply link. The existing delivery-key replay handles duplicate
-`(threadId, clientNonce)` outcomes without duplicating the recipient wake.
+without a reply link. Both inbound and outbound messages now have stable
+`(threadId, clientNonce)` receipts. Either surviving receipt prevents replay
+from duplicating the recipient wake; an unmatched sequence conflict is skipped
+with an explicit failure marker rather than represented as successful delivery.
 
-The incident filing contained no Prisma code or constraint, so these tests do
-not identify which constraint failed in the live incident. The bounded-loop
-cause is established; the initiating live create failure remains unconfirmed.
-No live database or container access was used. Sequence-counter drift is not
-silently repaired, and direct-message rows are not rewritten: this path writes
-`Message`, not `DirectMessage`, and its message input has no workspace field.
+The initial filing contained no Prisma code or constraint. Its follow-up
+identifies `P2002` on `(threadId, seq)` in the outbound create, matching the
+offline reproduction. The cause of the counter/row mismatch was not supplied;
+no live database or container access was used to investigate it. The fix does
+not rewrite counters or direct-message rows. This path writes `Message`, not
+`DirectMessage`, and its message input has no workspace field.

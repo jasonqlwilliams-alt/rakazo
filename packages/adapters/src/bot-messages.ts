@@ -124,6 +124,9 @@ export async function messageBot(
   // A tool call can be re-executed after a lease expiry, so a delivery has to be
   // replayable: without this the recipient is messaged twice and woken twice.
   const deliveryKey = input.deliveryKey ? `bot-message:${input.deliveryKey}` : undefined;
+  const outboundDeliveryKey = input.deliveryKey
+    ? `bot-message-outbound:${input.deliveryKey}`
+    : undefined;
   const replayed = () =>
     ({
       ok: true as const,
@@ -172,6 +175,13 @@ export async function messageBot(
             select: { id: true },
           });
           if (already) return { ok: true as const, replayed: true as const };
+          const outbound = await tx.message.findUnique({
+            where: {
+              threadId_clientNonce: { threadId: run.threadId, clientNonce: outboundDeliveryKey! },
+            },
+            select: { id: true },
+          });
+          if (outbound) return { ok: true as const, replayed: true as const };
         }
 
         const senderStillRunning = await tx.run.findFirst({
@@ -208,6 +218,7 @@ export async function messageBot(
           threadId: run.threadId,
           role: "bot",
           blocks: [outboundBlock],
+          clientNonce: outboundDeliveryKey,
           botId: run.botId,
           runId: run.id,
         });
@@ -297,6 +308,13 @@ export async function messageBot(
         select: { id: true },
       });
       if (winner) return replayed();
+      const outbound = await deps.prisma.message.findUnique({
+        where: {
+          threadId_clientNonce: { threadId: run.threadId, clientNonce: outboundDeliveryKey! },
+        },
+        select: { id: true },
+      });
+      if (outbound) return replayed();
     }
     throw error;
   }
@@ -388,7 +406,7 @@ async function markBotOutcomeReturned(prisma: PrismaClient, runId: string) {
     where: {
       id: runId,
       status: { in: ["completed", "failed"] },
-      botOutcomeReturnedAt: null,
+      OR: [{ botOutcomeReturnedAt: null }, { botOutcomeFailedAt: { not: null } }],
     },
     data: {
       botOutcomeReturnedAt: new Date(),

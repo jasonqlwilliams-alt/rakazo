@@ -36,7 +36,10 @@ export async function reconcileBotMessageOutcome(deps: OutcomeDeps, runId: strin
   if (run.botOutcomeAttempts >= MAX_ATTEMPTS) {
     // The last worker died after claiming its final attempt.
     if (!run.botOutcomeError) await recordFailure(deps, run.id, "attempts_exhausted");
-    await deps.prisma.run.updateMany({ where: pending, data: { botOutcomeFailedAt: now } });
+    await deps.prisma.run.updateMany({
+      where: pending,
+      data: { botOutcomeFailedAt: now, botOutcomeReturnedAt: now, botOutcomeNextAttemptAt: null },
+    });
     return;
   }
   const attempt = run.botOutcomeAttempts + 1;
@@ -49,6 +52,7 @@ export async function reconcileBotMessageOutcome(deps: OutcomeDeps, runId: strin
   });
   if (!claimed.count) return;
   let failure = "delivery_rejected";
+  let deliveryError: unknown;
   try {
     const transcript =
       run.status === "failed"
@@ -69,9 +73,12 @@ export async function reconcileBotMessageOutcome(deps: OutcomeDeps, runId: strin
   } catch (error) {
     // Store a diagnostic category, never Prisma's query/input dump or peer content.
     failure = databaseErrorCode(error);
+    deliveryError = error;
   }
-  if (!run.botOutcomeError) await recordFailure(deps, run.id, failure);
-  const exhausted = attempt >= MAX_ATTEMPTS;
+  if (!run.botOutcomeError) await recordFailure(deps, run.id, failure, deliveryError);
+  // A unique conflict without either delivery receipt is not proof of delivery.
+  // Repeating it cannot advance a rolled-back sequence counter; skip with a receipt.
+  const exhausted = failure === "P2002" || attempt >= MAX_ATTEMPTS;
   const nextAttemptAt = new Date(Date.now() + 30_000 * 2 ** (attempt - 1));
   const updated = await deps.prisma.run.updateMany({
     where: {
@@ -83,6 +90,7 @@ export async function reconcileBotMessageOutcome(deps: OutcomeDeps, runId: strin
     data: {
       botOutcomeNextAttemptAt: exhausted ? null : nextAttemptAt,
       botOutcomeFailedAt: exhausted ? new Date() : null,
+      ...(exhausted ? { botOutcomeReturnedAt: new Date() } : {}),
     },
   });
   if (updated.count && !exhausted) {
@@ -91,15 +99,23 @@ export async function reconcileBotMessageOutcome(deps: OutcomeDeps, runId: strin
   }
 }
 
-async function recordFailure(deps: OutcomeDeps, runId: string, code: string) {
+async function recordFailure(deps: OutcomeDeps, runId: string, code: string, error?: unknown) {
   const recorded = await deps.prisma.run.updateMany({
     where: { id: runId, botOutcomeError: null, botOutcomeReturnedAt: null },
     data: { botOutcomeError: code },
   });
   if (recorded.count) {
-    getLogger().error("bot message outcome reconciliation failed", {
+    getLogger().error("bot message outcome reconciliation failed", error ?? {}, {
       receipt: `bot-outcome:${runId}`,
       code,
+      // Copy Error's non-enumerable fields too. The logger applies normal secret
+      // redaction, without truncating the diagnostic or dropping Prisma code/meta.
+      prismaError:
+        error && typeof error === "object"
+          ? Object.fromEntries(
+              Object.getOwnPropertyNames(error).map((key) => [key, Reflect.get(error, key)]),
+            )
+          : error,
     });
   }
 }
