@@ -201,10 +201,29 @@ describe("one model request quota retry", () => {
   );
 
   it.each([
-    ["text", "text_delta"],
     ["thinking", "thinking_delta"],
     ["toolCall", "toolcall_end"],
   ] as const)(
+    "replays the request after a quota stop in a partial %s stream that showed no text",
+    async (partial, eventType) => {
+      vi.useFakeTimers();
+      const f = fixture([{ error: "429 rate limit", partial }, {}]);
+      const stream = f.run();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(f.progress).toHaveBeenCalledWith("Quota, retrying in 60s (1/3).");
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect((await stream.result()).stopReason).toBe("stop");
+      expect(f.streamSimple).toHaveBeenCalledTimes(2);
+      expect(f.streamSimple.mock.calls[1]?.[1]).toBe(context);
+      expect(f.progress).toHaveBeenLastCalledWith("");
+      const events = [];
+      for await (const event of stream) events.push(event.type);
+      // Pi adds a partial assistant message per start, so the replay reuses the first one.
+      expect(events).toEqual(["start", eventType, "done"]);
+    },
+  );
+
+  it.each([["text", "text_delta"]] as const)(
     "reports a quota stop without replaying a partial %s stream",
     async (partial, eventType) => {
       vi.useFakeTimers();

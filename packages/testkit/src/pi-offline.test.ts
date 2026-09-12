@@ -75,6 +75,65 @@ describe("real Pi against an offline model HTTP endpoint", () => {
     server.assertComplete();
   });
 
+  it("replays a request whose half-streamed tool call hit a quota stop and runs the tool once", async () => {
+    vi.stubEnv("RAKAZO_QUOTA_RETRY_MS", "1");
+    let writes = 0;
+    let failedRequest: ModelEmulatorRequest | undefined;
+    const server = await startModelEmulator({
+      steps: [
+        {
+          expect(request) {
+            failedRequest = request;
+          },
+          response: {
+            type: "stream-error",
+            text: "",
+            message: "429 rate limit",
+            partialToolCall: { id: "cut-off", name: "write_file", arguments: '{"path":"no' },
+          },
+        },
+        {
+          expect(request) {
+            expect(request).toEqual(failedRequest);
+          },
+          response: {
+            type: "tool",
+            id: "replayed",
+            name: "write_file",
+            arguments: { path: "notes.txt", content: "hello" },
+          },
+        },
+        {
+          expect(request) {
+            expect(request.messages.filter((message) => message.role === "assistant")).toHaveLength(
+              1,
+            );
+            expect(latestToolResult(request)?.tool_call_id).toBe("replayed");
+          },
+          response: { type: "text", text: "Saved." },
+        },
+      ],
+    });
+    cleanups.push(() => server.close());
+    const executions: string[] = [];
+    const events = await collect(
+      new PiAgentRuntime().run(
+        runRequest(server.model, {
+          executeTool: async (_name, _args, executionId) => {
+            writes++;
+            executions.push(executionId);
+            return { saved: true };
+          },
+        }),
+      ),
+    );
+    server.assertComplete();
+    expect(writes).toBe(1);
+    expect(executions).toEqual(["replayed"]);
+    expect(events.filter((event) => event.type === "tool")).toHaveLength(1);
+    expect(events.at(-1)).toEqual({ type: "done", text: "Saved." });
+  });
+
   it("surfaces the mid-response receipt through real SSE without replay", async () => {
     const server = await startModelEmulator({
       steps: [
