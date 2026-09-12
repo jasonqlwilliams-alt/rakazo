@@ -366,21 +366,7 @@ export async function returnBotMessageOutcome(
     await markBotOutcomeReturned(deps.prisma, run.id);
     return true;
   }
-  const sent = await deps.prisma.message.findMany({
-    where: { threadId: run.threadId, runId: run.id },
-    select: { blocks: true },
-  });
-  // Only an explicit result counts as a terminal outcome. Interim message_bot
-  // status updates must not suppress the automatic final return.
-  const alreadyReturned = sent.some((message) =>
-    (Array.isArray(message.blocks) ? (message.blocks as MessageBlock[]) : []).some(
-      (block) =>
-        block.kind === "bot_message_sent" &&
-        block.toBotId === source.fromBotId &&
-        block.intent === "result",
-    ),
-  );
-  if (alreadyReturned) {
+  if (await hasExplicitBotMessageOutcome(deps.prisma, run, source.fromBotId)) {
     await markBotOutcomeReturned(deps.prisma, run.id);
     return true;
   }
@@ -421,26 +407,40 @@ export async function recoverBotMessageOutcome(
     select: { id: true },
   });
   if (!receipt) {
-    const source = await loadBotMessageContext(prisma, run.sourceMessageId);
-    if (!source) return false;
-    const targetThread = await prisma.thread.findFirst({
-      where: { botId: source.fromBotId, spaceId: run.spaceId, userId: run.userId },
-      select: { id: true },
-    });
-    if (!targetThread) return false;
-    receipt = await prisma.message.findUnique({
+    receipt = await prisma.message.findFirst({
       where: {
-        threadId_clientNonce: {
-          threadId: targetThread.id,
-          clientNonce: `bot-message:auto-outcome:${run.id}`,
-        },
+        clientNonce: `bot-message:auto-outcome:${run.id}`,
+        thread: { spaceId: run.spaceId, userId: run.userId },
       },
       select: { id: true },
     });
   }
-  if (!receipt) return false;
+  if (!receipt) {
+    const source = await loadBotMessageContext(prisma, run.sourceMessageId);
+    if (!source || !(await hasExplicitBotMessageOutcome(prisma, run, source.fromBotId)))
+      return false;
+  }
   await markBotOutcomeReturned(prisma, run.id);
   return true;
+}
+
+async function hasExplicitBotMessageOutcome(
+  prisma: PrismaClient,
+  run: { id: string; threadId: string },
+  toBotId: string,
+) {
+  const sent = await prisma.message.findMany({
+    where: { threadId: run.threadId, runId: run.id },
+    select: { blocks: true },
+  });
+  // Only an explicit result counts as a terminal outcome. Interim message_bot
+  // status updates must not suppress the automatic final return.
+  return sent.some((message) =>
+    (Array.isArray(message.blocks) ? (message.blocks as MessageBlock[]) : []).some(
+      (block) =>
+        block.kind === "bot_message_sent" && block.toBotId === toBotId && block.intent === "result",
+    ),
+  );
 }
 
 async function markBotOutcomeReturned(prisma: PrismaClient, runId: string) {
