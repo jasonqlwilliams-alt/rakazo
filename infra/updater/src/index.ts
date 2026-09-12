@@ -33,6 +33,9 @@ import {
   upsertEnvAssignments,
   validateUpdateRequest,
 } from "@rakazo/core";
+import { type Logger, SERVICE_NAMES } from "@rakazo/logging";
+import { createRootLogger } from "@rakazo/logging/axiom";
+import { requestLogging } from "@rakazo/logging/hono";
 import { type Context, Hono } from "hono";
 import {
   readTagState,
@@ -94,12 +97,30 @@ export function commandEnvironment(
     const value = source[key];
     if (value !== undefined) env[key] = value;
   }
+  // The sidecar runs as root against a bind-mounted checkout that a non-root deploy user owns,
+  // which is the layout docs/self-host.md tells operators to use. Git refuses that with "detected
+  // dubious ownership" and exits 128, so every git call fails before it can read the current sha.
+  //
+  // Declaring the one directory safe here rather than in the Compose file is deliberate: this
+  // allowlist rebuilds the child environment from scratch, so anything set on the service is
+  // dropped before git ever runs. The value is the deployment directory the sidecar already
+  // trusts, and it is applied after `overrides` so a caller cannot widen it.
+  const deployDir = source.RAKAZO_DEPLOY_DIR?.trim();
+  const gitOwnership =
+    deployDir === undefined || deployDir === ""
+      ? {}
+      : {
+          GIT_CONFIG_COUNT: "1",
+          GIT_CONFIG_KEY_0: "safe.directory",
+          GIT_CONFIG_VALUE_0: deployDir,
+        };
   return {
     ...env,
     ...overrides,
     GIT_TERMINAL_PROMPT: "0",
     GIT_ASKPASS: "true",
     CI: "1",
+    ...gitOwnership,
   };
 }
 
@@ -143,17 +164,21 @@ const runCommand: UpdaterCommandRunner = (
 
 export function createUpdaterApp(
   config: UpdaterConfig,
-  options: { run?: UpdaterCommandRunner } = {},
+  options: { run?: UpdaterCommandRunner; logger?: Logger } = {},
 ) {
   const app = new Hono();
+  app.use("*", requestLogging(options.logger));
   const run = options.run ?? runCommand;
   const composeTarget = {
-    composeFile: config.composeFile,
+    composeFiles: config.composeFiles,
     envFiles: [config.envFile],
     projectName: config.projectName,
+    services: config.updateServices,
   };
   let running = false;
   let planInFlight: Promise<unknown> | null = null;
+  /** Survives API recreate so Settings can confirm apply after the proxy drops. */
+  let lastRun: ServerUpdateRun | null = null;
 
   app.get("/health", (c) => c.json({ ok: true, service: "updater", image: config.image }));
 
@@ -174,10 +199,11 @@ export function createUpdaterApp(
       const checkout = await readCheckout();
       return c.json({
         deployDir: config.deployDir,
-        composeFile: config.composeFile,
+        composeFiles: config.composeFiles,
         image: config.image,
         imageRef: imageRef(config.image, tags.currentTag),
         running,
+        lastRun,
         ...tags,
         checkout,
       });
@@ -452,6 +478,11 @@ export function createUpdaterApp(
           "The deployment checkout has changed or untracked source files, or its state could not be verified. Commit, stash, clean, or fix it before updating.",
         );
       }
+      if (checkout.commit === null || !isGitCommit(checkout.commit)) {
+        throw new UpdateRefused(
+          "The deployment checkout's current commit could not be verified. Fix it before updating.",
+        );
+      }
     }
 
     let targetTag: string | null = null;
@@ -463,12 +494,12 @@ export function createUpdaterApp(
       targetCommit = target.commit;
       releaseTag = target.releaseTag;
       if (targetTag === tags.currentTag) {
-        return upToDateRecord(request, targetTag, "pull", targetCommit);
+        return rememberRun(upToDateRecord(request, targetTag, "pull", targetCommit));
       }
     } else {
       const remoteHead = await resolveRemoteHead(request);
       if (upToDateForBuild(tags.currentTag, checkout.commit, remoteHead)) {
-        return upToDateRecord(request, tags.currentTag, "build", checkout.commit);
+        return rememberRun(upToDateRecord(request, tags.currentTag, "build", checkout.commit));
       }
     }
 
@@ -485,27 +516,29 @@ export function createUpdaterApp(
               repoIdentity(checkout.remoteUrl) !== repoIdentity(request.repoUrl),
           });
 
-    return execute({
-      request,
-      strategy: decision.strategy,
-      fromTag: tags.currentTag,
-      originalPreviousTag: tags.previousTag,
-      toTag: targetTag,
-      fromCommit: checkout.commit,
-      fromBranch: checkout.branch,
-      toCommit: targetCommit,
-      restoreRemoteUrl:
-        decision.strategy === "build" &&
-        checkout.remoteUrl !== null &&
-        repoIdentity(checkout.remoteUrl) !== repoIdentity(request.repoUrl)
-          ? checkout.remoteUrl
-          : null,
-      steps,
-      restartAdvice:
-        decision.strategy === "pull"
-          ? `The updater deployed ${releaseTag ?? targetTag} from its full source-commit image tag and recreated the API, worker, and web containers. Migrations ran inside the new API container before it became healthy.`
-          : "The updater built the fork and recreated the API, worker, and web containers. Migrations ran inside the new API container before it started serving.",
-    });
+    return rememberRun(
+      await execute({
+        request,
+        strategy: decision.strategy,
+        fromTag: tags.currentTag,
+        originalPreviousTag: tags.previousTag,
+        toTag: targetTag,
+        fromCommit: checkout.commit,
+        fromBranch: checkout.branch,
+        toCommit: targetCommit,
+        restoreRemoteUrl:
+          decision.strategy === "build" &&
+          checkout.remoteUrl !== null &&
+          repoIdentity(checkout.remoteUrl) !== repoIdentity(request.repoUrl)
+            ? checkout.remoteUrl
+            : null,
+        steps,
+        restartAdvice:
+          decision.strategy === "pull"
+            ? `The updater deployed ${releaseTag ?? targetTag} from its full source-commit image tag and recreated the API, worker, and web containers. Migrations ran inside the new API container before it became healthy.`
+            : "The updater built the fork and recreated the API, worker, and web containers. Migrations ran inside the new API container before it started serving.",
+      }),
+    );
   }
 
   async function rollback(): Promise<ServerUpdateRun> {
@@ -517,19 +550,26 @@ export function createUpdaterApp(
     const steps = composeUpdatePlan({ strategy: "pull", target: composeTarget }).filter(
       (step) => step.id !== "pull",
     );
-    return execute({
-      request: { repoUrl: "", branch: "" },
-      strategy: "pull",
-      fromTag: tags.currentTag,
-      originalPreviousTag: tags.previousTag,
-      toTag: decision.tag,
-      fromCommit: checkout.commit,
-      fromBranch: checkout.branch,
-      toCommit: null,
-      restoreRemoteUrl: null,
-      steps,
-      restartAdvice: `Rolled back to ${decision.tag}. Database migrations are not reversed: if the newer version added a migration, roll forward again or restore a database backup.`,
-    });
+    return rememberRun(
+      await execute({
+        request: { repoUrl: "", branch: "" },
+        strategy: "pull",
+        fromTag: tags.currentTag,
+        originalPreviousTag: tags.previousTag,
+        toTag: decision.tag,
+        fromCommit: checkout.commit,
+        fromBranch: checkout.branch,
+        toCommit: null,
+        restoreRemoteUrl: null,
+        steps,
+        restartAdvice: `Rolled back to ${decision.tag}. Database migrations are not reversed: if the newer version added a migration, roll forward again or restore a database backup.`,
+      }),
+    );
+  }
+
+  function rememberRun(record: ServerUpdateRun): ServerUpdateRun {
+    lastRun = record;
+    return record;
   }
 
   /**
@@ -569,16 +609,32 @@ export function createUpdaterApp(
       [IMAGE_TAG_ENV]: input.fromTag,
       [PREVIOUS_IMAGE_TAG_ENV]: input.originalPreviousTag ?? input.fromTag,
     };
-    // Build updates may switch branches and/or fast-forward before recreate. Mark the checkout
-    // touched as soon as either mutates so a mid-plan failure still restores branch + commit.
-    let checkoutTouched = false;
+    // A failed Git command can still change files. Restore once before Compose recovery, or in
+    // finally for failures that never reached Compose.
+    let checkoutNeedsRestore = false;
+    async function restoreCheckout() {
+      if (!checkoutNeedsRestore) return true;
+      checkoutNeedsRestore = false;
+      if (input.fromCommit === null || !isGitCommit(input.fromCommit)) return false;
+      return runStep(
+        record,
+        {
+          id: "restore-checkout",
+          label: "Restore the previous checkout",
+          command: "git",
+          args: restoreCheckoutArgv(input.fromBranch, input.fromCommit),
+        },
+        undefined,
+        false,
+      );
+    }
     try {
       const gitSteps = input.steps.filter((step) => step.command === "git");
       const composeSteps = input.steps.filter((step) => step.command !== "git");
 
       for (const step of gitSteps) {
+        if (step.id === "checkout" || step.id === "merge") checkoutNeedsRestore = true;
         if (!(await runStep(record, step))) return record;
-        if (step.id === "checkout" || step.id === "merge") checkoutTouched = true;
       }
 
       // The build path only knows its tag after the fast-forward, because the tag is the commit.
@@ -615,27 +671,32 @@ export function createUpdaterApp(
       for (const step of composeSteps) {
         if (!(await runStep(record, step, composeEnv))) {
           const primaryError = record.error ?? `${step.label} failed.`;
+          // The failed revision may have changed Compose or files it references. The old image
+          // must be recreated from the old checkout, using the same configured Compose target.
+          const checkoutRestored = await restoreCheckout();
           const envRestored = await writeEnvAssignments(revertAssignments).then(
             () => true,
             () => false,
           );
           if (step.id === "recreate") {
             const previous = composeUpArgv(composeTarget);
-            const recovered = await runStep(
-              record,
-              {
-                id: "recover",
-                label: `Restore the previously running ${input.fromTag} image`,
-                command: previous.command,
-                args: previous.args,
-              },
-              { [IMAGE_TAG_ENV]: input.fromTag },
-              false,
-            );
+            const recovered =
+              checkoutRestored &&
+              (await runStep(
+                record,
+                {
+                  id: "recover",
+                  label: `Restore the previously running ${input.fromTag} image`,
+                  command: previous.command,
+                  args: previous.args,
+                },
+                { [IMAGE_TAG_ENV]: input.fromTag },
+                false,
+              ));
             record.restart = recovered ? "not-required" : "manual";
             record.restartAdvice = recovered
               ? `${primaryError} The updater restored the previously running ${input.fromTag} image${envRestored ? " and its environment pin" : ", but could not restore the environment pin"}. Read the failed step output before retrying.`
-              : `${primaryError} Automatic recovery to ${input.fromTag} also failed${envRestored ? "" : ", and the environment pin could not be restored"}. The runtime may contain a mix of versions; use the recorded commands to recover it manually.`;
+              : `${primaryError} Automatic recovery to ${input.fromTag} ${checkoutRestored ? "also failed" : "was skipped because the previous checkout could not be restored"}${envRestored ? "" : ", and the environment pin could not be restored"}. The runtime may contain a mix of versions; use the recorded commands to recover it manually.`;
           } else {
             record.restartAdvice = `${primaryError} No service was recreated${envRestored ? ", and the prior environment pin was restored" : ", but the prior environment pin could not be restored"}. Read the failed step output before retrying.`;
           }
@@ -647,26 +708,8 @@ export function createUpdaterApp(
       record.restart = "recreated";
       return record;
     } finally {
-      if (
-        !record.ok &&
-        checkoutTouched &&
-        input.fromCommit !== null &&
-        isGitCommit(input.fromCommit)
-      ) {
-        const restored = await runStep(
-          record,
-          {
-            id: "restore-checkout",
-            label: "Restore the previous checkout",
-            command: "git",
-            args: restoreCheckoutArgv(input.fromBranch, input.fromCommit),
-          },
-          undefined,
-          false,
-        );
-        if (!restored) {
-          record.restartAdvice = `${record.restartAdvice} The previous checkout also could not be restored; fix it before retrying.`;
-        }
+      if (!record.ok && checkoutNeedsRestore && !(await restoreCheckout())) {
+        record.restartAdvice = `${record.restartAdvice} The previous checkout also could not be restored; fix it before retrying.`;
       }
       if (!record.ok && input.restoreRemoteUrl !== null) {
         const restored = await runStep(
@@ -737,10 +780,36 @@ export function createUpdaterApp(
 }
 
 function startUpdater() {
+  const logger = createRootLogger(SERVICE_NAMES.updater);
   const config = resolveUpdaterConfig(process.env);
-  const app = createUpdaterApp(config);
-  return serve({ fetch: app.fetch, hostname: config.host, port: config.port }, () => {
-    console.log(`rakazo updater on http://${config.host}:${config.port} for ${config.deployDir}`);
+  const app = createUpdaterApp(config, { logger });
+  const server = serve({ fetch: app.fetch, hostname: config.host, port: config.port }, () => {
+    logger.info("updater listening", {
+      "http.host": config.host,
+      "http.port": config.port,
+      "updater.deploy_dir": config.deployDir,
+    });
+  });
+  let stopping = false;
+  const shutdown = async () => {
+    if (stopping) return;
+    stopping = true;
+    await closeListeningServer(server);
+    await logger.flush({ timeoutMs: 2_000 });
+    process.exit(0);
+  };
+  process.once("SIGTERM", () => void shutdown());
+  process.once("SIGINT", () => void shutdown());
+  return server;
+}
+
+function closeListeningServer(server: {
+  close(callback?: (err?: Error) => void): void;
+  closeIdleConnections?: () => void;
+}): Promise<void> {
+  server.closeIdleConnections?.();
+  return new Promise((resolve) => {
+    server.close(() => resolve());
   });
 }
 

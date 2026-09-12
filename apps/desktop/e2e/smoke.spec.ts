@@ -42,7 +42,14 @@ test("launches with a narrow preload bridge and an isolated renderer", async () 
       };
     });
 
-    expect(renderer.bridgeKeys).toEqual(["file", "oauth", "platform", "update", "window"]);
+    expect(renderer.bridgeKeys).toEqual([
+      "file",
+      "localSettings",
+      "oauth",
+      "platform",
+      "update",
+      "window",
+    ]);
     expect(renderer.fileKeys).toEqual(["pick"]);
     expect(renderer.windowKeys).toEqual(["close", "minimize", "state", "toggleMaximize"]);
     expect(renderer.updateKeys).toEqual(["check", "download", "install", "state"]);

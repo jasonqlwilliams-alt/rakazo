@@ -1,6 +1,7 @@
 import { Trans, useLingui } from "@lingui/react/macro";
 import type { ThreadMessage, ThreadSnapshot } from "@rakazo/contracts";
-import { narrateTool, speechFromBlocks, spokenDecision } from "@rakazo/core";
+import { isSecretAskBlock, narrateTool, speechFromBlocks, spokenDecision } from "@rakazo/core";
+import { Button, Dialog, DialogContent, DialogHeader, DialogTitle } from "@rakazo/ui-web";
 import { useEffect, useRef, useState } from "react";
 import { dictation } from "../lib/dictation";
 import { speaker } from "../lib/tts";
@@ -39,6 +40,8 @@ export function CallView({
   snapshotRef.current = snapshot;
   const askPromptRef = useRef(t`Say yes or no, or answer in a sentence.`);
   askPromptRef.current = t`Say yes or no, or answer in a sentence.`;
+  const secretPromptRef = useRef(t`Hang up first, then enter the code on screen.`);
+  secretPromptRef.current = t`Hang up first, then enter the code on screen.`;
 
   function setCallPhase(next: Phase) {
     phaseRef.current = next;
@@ -60,6 +63,12 @@ export function CallView({
 
   async function listen() {
     if (closing.current) return;
+    if (pendingSecretAsk(snapshotRef.current)) {
+      dictation.stop("cancel");
+      setCallPhase("listening");
+      setHeard("");
+      return;
+    }
     setCallPhase("listening");
     speaker.stop();
     setHeard("");
@@ -80,9 +89,15 @@ export function CallView({
       return;
     }
     dictation.stop("submit");
+    const current = snapshotRef.current;
+    if (pendingSecretAsk(current)) {
+      setHeard("");
+      setCaption("");
+      setError(t`Hang up, then enter the code on screen.`);
+      return;
+    }
     setHeard(text);
     setCallPhase("thinking");
-    const current = snapshotRef.current;
     const askId = latestAskId(current);
     const askMessage = current?.messages.find((message) => message.id === askId);
     try {
@@ -115,7 +130,9 @@ export function CallView({
       if (state.error) setError(state.error);
     });
     const unsubDictation = dictation.subscribe((state) => {
-      if (state.status === "listening") setHeard(state.transcript);
+      if (state.status === "listening") {
+        setHeard(pendingSecretAsk(snapshotRef.current) ? "" : state.transcript);
+      }
       if (state.error) setError(state.error);
     });
     void listen();
@@ -152,13 +169,21 @@ export function CallView({
       const ask = lastBot.blocks.find(
         (block) => block.kind === "ask" && block.status !== "answered",
       );
+      const secretAsk = ask && isSecretAskBlock(ask);
       if (text) {
         spokenMessage.current = lastBot.id;
         dictation.stop("cancel");
-        void speaker.speak(ask ? `${text}. ${askPromptRef.current}` : text, {
-          botId,
-          messageId: lastBot.id,
-        });
+        void speaker.speak(
+          secretAsk
+            ? `${text}. ${secretPromptRef.current}`
+            : ask
+              ? `${text}. ${askPromptRef.current}`
+              : text,
+          {
+            botId,
+            messageId: lastBot.id,
+          },
+        );
         return;
       }
       const runActive =
@@ -193,17 +218,31 @@ export function CallView({
     }
   }, [snapshot, botId]);
 
+  useEffect(() => {
+    if (!pendingSecretAsk(snapshot)) return;
+    dictation.stop("cancel");
+    setHeard("");
+  }, [snapshot]);
+
   return (
-    <div className="absolute inset-0 z-40 grid place-items-center bg-[rgba(4,4,5,.82)] px-5">
-      <div
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) hangUp();
+      }}
+    >
+      <DialogContent
         data-testid="call-view"
-        className="w-full max-w-[420px] rounded-[24px] border border-[#2A2A2F] bg-[#141416] p-6 text-center shadow-[0_30px_80px_rgba(0,0,0,.55)]"
+        showCloseButton={false}
+        className="max-w-[420px] rounded-3xl p-6 text-center sm:max-w-[420px]"
       >
-        <div className="text-[13px] uppercase tracking-[0.12em] text-[#6C6C70]">
-          <Trans>Call</Trans>
-        </div>
-        <div className="mt-2 text-[22px] font-medium text-[#F1F1F2]">{botName}</div>
-        <div className="mt-5 text-[15px] text-[#C9C9CE]">
+        <DialogHeader className="items-center gap-2">
+          <div className="text-[13px] uppercase tracking-[0.12em] text-muted-foreground/80">
+            <Trans>Call</Trans>
+          </div>
+          <DialogTitle className="text-[22px]">{botName}</DialogTitle>
+        </DialogHeader>
+        <div className="mt-1 text-[15px] text-foreground/75">
           {phase === "listening" ? (
             <Trans>Listening…</Trans>
           ) : phase === "speaking" ? (
@@ -212,31 +251,31 @@ export function CallView({
             <Trans>Working…</Trans>
           )}
         </div>
-        <p className="mt-3 min-h-[3.2em] text-[14.5px] leading-[1.5] text-[#85858A]">
+        <p className="min-h-[3.2em] text-[14.5px] leading-[1.5] text-muted-foreground">
           {phase === "listening" ? heard || t`Say something. Silence sends it.` : caption}
         </p>
-        {error ? <p className="mt-2 text-[13px] text-[#C94244]">{error}</p> : null}
-        <div className="mt-6 flex justify-center gap-3">
-          <button
-            type="button"
-            onClick={interrupt}
-            className="rounded-full border border-[#2A2A2F] px-4 py-2 text-[14px] text-[#C9C9CE]"
-          >
+        {error ? <p className="text-[13px] text-destructive">{error}</p> : null}
+        <div className="mt-2 flex justify-center gap-3">
+          <Button variant="outline" className="rounded-full" onClick={interrupt}>
             <Trans>Interrupt</Trans>
-          </button>
-          <button
-            type="button"
-            onClick={hangUp}
-            className="rounded-full bg-[#FF5364] px-4 py-2 text-[14px] font-medium text-white"
-          >
+          </Button>
+          <Button variant="destructive" className="rounded-full" onClick={hangUp}>
             <Trans>Hang up</Trans>
-          </button>
+          </Button>
         </div>
-        <p className="mt-4 text-[12px] text-[#6C6C70]">
+        <p className="text-xs text-muted-foreground/80">
           <Trans>Space interrupts · Esc hangs up</Trans>
         </p>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function pendingSecretAsk(snapshot: ThreadSnapshot | null) {
+  const askId = latestAskId(snapshot);
+  const askMessage = snapshot?.messages.find((message) => message.id === askId);
+  return askMessage?.blocks.some(
+    (block) => block.kind === "ask" && isSecretAskBlock(block) && block.status !== "answered",
   );
 }
 

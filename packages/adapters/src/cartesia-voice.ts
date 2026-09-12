@@ -8,7 +8,14 @@ import type {
   VoiceSynthesizeRequest,
   VoiceVerifyResult,
 } from "@rakazo/adapter-kit";
-import { readVoiceJson, requireOk, voiceDeadline, voiceHttpError } from "./voice-http.js";
+import {
+  readVoiceAudio,
+  readVoiceJson,
+  requireOk,
+  voiceDeadline,
+  voiceHttpError,
+  voiceUnreachable,
+} from "./voice-http.js";
 
 const API = "https://api.cartesia.ai";
 const VERSION = "2024-06-10";
@@ -43,7 +50,7 @@ export class CartesiaVoiceProvider implements VoiceProvider {
     } catch {
       return {
         ok: false,
-        message: "Couldn't reach Cartesia to check that key — check your connection.",
+        message: voiceUnreachable("Cartesia"),
       };
     }
   }
@@ -53,7 +60,7 @@ export class CartesiaVoiceProvider implements VoiceProvider {
       headers: cartesiaHeaders(apiKey),
       signal: voiceDeadline(context.signal, 20_000),
     });
-    const body = await readVoiceJson(res);
+    const body = await readVoiceJson(res, { requireValid: res.ok });
     if (!res.ok) throw new Error(voiceHttpError(res.status, "Cartesia", "listing voices", body));
     const voices = voicesFrom(body);
     return voices
@@ -66,6 +73,7 @@ export class CartesiaVoiceProvider implements VoiceProvider {
   }
 
   async synthesize(request: VoiceSynthesizeRequest, context: AdapterContext): Promise<SpeechClip> {
+    const signal = voiceDeadline(request.signal ?? context.signal, 60_000);
     const res = await fetch(`${API}/tts/bytes`, {
       method: "POST",
       headers: {
@@ -78,10 +86,10 @@ export class CartesiaVoiceProvider implements VoiceProvider {
         voice: { mode: "id", id: request.voiceId },
         output_format: { container: "mp3", encoding: "mp3", sample_rate: 44100 },
       }),
-      signal: voiceDeadline(request.signal ?? context.signal, 60_000),
+      signal,
     });
     await requireOk(res, "Cartesia", "speaking");
-    return { bytes: new Uint8Array(await res.arrayBuffer()), mimeType: "audio/mpeg" };
+    return { bytes: await readVoiceAudio(res, signal), mimeType: "audio/mpeg" };
   }
 }
 

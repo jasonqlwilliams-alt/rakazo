@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  COMPOSE_MANUAL_UPGRADE_COMMANDS,
   chooseUpdateStrategy,
   commitImageTag,
   compareReleaseTags,
@@ -19,6 +20,7 @@ import {
   isValidComposeProjectName,
   isValidImageName,
   isValidImageTag,
+  manualUpgradeCommands,
   OFFICIAL_SERVER_IMAGE,
   parseGitNameOnly,
   parseLsRemoteReleases,
@@ -27,8 +29,10 @@ import {
   RECREATED_SERVICES,
   resolveComposeProjectName,
   resolveExecutionMode,
+  resolveInstallKind,
   resolveTrackedDirtyPaths,
   rollbackTarget,
+  SOURCE_MANUAL_UPGRADE_COMMANDS,
   selectLatestRelease,
   selectLatestReleaseTag,
   upsertEnvAssignments,
@@ -36,7 +40,7 @@ import {
 } from "./compose-update.js";
 
 const target = {
-  composeFile: "/srv/rakazo/infra/compose/docker-compose.prod.yml",
+  composeFiles: ["/srv/rakazo/infra/compose/docker-compose.prod.yml"],
   envFiles: ["/srv/rakazo/.env"],
 };
 
@@ -164,6 +168,43 @@ describe("strategy and mode selection", () => {
     expect(off.mode).toBe("unavailable");
     expect(off.reason).toMatch(/switched off/);
   });
+
+  it("detects sidecar, compose-without-sidecar, and source install kinds", () => {
+    expect(
+      resolveInstallKind({ updaterUrlConfigured: true, updaterReachable: true, hasCheckout: true }),
+    ).toEqual({ kind: "sidecar", mode: "sidecar", reason: null });
+    const compose = resolveInstallKind({
+      updaterUrlConfigured: true,
+      updaterReachable: false,
+      hasCheckout: true,
+    });
+    expect(compose.kind).toBe("compose");
+    expect(compose.mode).toBe("unavailable");
+    expect(compose.reason).toMatch(/sidecar/);
+    const source = resolveInstallKind({
+      updaterUrlConfigured: false,
+      updaterReachable: false,
+      hasCheckout: true,
+    });
+    expect(source.kind).toBe("source");
+    expect(source.mode).toBe("checkout");
+    expect(manualUpgradeCommands("compose")).toEqual([
+      "# Published release tag",
+      ...COMPOSE_MANUAL_UPGRADE_COMMANDS,
+      "# Local tag (rebuild from checkout)",
+      "git pull",
+      "GIT_SHA=$(git rev-parse HEAD) docker compose --env-file .env -f infra/compose/docker-compose.prod.yml up -d --wait --pull never --build api worker web",
+    ]);
+    expect(manualUpgradeCommands("compose", { imageTag: "local" })).toEqual([
+      "git pull",
+      "GIT_SHA=$(git rev-parse HEAD) docker compose --env-file .env -f infra/compose/docker-compose.prod.yml up -d --wait --pull never --build api worker web",
+    ]);
+    expect(manualUpgradeCommands("compose", { imageTag: "sha-abc" })).toEqual([
+      ...COMPOSE_MANUAL_UPGRADE_COMMANDS,
+    ]);
+    expect(manualUpgradeCommands("source")).toEqual([...SOURCE_MANUAL_UPGRADE_COMMANDS]);
+    expect(manualUpgradeCommands("sidecar")).toEqual([]);
+  });
 });
 
 describe("compose argv construction", () => {
@@ -177,13 +218,81 @@ describe("compose argv construction", () => {
         "--env-file",
         "/srv/rakazo/.env",
         "--file",
-        target.composeFile,
+        ...target.composeFiles,
         "pull",
         "api",
         "worker",
         "web",
       ],
     });
+  });
+
+  it("passes one --file per Compose file, in overlay order", () => {
+    const overlaid = {
+      ...target,
+      composeFiles: [
+        "/srv/rakazo/infra/compose/docker-compose.prod.yml",
+        "/srv/rakazo/ops/compose/docker-compose.sandbox.yml",
+      ],
+    };
+    for (const invocation of [
+      composePullArgv(overlaid),
+      composeUpArgv(overlaid),
+      composePsArgv(overlaid),
+    ]) {
+      const files = invocation.args.flatMap((arg, index) =>
+        arg === "--file" ? [invocation.args[index + 1]] : [],
+      );
+      expect(files).toEqual(overlaid.composeFiles);
+    }
+  });
+
+  it("refuses a target with no Compose file rather than running against the default stack", () => {
+    expect(() => composePullArgv({ ...target, composeFiles: [] })).toThrow(/no Compose file/);
+  });
+
+  it("recreates and pulls the target's own services when an overlay adds one", () => {
+    const withSupervisor = { ...target, services: ["api", "worker", "web", "supervisor"] };
+    expect(composePullArgv(withSupervisor).args.slice(-4)).toEqual([
+      "api",
+      "worker",
+      "web",
+      "supervisor",
+    ]);
+    expect(composeUpArgv(withSupervisor).args.slice(-4)).toEqual([
+      "api",
+      "worker",
+      "web",
+      "supervisor",
+    ]);
+  });
+
+  it("falls back to the built-in services when the target names none", () => {
+    expect(composeUpArgv({ ...target, services: [] }).args.slice(-3)).toEqual([
+      "api",
+      "worker",
+      "web",
+    ]);
+  });
+
+  it("carries the overlay files and extra services into the update plan and its recovery", () => {
+    const overlaid = {
+      ...target,
+      composeFiles: [
+        "/srv/rakazo/infra/compose/docker-compose.prod.yml",
+        "/srv/rakazo/ops/compose/docker-compose.sandbox.yml",
+      ],
+      services: ["api", "worker", "web", "supervisor"],
+    };
+    for (const strategy of ["pull", "build"] as const) {
+      const steps = composeUpdatePlan({ strategy, target: overlaid });
+      const composeSteps = steps.filter((step) => step.command === "docker");
+      expect(composeSteps.length).toBeGreaterThan(0);
+      for (const step of composeSteps) {
+        expect(step.args.filter((arg) => arg === "--file")).toHaveLength(2);
+        expect(step.args).toContain("supervisor");
+      }
+    }
   });
 
   it("passes the project name as its own -p argument so a custom stack is the one updated", () => {

@@ -10,11 +10,13 @@ import type {
   VoiceVerifyResult,
 } from "@rakazo/adapter-kit";
 import {
+  readVoiceAudio,
   readVoiceJson,
   requireOk,
   speechUploadName,
   voiceDeadline,
   voiceHttpError,
+  voiceUnreachable,
 } from "./voice-http.js";
 
 const API = "https://api.elevenlabs.io/v1";
@@ -51,7 +53,7 @@ export class ElevenLabsVoiceProvider implements VoiceProvider {
     } catch {
       return {
         ok: false,
-        message: "Couldn't reach ElevenLabs to check that key — check your connection.",
+        message: voiceUnreachable("ElevenLabs"),
       };
     }
   }
@@ -61,7 +63,7 @@ export class ElevenLabsVoiceProvider implements VoiceProvider {
       headers: { "xi-api-key": apiKey },
       signal: voiceDeadline(context.signal, 20_000),
     });
-    const body = await readVoiceJson(res);
+    const body = await readVoiceJson(res, { requireValid: res.ok });
     if (!res.ok) throw new Error(voiceHttpError(res.status, "ElevenLabs", "listing voices", body));
     const voices = (body as { voices?: Array<Record<string, unknown>> } | null)?.voices ?? [];
     return voices
@@ -77,6 +79,7 @@ export class ElevenLabsVoiceProvider implements VoiceProvider {
   }
 
   async synthesize(request: VoiceSynthesizeRequest, context: AdapterContext): Promise<SpeechClip> {
+    const signal = voiceDeadline(request.signal ?? context.signal, 60_000);
     const res = await fetch(
       `${API}/text-to-speech/${encodeURIComponent(request.voiceId)}?output_format=${FORMAT}`,
       {
@@ -87,11 +90,11 @@ export class ElevenLabsVoiceProvider implements VoiceProvider {
           accept: "audio/mpeg",
         },
         body: JSON.stringify({ text: request.text, model_id: MODEL }),
-        signal: voiceDeadline(request.signal ?? context.signal, 60_000),
+        signal,
       },
     );
     await requireOk(res, "ElevenLabs", "speaking");
-    return { bytes: new Uint8Array(await res.arrayBuffer()), mimeType: "audio/mpeg" };
+    return { bytes: await readVoiceAudio(res, signal), mimeType: "audio/mpeg" };
   }
 
   async transcribe(
@@ -111,7 +114,7 @@ export class ElevenLabsVoiceProvider implements VoiceProvider {
       body: form,
       signal: voiceDeadline(request.signal ?? context.signal, 60_000),
     });
-    const body = await readVoiceJson(res);
+    const body = await readVoiceJson(res, { requireValid: res.ok });
     if (!res.ok) throw new Error(voiceHttpError(res.status, "ElevenLabs", "transcribing", body));
     const text = String((body as { text?: unknown } | null)?.text ?? "").trim();
     return { text };

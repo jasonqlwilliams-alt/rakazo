@@ -10,6 +10,7 @@ import type {
   OAuthClientMetadata,
   OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
+import { isLocalMcpHost } from "@rakazo/contracts";
 import type { PrismaClient } from "@rakazo/db";
 import { secureFetch, validateUrl, withEndpointOriginFallback } from "./mcp-transport.js";
 import type { RemoteTransportDependencies } from "./remote-mcp.js";
@@ -32,7 +33,7 @@ export type OAuthMaterial = {
 };
 
 type ServerRef = { id: string; endpoint: string | null; secretId: string | null };
-type ActorRef = { workspaceId: string; userId: string };
+type ActorRef = { spaceId: string; userId: string };
 
 export class McpReauthorizationRequiredError extends Error {
   readonly code = "MCP_REAUTHORIZATION_REQUIRED";
@@ -104,9 +105,18 @@ export class StoredMcpOAuthProvider implements OAuthClientProvider {
     await this.persist();
   }
   async redirectToAuthorization(url: URL): Promise<void> {
-    this.authorizationUrl = url;
+    let authorizationUrl: URL;
+    try {
+      authorizationUrl = validateUrl(url, { allowHttpLocalhost: true });
+    } catch (error) {
+      if (!this.options.onAuthorization) {
+        await this.invalidateCredentials("tokens");
+      }
+      throw error;
+    }
+    this.authorizationUrl = authorizationUrl;
     if (this.options.onAuthorization) {
-      this.options.onAuthorization(url);
+      this.options.onAuthorization(authorizationUrl);
       return;
     }
     // Runtime re-auth needs the user; drop the dead tokens so status reads "reconnect".
@@ -175,7 +185,7 @@ export class StoredMcpOAuthProvider implements OAuthClientProvider {
 
 type Pending = {
   serverId: string;
-  workspaceId: string;
+  spaceId: string;
   userId: string;
   endpoint: string;
   provider: StoredMcpOAuthProvider;
@@ -192,10 +202,28 @@ const MAX_PENDING_SESSIONS = 100;
 function oauthFetch(
   endpoint: string,
   network: RemoteTransportDependencies,
-): { fetch: typeof fetch; close: () => Promise<void> } {
+  material: OAuthMaterial = {},
+): { fetch: typeof fetch; close: () => Promise<void>; headers: Record<string, string> } {
   const url = new URL(endpoint);
-  const safeFetch = secureFetch(url, {}, {}, network);
+  const localHttp = url.protocol === "http:" && isLocalMcpHost(url.hostname);
+  const headers = {
+    ...material.headers,
+    ...(material.secret
+      ? {
+          Authorization: material.secret.startsWith("Bearer ")
+            ? material.secret
+            : `Bearer ${material.secret}`,
+        }
+      : {}),
+  };
+  const safeFetch = secureFetch(
+    url,
+    { allowHttpLocalhost: localHttp, allowLocalHttpCredentials: localHttp },
+    { headers },
+    network,
+  );
   return {
+    headers,
     fetch: withEndpointOriginFallback(url.origin, safeFetch),
     close: () => safeFetch.close(),
   };
@@ -219,8 +247,11 @@ export class McpOAuthBroker {
     return material.oauth ? "reconnect" : "none";
   }
 
-  statusForCiphertext(ciphertext: string | undefined): "none" | "connected" | "reconnect" {
-    const material = ciphertext ? this.read(ciphertext) : {};
+  statusForCiphertext(
+    ciphertext: string | undefined,
+    recordId: string | undefined,
+  ): "none" | "connected" | "reconnect" {
+    const material = ciphertext && recordId ? this.read(ciphertext, recordId) : {};
     if (material.oauth?.tokens) return "connected";
     return material.oauth ? "reconnect" : "none";
   }
@@ -237,7 +268,7 @@ export class McpOAuthBroker {
 
   async begin(input: {
     serverId: string;
-    workspaceId: string;
+    spaceId: string;
     userId: string;
     redirectUri: string;
   }): Promise<
@@ -247,7 +278,7 @@ export class McpOAuthBroker {
     const server = await this.prisma.mcpServer.findFirst({
       where: {
         id: input.serverId,
-        workspaceId: input.workspaceId,
+        spaceId: input.spaceId,
         userId: input.userId,
         enabled: true,
       },
@@ -256,7 +287,7 @@ export class McpOAuthBroker {
     await this.sweepExpiredPending();
     let actorPending = 0;
     for (const pending of this.pending.values()) {
-      if (pending.workspaceId === input.workspaceId && pending.userId === input.userId) {
+      if (pending.spaceId === input.spaceId && pending.userId === input.userId) {
         actorPending += 1;
       }
     }
@@ -264,13 +295,13 @@ export class McpOAuthBroker {
       throw new Error("Too many pending MCP authorization attempts; wait and try again");
     }
     const activeCount = await this.prisma.mcpOAuthSession.count({
-      where: { workspaceId: input.workspaceId, userId: input.userId },
+      where: { spaceId: input.spaceId, userId: input.userId },
     });
     if (activeCount >= MAX_PENDING_SESSIONS) {
       throw new Error("Too many pending MCP authorization attempts; wait and try again");
     }
     const sessionId = randomUUID();
-    const context = { workspaceId: input.workspaceId, userId: input.userId };
+    const context = { spaceId: input.spaceId, userId: input.userId };
     const loaded = await this.loadMaterial(server, context);
     let authorizationUrl: URL | undefined;
     const provider = this.createProvider(server, context, loaded, {
@@ -284,8 +315,9 @@ export class McpOAuthBroker {
     // cancelled popup), the server keeps its valid connection. The SDK itself
     // invalidates dead tokens when a refresh is rejected with invalid_grant.
     const endpoint = new URL(server.endpoint);
-    const networkFetch = oauthFetch(server.endpoint, this.network);
+    const networkFetch = oauthFetch(server.endpoint, this.network, loaded.material);
     const transport = new StreamableHTTPClientTransport(endpoint, {
+      requestInit: { headers: networkFetch.headers },
       authProvider: provider,
       fetch: networkFetch.fetch,
     });
@@ -305,19 +337,23 @@ export class McpOAuthBroker {
       }
       return { status: "authorization_not_requested" };
     }
-    const sessionMaterial = await this.secrets.put(JSON.stringify(loaded.material), {
-      operationId: "mcp.oauth.session",
-      traceId: "mcp.oauth.session",
-      workspaceId: input.workspaceId,
-      userId: input.userId,
-      botId: "mcp",
-      signal: new AbortController().signal,
-    });
+    const sessionMaterial = await this.secrets.put(
+      JSON.stringify(loaded.material),
+      {
+        operationId: "mcp.oauth.session",
+        traceId: "mcp.oauth.session",
+        spaceId: input.spaceId,
+        userId: input.userId,
+        botId: "mcp",
+        signal: new AbortController().signal,
+      },
+      sessionId,
+    );
     await this.prisma.mcpOAuthSession.create({
       data: {
         id: sessionId,
         serverId: server.id,
-        workspaceId: input.workspaceId,
+        spaceId: input.spaceId,
         userId: input.userId,
         endpoint: server.endpoint,
         redirectUri: input.redirectUri,
@@ -333,7 +369,7 @@ export class McpOAuthBroker {
     expiry.unref?.();
     this.pending.set(sessionId, {
       serverId: server.id,
-      workspaceId: input.workspaceId,
+      spaceId: input.spaceId,
       userId: input.userId,
       endpoint: server.endpoint,
       provider,
@@ -351,7 +387,7 @@ export class McpOAuthBroker {
     sessionId: string;
     code: string;
     state: string;
-    workspaceId: string;
+    spaceId: string;
     userId: string;
   }): Promise<void> {
     await this.sweepExpiredPending();
@@ -359,14 +395,14 @@ export class McpOAuthBroker {
       throw new Error("MCP OAuth session is invalid or expired");
     }
     let pending = this.pending.get(input.sessionId);
-    if (pending && (pending.workspaceId !== input.workspaceId || pending.userId !== input.userId)) {
+    if (pending && (pending.spaceId !== input.spaceId || pending.userId !== input.userId)) {
       pending = undefined;
     }
     if (!pending) {
       const session = await this.prisma.mcpOAuthSession.findFirst({
         where: {
           id: input.sessionId,
-          workspaceId: input.workspaceId,
+          spaceId: input.spaceId,
           userId: input.userId,
           createdAt: { gte: new Date(Date.now() - PENDING_TTL_MS) },
         },
@@ -375,20 +411,20 @@ export class McpOAuthBroker {
       const server = await this.prisma.mcpServer.findFirst({
         where: {
           id: session.serverId,
-          workspaceId: input.workspaceId,
+          spaceId: input.spaceId,
           userId: input.userId,
           enabled: true,
         },
       });
       if (!server?.endpoint) throw new Error("MCP OAuth session is invalid or expired");
-      const context = { workspaceId: input.workspaceId, userId: input.userId };
+      const context = { spaceId: input.spaceId, userId: input.userId };
       const loaded = {
-        material: this.read(session.oauthCiphertext),
+        material: this.read(session.oauthCiphertext, session.id),
         ...(server.secretId ? { secretId: server.secretId } : {}),
       };
       pending = {
         serverId: server.id,
-        workspaceId: input.workspaceId,
+        spaceId: input.spaceId,
         userId: input.userId,
         endpoint: session.endpoint,
         provider: this.createProvider(server, context, loaded, {
@@ -406,7 +442,7 @@ export class McpOAuthBroker {
     const consumed = await this.prisma.mcpOAuthSession.deleteMany({
       where: {
         id: input.sessionId,
-        workspaceId: input.workspaceId,
+        spaceId: input.spaceId,
         userId: input.userId,
       },
     });
@@ -448,20 +484,16 @@ export class McpOAuthBroker {
     this.pending.delete(sessionId);
   }
 
-  async disconnect(input: {
-    serverId: string;
-    workspaceId: string;
-    userId: string;
-  }): Promise<void> {
+  async disconnect(input: { serverId: string; spaceId: string; userId: string }): Promise<void> {
     const server = await this.prisma.mcpServer.findFirst({
-      where: { id: input.serverId, workspaceId: input.workspaceId, userId: input.userId },
+      where: { id: input.serverId, spaceId: input.spaceId, userId: input.userId },
     });
     if (!server?.secretId) return;
     const row = await this.prisma.secret.findFirst({
-      where: { id: server.secretId, workspaceId: input.workspaceId, userId: input.userId },
+      where: { id: server.secretId, spaceId: input.spaceId, userId: input.userId },
     });
     if (!row) return;
-    const material = this.read(row.ciphertext);
+    const material = this.read(row.ciphertext, row.id);
     delete material.oauth;
     await this.replaceMaterial(server.id, material, input, true);
   }
@@ -472,9 +504,11 @@ export class McpOAuthBroker {
   ): Promise<{ material: OAuthMaterial; secretId?: string }> {
     if (!server.secretId) return { material: {} };
     const row = await this.prisma.secret.findFirst({
-      where: { id: server.secretId, workspaceId: context.workspaceId, userId: context.userId },
+      where: { id: server.secretId, spaceId: context.spaceId, userId: context.userId },
     });
-    return row ? { material: this.read(row.ciphertext), secretId: row.id } : { material: {} };
+    return row
+      ? { material: this.read(row.ciphertext, row.id), secretId: row.id }
+      : { material: {} };
   }
 
   private createProvider(
@@ -508,7 +542,7 @@ export class McpOAuthBroker {
       const server = await tx.mcpServer.findFirst({
         where: {
           id: serverId,
-          workspaceId: context.workspaceId,
+          spaceId: context.spaceId,
           userId: context.userId,
         },
         select: { endpoint: true, secretId: true },
@@ -521,12 +555,14 @@ export class McpOAuthBroker {
         ? await tx.secret.findFirst({
             where: {
               id: server.secretId,
-              workspaceId: context.workspaceId,
+              spaceId: context.spaceId,
               userId: context.userId,
             },
           })
         : null;
-      const nextMaterial = currentSecret ? this.read(currentSecret.ciphertext) : {};
+      const nextMaterial = currentSecret
+        ? this.read(currentSecret.ciphertext, currentSecret.id)
+        : {};
       if (material.oauth) nextMaterial.oauth = structuredClone(material.oauth);
       else delete nextMaterial.oauth;
       const hasMaterial = Boolean(
@@ -539,7 +575,7 @@ export class McpOAuthBroker {
         ? await this.secrets.put(JSON.stringify(nextMaterial), {
             operationId: "mcp.oauth.persist",
             traceId: "mcp.oauth.persist",
-            workspaceId: context.workspaceId,
+            spaceId: context.spaceId,
             userId: context.userId,
             botId: "mcp",
             signal: new AbortController().signal,
@@ -549,7 +585,7 @@ export class McpOAuthBroker {
         await tx.secret.create({
           data: {
             id: stored.id,
-            workspaceId: context.workspaceId,
+            spaceId: context.spaceId,
             userId: context.userId,
             kind: "mcp",
             ciphertext: stored.ciphertext,
@@ -570,9 +606,9 @@ export class McpOAuthBroker {
     });
   }
 
-  private read(ciphertext: string): OAuthMaterial {
+  private read(ciphertext: string, recordId: string): OAuthMaterial {
     try {
-      const value = JSON.parse(this.secrets.load(ciphertext));
+      const value = JSON.parse(this.secrets.load(ciphertext, recordId));
       return value && typeof value === "object" ? (value as OAuthMaterial) : {};
     } catch {
       return {};

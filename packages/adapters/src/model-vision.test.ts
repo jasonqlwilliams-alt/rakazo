@@ -5,7 +5,9 @@ import {
   IMAGE_RETURNING_COMPUTER_TOOLS,
   MODEL_CANNOT_SEE_MESSAGE,
   modelAcceptsImageInput,
+  modelIdSupportsImages,
   resolveModelRefForVisionCheck,
+  updateModelImageCapabilities,
 } from "./model-vision.js";
 
 describe("model vision gating for computer tools", () => {
@@ -26,13 +28,12 @@ describe("model vision gating for computer tools", () => {
   });
 
   it("resolves the scripted placeholder like Pi before checking vision", () => {
+    vi.stubEnv("PI_DEFAULT_MODEL", "");
     expect(resolveModelRefForVisionCheck("scripted", "scripted")).toEqual({
       provider: "openrouter",
-      id: "deepseek/deepseek-v4-flash-0731",
+      id: "openai/gpt-5.6-luna",
     });
-    // Default PI_DEFAULT_MODEL is text-only, so the scripted fallback must not
-    // expose screenshot tools (reproduces the self-host default failure mode).
-    expect(modelAcceptsImageInput("scripted", "scripted")).toBe(false);
+    expect(modelAcceptsImageInput("scripted", "scripted")).toBe(true);
 
     vi.stubEnv("PI_DEFAULT_MODEL", "openai/gpt-4o");
     expect(resolveModelRefForVisionCheck("scripted", "scripted")).toEqual({
@@ -44,6 +45,17 @@ describe("model vision gating for computer tools", () => {
 
   it("treats unknown models as text-only", () => {
     expect(modelAcceptsImageInput("openrouter", "rakazo-test/unknown-future-model")).toBe(false);
+  });
+
+  it("keeps explicit image capability scoped to the selected model", () => {
+    const enabled = updateModelImageCapabilities(
+      [" vision-model ", "text-model"],
+      "text-model",
+      false,
+    );
+    expect(enabled).toEqual(["vision-model"]);
+    expect(modelIdSupportsImages(enabled, "vision-model")).toBe(true);
+    expect(modelIdSupportsImages(enabled, "text-model")).toBe(false);
   });
 
   it("omits image-returning computer tools for text-only models", () => {

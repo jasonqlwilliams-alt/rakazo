@@ -6,7 +6,14 @@ import type {
   OAuthCredential,
 } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
-import type { ModelOAuthBegin, ModelOAuthSignInMode } from "@rakazo/contracts";
+import {
+  MAX_MODEL_CONTEXT_WINDOW,
+  MAX_MODEL_MAX_TOKENS,
+  type ModelOAuthBegin,
+  type ModelOAuthSignInMode,
+  type ThinkingLevel,
+  ThinkingLevelSchema,
+} from "@rakazo/contracts";
 import { createManualAnthropicOAuthLogin } from "./pi-anthropic-oauth.js";
 
 export const CHATGPT_OAUTH_PROVIDER = "openai-codex";
@@ -41,8 +48,8 @@ export const SUBSCRIPTION_SIGN_IN_PROVIDERS: Record<
     mode: "auth-url",
     loginLabel: "Sign in with Claude Pro/Max",
     hint: "Claude Pro/Max / key",
-    billing:
-      "Sign in with Claude Pro or Max, or paste an Anthropic API key. Uses your Anthropic subscription. Rakazo does not pay.",
+    // Button + "Or paste an API key" already explain the choices; no extra paragraph.
+    billing: "",
   },
 };
 
@@ -52,7 +59,17 @@ const SIGN_IN_START_WAIT_MS = 30_000;
 export type StoredModelSecret =
   | { kind: "api_key"; key: string }
   | { kind: "oauth"; credential: OAuthCredential }
-  | { kind: "openai_compatible"; baseUrl: string; apiKey?: string };
+  | {
+      kind: "openai_compatible";
+      baseUrl: string;
+      apiKey?: string;
+      reasoning?: boolean;
+      thinkingLevel?: ThinkingLevel | null;
+      maxTokens?: number;
+      contextWindow?: number;
+      visionModelIds?: string[];
+      maxImagesPerPrompt?: number;
+    };
 
 export type PiOAuthConnected = {
   status: "connected";
@@ -90,7 +107,7 @@ type Session = {
   id: string;
   scope: string;
   userId: string;
-  workspaceId: string;
+  spaceId: string;
   provider: string;
   modelId?: string;
   label?: string;
@@ -120,10 +137,45 @@ export function parseModelSecret(plaintext: string): StoredModelSecret {
         parsed.baseUrl.trim()
       ) {
         const apiKey = typeof parsed.apiKey === "string" ? parsed.apiKey : undefined;
+        const parsedThinkingLevel = ThinkingLevelSchema.nullable().safeParse(parsed.thinkingLevel);
+        const thinkingLevel = parsedThinkingLevel.success ? parsedThinkingLevel.data : undefined;
+        const maxTokens =
+          typeof parsed.maxTokens === "number" &&
+          Number.isInteger(parsed.maxTokens) &&
+          parsed.maxTokens >= 1 &&
+          parsed.maxTokens <= MAX_MODEL_MAX_TOKENS
+            ? parsed.maxTokens
+            : undefined;
+        const contextWindow =
+          typeof parsed.contextWindow === "number" &&
+          Number.isInteger(parsed.contextWindow) &&
+          parsed.contextWindow >= 1 &&
+          parsed.contextWindow <= MAX_MODEL_CONTEXT_WINDOW
+            ? parsed.contextWindow
+            : undefined;
+        const visionModelIds = Array.isArray(parsed.visionModelIds)
+          ? parsed.visionModelIds.filter(
+              (modelId): modelId is string =>
+                typeof modelId === "string" && modelId.trim().length > 0,
+            )
+          : undefined;
+        const maxImagesPerPrompt =
+          typeof parsed.maxImagesPerPrompt === "number" &&
+          Number.isInteger(parsed.maxImagesPerPrompt) &&
+          parsed.maxImagesPerPrompt >= 1 &&
+          parsed.maxImagesPerPrompt <= 1000
+            ? parsed.maxImagesPerPrompt
+            : undefined;
         return {
           kind: "openai_compatible",
           baseUrl: parsed.baseUrl.trim(),
           ...(apiKey ? { apiKey } : {}),
+          ...(typeof parsed.reasoning === "boolean" ? { reasoning: parsed.reasoning } : {}),
+          ...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
+          ...(maxTokens !== undefined ? { maxTokens } : {}),
+          ...(contextWindow !== undefined ? { contextWindow } : {}),
+          ...(visionModelIds ? { visionModelIds } : {}),
+          ...(maxImagesPerPrompt !== undefined ? { maxImagesPerPrompt } : {}),
         };
       }
       if (
@@ -148,6 +200,14 @@ export function serializeModelSecret(secret: StoredModelSecret): string {
       kind: "openai_compatible",
       baseUrl: secret.baseUrl,
       ...(secret.apiKey ? { apiKey: secret.apiKey } : {}),
+      ...(secret.reasoning !== undefined ? { reasoning: secret.reasoning } : {}),
+      ...(secret.thinkingLevel !== undefined ? { thinkingLevel: secret.thinkingLevel } : {}),
+      ...(secret.maxTokens !== undefined ? { maxTokens: secret.maxTokens } : {}),
+      ...(secret.contextWindow !== undefined ? { contextWindow: secret.contextWindow } : {}),
+      ...(secret.visionModelIds !== undefined ? { visionModelIds: secret.visionModelIds } : {}),
+      ...(secret.maxImagesPerPrompt !== undefined
+        ? { maxImagesPerPrompt: secret.maxImagesPerPrompt }
+        : {}),
     });
   }
   return secret.key;
@@ -222,7 +282,7 @@ export class PiOAuthLogins {
 
   async begin(input: {
     userId: string;
-    workspaceId: string;
+    spaceId: string;
     provider: string;
     modelId?: string;
     label?: string;
@@ -237,7 +297,7 @@ export class PiOAuthLogins {
       throw input.signal.reason ?? new Error("Sign-in cancelled.");
     }
 
-    const scope = oauthScopeKey(input.userId, input.workspaceId, input.provider);
+    const scope = oauthScopeKey(input.userId, input.spaceId, input.provider);
     const prepared = await this.withReplacementLock(scope, input.signal, async () => {
       await this.retireActiveSession(scope, input.signal);
       throwIfAborted(input.signal);
@@ -249,7 +309,7 @@ export class PiOAuthLogins {
         id: loginId,
         scope,
         userId: input.userId,
-        workspaceId: input.workspaceId,
+        spaceId: input.spaceId,
         provider: input.provider,
         modelId: input.modelId,
         label: input.label,
@@ -373,13 +433,9 @@ export class PiOAuthLogins {
     }
   }
 
-  submit(
-    loginId: string,
-    actor: { userId: string; workspaceId: string },
-    code: string,
-  ): { ok: true } {
+  submit(loginId: string, actor: { userId: string; spaceId: string }, code: string): { ok: true } {
     const session = this.pending.get(loginId);
-    if (!session || session.userId !== actor.userId || session.workspaceId !== actor.workspaceId) {
+    if (!session || session.userId !== actor.userId || session.spaceId !== actor.spaceId) {
       throw new Error("Sign-in session not found. Start sign-in again.");
     }
     if (session.error) throw new Error(session.error);
@@ -395,9 +451,9 @@ export class PiOAuthLogins {
     return { ok: true };
   }
 
-  complete(loginId: string, actor: { userId: string; workspaceId: string }): PiOAuthComplete {
+  complete(loginId: string, actor: { userId: string; spaceId: string }): PiOAuthComplete {
     const session = this.pending.get(loginId);
-    if (!session || session.userId !== actor.userId || session.workspaceId !== actor.workspaceId) {
+    if (!session || session.userId !== actor.userId || session.spaceId !== actor.spaceId) {
       return { status: "error", error: "Sign-in session not found. Start sign-in again." };
     }
     if (session.error) {
@@ -420,11 +476,11 @@ export class PiOAuthLogins {
 
   async finish<T>(
     loginId: string,
-    actor: { userId: string; workspaceId: string },
+    actor: { userId: string; spaceId: string },
     persist: (result: PiOAuthConnected) => Promise<T>,
   ): Promise<PiOAuthFinish<T>> {
     const session = this.pending.get(loginId);
-    if (!session || session.userId !== actor.userId || session.workspaceId !== actor.workspaceId) {
+    if (!session || session.userId !== actor.userId || session.spaceId !== actor.spaceId) {
       return { status: "error", error: "Sign-in session not found. Start sign-in again." };
     }
     if (session.state === "finalizing") return { status: "pending" };
@@ -451,14 +507,10 @@ export class PiOAuthLogins {
     }
   }
 
-  async cancel(loginId: string, actor: { userId: string; workspaceId: string }): Promise<void> {
+  async cancel(loginId: string, actor: { userId: string; spaceId: string }): Promise<void> {
     while (true) {
       const session = this.pending.get(loginId);
-      if (
-        !session ||
-        session.userId !== actor.userId ||
-        session.workspaceId !== actor.workspaceId
-      ) {
+      if (!session || session.userId !== actor.userId || session.spaceId !== actor.spaceId) {
         return;
       }
       if (session.state === "finalizing") {
@@ -557,8 +609,8 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function oauthScopeKey(userId: string, workspaceId: string, provider: string): string {
-  return JSON.stringify([userId, workspaceId, provider]);
+function oauthScopeKey(userId: string, spaceId: string, provider: string): string {
+  return JSON.stringify([userId, spaceId, provider]);
 }
 
 function httpsAuthorizationUrl(input: string): string {

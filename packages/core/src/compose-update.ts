@@ -280,16 +280,135 @@ export function resolveExecutionMode(input: {
   };
 }
 
+/**
+ * What the deployment-owner Settings UI should show. Distinct from {@link resolveExecutionMode}:
+ * Compose without the opt-in sidecar is still a Compose install, and source checkouts must never
+ * look like they can one-click apply from the API process (no `.git` in the app image; no Docker
+ * socket either).
+ */
+export type InstallKind = "sidecar" | "compose" | "source";
+
+export interface InstallKindDecision {
+  kind: InstallKind;
+  /** Maps onto ServerUpdateMode for contracts that already use that enum. */
+  mode: ExecutionMode;
+  reason: string | null;
+}
+
+/**
+ * `updaterUrlConfigured` means the API was given `RAKAZO_UPDATER_URL` (Compose prod always sets
+ * this). Reachability requires both URL and token and a live sidecar. A source checkout is only
+ * claimed when there is no Compose updater wiring and `.git` is present on disk.
+ */
+export function resolveInstallKind(input: {
+  updaterUrlConfigured?: boolean;
+  updaterReachable?: boolean;
+  hasCheckout?: boolean;
+  disabled?: boolean;
+}): InstallKindDecision {
+  if (input.disabled === true) {
+    return {
+      kind:
+        input.updaterUrlConfigured === true
+          ? "compose"
+          : input.hasCheckout === true
+            ? "source"
+            : "compose",
+      mode: "unavailable",
+      reason: "Self-update is switched off for this deployment.",
+    };
+  }
+  if (input.updaterReachable === true) {
+    return { kind: "sidecar", mode: "sidecar", reason: null };
+  }
+  if (input.updaterUrlConfigured === true) {
+    return {
+      kind: "compose",
+      mode: "unavailable",
+      reason:
+        "The updater sidecar is not reachable. Start the opt-in `updater` profile, or upgrade from the host with the Compose commands below.",
+    };
+  }
+  if (input.hasCheckout === true) {
+    return {
+      kind: "source",
+      mode: "checkout",
+      reason: "This is a source checkout. Upgrade from a terminal; Settings cannot apply it.",
+    };
+  }
+  return {
+    kind: "compose",
+    mode: "unavailable",
+    reason:
+      "This deployment has no updater sidecar. Upgrade from the host with the Compose commands below, or enable the `updater` profile.",
+  };
+}
+
+/** Exact host commands from docs/self-host.md for Compose on a published release tag. */
+export const COMPOSE_PULL_UPGRADE_COMMANDS = [
+  "docker compose --env-file .env -f infra/compose/docker-compose.prod.yml pull api worker web",
+  "docker compose --env-file .env -f infra/compose/docker-compose.prod.yml up -d --wait --pull never api worker web",
+] as const;
+
+/** Exact host commands from docs/self-host.md for Compose on the default `local` tag. */
+export const COMPOSE_LOCAL_BUILD_UPGRADE_COMMANDS = [
+  "git pull",
+  "GIT_SHA=$(git rev-parse HEAD) docker compose --env-file .env -f infra/compose/docker-compose.prod.yml up -d --wait --pull never --build api worker web",
+] as const;
+
+/** @deprecated Prefer {@link COMPOSE_PULL_UPGRADE_COMMANDS}; kept for call-site clarity in tests. */
+export const COMPOSE_MANUAL_UPGRADE_COMMANDS = COMPOSE_PULL_UPGRADE_COMMANDS;
+
+/** Exact host commands from docs/self-host.md for source / `pnpm dev` installs. */
+export const SOURCE_MANUAL_UPGRADE_COMMANDS = [
+  "git pull",
+  "pnpm --filter @rakazo/db migrate",
+  "# Restart the API and worker processes",
+] as const;
+
+/**
+ * Host commands Settings should show when the sidecar cannot apply.
+ * Compose picks pull vs rebuild from the current image tag when known; otherwise both documented
+ * paths from self-host.md so a `local` install is not told to `pull` a tag the registry never serves.
+ */
+export function manualUpgradeCommands(
+  kind: InstallKind,
+  options: { imageTag?: string | null } = {},
+): readonly string[] {
+  if (kind === "source") return SOURCE_MANUAL_UPGRADE_COMMANDS;
+  if (kind !== "compose") return [];
+  const tag = options.imageTag?.trim() ?? "";
+  if (tag !== "" && isLocalImageTag(tag)) return COMPOSE_LOCAL_BUILD_UPGRADE_COMMANDS;
+  if (tag !== "" && !isLocalImageTag(tag)) return COMPOSE_PULL_UPGRADE_COMMANDS;
+  return [
+    "# Published release tag",
+    ...COMPOSE_PULL_UPGRADE_COMMANDS,
+    "# Local tag (rebuild from checkout)",
+    ...COMPOSE_LOCAL_BUILD_UPGRADE_COMMANDS,
+  ];
+}
+
 export interface ComposeInvocation {
   command: string;
   args: string[];
 }
 
 export interface ComposeTarget {
-  composeFile: string;
+  /**
+   * Compose files in overlay order, each passed as its own `--file`. A deployment that layers an
+   * overlay on the base file has to be reconciled with the same file list the operator uses, or an
+   * update recreates services without the overlay's wiring.
+   */
+  composeFiles: readonly string[];
   envFiles?: readonly string[];
   /** Passed as `docker compose -p <name>`. Defaults to {@link DEFAULT_COMPOSE_PROJECT_NAME}. */
   projectName?: string;
+  /**
+   * Services to pull, recreate and roll back. Defaults to {@link RECREATED_SERVICES}. A deployment
+   * whose overlay adds an app-image service has to recreate that one too, or the update leaves it
+   * running the old code.
+   */
+  services?: readonly string[];
 }
 
 function composeBase(target: ComposeTarget): string[] {
@@ -297,15 +416,23 @@ function composeBase(target: ComposeTarget): string[] {
   if (!isValidComposeProjectName(projectName)) {
     throw new Error(`Refusing an unusable Compose project name: ${projectName}`);
   }
+  if (target.composeFiles.length === 0) {
+    throw new Error("Refusing a Compose target with no Compose file.");
+  }
   const args = ["compose", "-p", projectName];
   for (const envFile of target.envFiles ?? []) args.push("--env-file", envFile);
-  args.push("--file", target.composeFile);
+  for (const composeFile of target.composeFiles) args.push("--file", composeFile);
   return args;
+}
+
+function targetServices(target: ComposeTarget): readonly string[] {
+  const services = target.services ?? [];
+  return services.length > 0 ? services : RECREATED_SERVICES;
 }
 
 export function composePullArgv(
   target: ComposeTarget,
-  services: readonly string[] = RECREATED_SERVICES,
+  services: readonly string[] = targetServices(target),
 ): ComposeInvocation {
   return { command: "docker", args: [...composeBase(target), "pull", ...services] };
 }
@@ -325,7 +452,7 @@ export function composeUpArgv(
     "never",
   ];
   args.push(options.build === true ? "--build" : "--no-build");
-  args.push(...(options.services ?? RECREATED_SERVICES));
+  args.push(...(options.services ?? targetServices(target)));
   return { command: "docker", args };
 }
 
