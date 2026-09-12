@@ -34,7 +34,7 @@ describe("createBackgroundJobHandlers", () => {
       executor: {
         continueRun: vi.fn(async () => undefined),
       } as unknown as ReturnType<typeof createRunExecutor>,
-      prisma: {} as unknown as PrismaClient,
+      prisma: { run: { findFirst: vi.fn(async () => null) } } as unknown as PrismaClient,
       sandbox: {} as unknown as SandboxProvider,
       home: {} as unknown as AgentHomeStore,
       jobs,

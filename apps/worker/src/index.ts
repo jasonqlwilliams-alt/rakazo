@@ -200,7 +200,6 @@ async function main() {
   const reconciler = createJobReconciler({
     prisma,
     jobs,
-    events,
     leadership: createPostgresReconciliationLeadership(pool),
     reconcileCloudAgents: () => reconcileCloudAgents({ prisma, jobs, cloudAgent }),
     reconcileComputerUpdates: () => reconcileComputerUpdates({ prisma, jobs }),
