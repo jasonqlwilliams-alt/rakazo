@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@rakazo/db";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createBackgroundJobHandlers } from "./background-job-handlers.js";
 import {
   currentBotMessageHop,
   loadBotMessageContext,
@@ -7,6 +8,7 @@ import {
   returnBotMessageOutcome,
 } from "./bot-messages.js";
 import type { ExecutorDeps } from "./executor.js";
+import { createJobReconciler } from "./job-reconciler.js";
 
 const run = {
   id: "run-1",
@@ -233,7 +235,7 @@ describe("messaging another bot", () => {
       { allowTerminalSource: true },
     );
     expect(sent.ok).toBe(true);
-    expect(harness.tx.$queryRaw).toHaveBeenCalledTimes(2);
+    expect(harness.tx.$queryRaw).toHaveBeenCalledTimes(3);
     expect(harness.tx.message.create).toHaveBeenLastCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
@@ -531,6 +533,40 @@ describe("hardening", () => {
 });
 
 describe("automatic outcome return", () => {
+  it("returns an outcome after its JSON reply address was deleted", async () => {
+    const harness = deps({
+      hopBlocks: [
+        {
+          kind: "bot_message_received",
+          fromBotId: "bot-target",
+          fromBotName: "Coordinator",
+          text: "research this",
+          hop: 1,
+          intent: "request",
+          returnToMessageId: "deleted-request",
+        },
+      ],
+    });
+    harness.tx.$queryRaw.mockResolvedValue([]);
+    harness.tx.message.create.mockImplementation(async ({ data }) => {
+      if (data.replyToMessageId)
+        throw Object.assign(new Error("Foreign key constraint violated"), { code: "P2003" });
+      return { id: "reply", seq: 1 };
+    });
+    await expect(
+      returnBotMessageOutcome(
+        harness.deps,
+        { ...run, sourceMessageId: "source" },
+        sender,
+        "Finished.",
+      ),
+    ).resolves.toBe(true);
+    expect(harness.tx.message.create).toHaveBeenLastCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ replyToMessageId: undefined }) }),
+    );
+    expect(harness.enqueue).toHaveBeenCalledOnce();
+  });
+
   it("routes a delegated run's final text back to its coordinator", async () => {
     const harness = deps({
       hopBlocks: [
@@ -567,7 +603,11 @@ describe("automatic outcome return", () => {
         status: { in: ["completed", "failed"] },
         botOutcomeReturnedAt: null,
       },
-      data: { botOutcomeReturnedAt: expect.any(Date) },
+      data: {
+        botOutcomeReturnedAt: expect.any(Date),
+        botOutcomeFailedAt: null,
+        botOutcomeNextAttemptAt: null,
+      },
     });
   });
 
@@ -650,5 +690,230 @@ describe("automatic outcome return", () => {
     expect(returned).toBe(true);
     expect(harness.enqueue).not.toHaveBeenCalled();
     expect(harness.deps.prisma.run.updateMany).toHaveBeenCalled();
+  });
+});
+
+function reconciliationHarness() {
+  const harness = deps({
+    hopBlocks: [
+      {
+        kind: "bot_message_received",
+        fromBotId: "bot-target",
+        fromBotName: "Coordinator",
+        text: "research this",
+        hop: 1,
+        intent: "request",
+      },
+    ],
+  });
+  const terminal = {
+    ...run,
+    sourceMessageId: "source",
+    trigger: "bot_message",
+    status: "completed",
+    error: null,
+    bot: { name: sender.name },
+    botOutcomeReturnedAt: null as Date | null,
+    botOutcomeAttempts: 0,
+    botOutcomeNextAttemptAt: null as Date | null,
+    botOutcomeFailedAt: null as Date | null,
+    botOutcomeError: null as string | null,
+  };
+  let receipts = 0;
+  const updateMany = vi.fn(async ({ where, data }) => {
+    if (where.botOutcomeReturnedAt === null && terminal.botOutcomeReturnedAt) return { count: 0 };
+    if (where.botOutcomeFailedAt === null && terminal.botOutcomeFailedAt) return { count: 0 };
+    if (
+      typeof where.botOutcomeAttempts === "number" &&
+      where.botOutcomeAttempts !== terminal.botOutcomeAttempts
+    )
+      return { count: 0 };
+    if (where.botOutcomeError === null && terminal.botOutcomeError) return { count: 0 };
+    if (
+      where.botOutcomeNextAttemptAt !== undefined &&
+      where.botOutcomeNextAttemptAt?.getTime() !== terminal.botOutcomeNextAttemptAt?.getTime()
+    )
+      return { count: 0 };
+    if (data.botOutcomeError) receipts++;
+    for (const [key, value] of Object.entries(data)) {
+      if (key === "botOutcomeAttempts" && typeof value === "object") terminal.botOutcomeAttempts++;
+      else Object.assign(terminal, { [key]: value });
+    }
+    return { count: 1 };
+  });
+  Object.assign(harness.deps.prisma, {
+    run: {
+      updateMany,
+      findFirst: vi.fn(async () =>
+        terminal.botOutcomeReturnedAt ||
+        terminal.botOutcomeFailedAt ||
+        (terminal.botOutcomeNextAttemptAt && terminal.botOutcomeNextAttemptAt > new Date())
+          ? null
+          : { ...terminal },
+      ),
+      findMany: vi.fn(async ({ where }) => {
+        if (where.trigger !== "bot_message" || terminal.botOutcomeReturnedAt) return [];
+        if (where.botOutcomeFailedAt === null && terminal.botOutcomeFailedAt) return [];
+        if (
+          where.OR &&
+          terminal.botOutcomeNextAttemptAt &&
+          terminal.botOutcomeNextAttemptAt > new Date()
+        )
+          return [];
+        return [{ ...terminal }];
+      }),
+    },
+    routine: { findMany: vi.fn(async () => [{ id: "routine-1", nextRunAt: new Date() }]) },
+    computer: { findMany: vi.fn(async () => []) },
+    messagingOutbound: { findFirst: vi.fn(async () => null) },
+  });
+
+  const handlers = createBackgroundJobHandlers({
+    ...harness.deps,
+    executor: { continueRun: vi.fn(async () => undefined) },
+  } as unknown as Parameters<typeof createBackgroundJobHandlers>[0]);
+  return {
+    ...harness,
+    terminal,
+    updateMany,
+    receipts: () => receipts,
+    reconcile: () => handlers["run.continue"]({ runId: terminal.id }),
+  };
+}
+
+describe("outcome reconciliation persistence", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("bounds a message.create constraint failure across reconciliation restarts", async () => {
+    vi.useFakeTimers();
+    const harness = reconciliationHarness();
+    harness.tx.message.create.mockRejectedValue(
+      Object.assign(new Error("Unique constraint failed on threadId, seq"), {
+        code: "P2002",
+        meta: { target: ["threadId", "seq"] },
+      }),
+    );
+    for (let tick = 0; tick < 10; tick++) {
+      await createJobReconciler(harness.deps).reconcileOnce();
+      await harness.reconcile();
+      vi.setSystemTime(Date.now() + 10 * 60_000);
+    }
+    expect(harness.tx.message.create).toHaveBeenCalledTimes(3);
+    expect(harness.terminal.botOutcomeFailedAt).toBeInstanceOf(Date);
+    expect(harness.terminal.botOutcomeReturnedAt).toBeNull();
+    expect(harness.terminal.botOutcomeError).toBe("P2002");
+    expect(harness.receipts()).toBe(1);
+    expect(
+      harness.enqueue.mock.calls.filter(([job]) => job.name === "routine.wakeup"),
+    ).toHaveLength(10);
+  });
+
+  it("waits for backoff, recovers a transient failure, and never delivers again", async () => {
+    vi.useFakeTimers();
+    const harness = reconciliationHarness();
+    harness.tx.message.create.mockRejectedValueOnce(
+      Object.assign(new Error("Foreign key constraint violated"), { code: "P2003" }),
+    );
+    await harness.reconcile();
+    expect(harness.enqueue).toHaveBeenLastCalledWith(
+      expect.objectContaining({ name: "run.continue", availableAt: new Date(Date.now() + 30_000) }),
+    );
+    vi.setSystemTime(Date.now() + 29_999);
+    await harness.reconcile();
+    expect(harness.tx.message.create).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(Date.now() + 1);
+    await harness.reconcile();
+    await harness.reconcile();
+    expect(harness.tx.message.create).toHaveBeenCalledTimes(3);
+    expect(harness.terminal.botOutcomeReturnedAt).toBeInstanceOf(Date);
+    expect(harness.terminal.botOutcomeFailedAt).toBeNull();
+    expect(harness.terminal.botOutcomeAttempts).toBe(2);
+    expect(harness.receipts()).toBe(1);
+  });
+
+  it("lets a committed late success supersede an expired recovery lease", async () => {
+    const harness = reconciliationHarness();
+    harness.tx.message.create.mockImplementationOnce(async () => {
+      harness.terminal.botOutcomeFailedAt = new Date();
+      return { id: "late-reply", seq: 1 };
+    });
+    await harness.reconcile();
+    expect(harness.terminal.botOutcomeReturnedAt).toBeInstanceOf(Date);
+    expect(harness.terminal.botOutcomeFailedAt).toBeNull();
+    expect(harness.terminal.botOutcomeNextAttemptAt).toBeNull();
+  });
+
+  it("replays a committed outcome when its returned marker was lost", async () => {
+    const harness = reconciliationHarness();
+    const lookup = harness.tx.message.findUnique.getMockImplementation()!;
+    harness.tx.message.findUnique.mockImplementation(async (args) =>
+      args.where?.threadId_clientNonce ? { id: "committed-inbound" } : lookup(args),
+    );
+    await harness.reconcile();
+    await harness.reconcile();
+    expect(harness.terminal.botOutcomeReturnedAt).toBeInstanceOf(Date);
+    expect(harness.tx.message.create).not.toHaveBeenCalled();
+    expect(harness.tx.run.create).not.toHaveBeenCalled();
+    expect(harness.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("claims one attempt when two queue deliveries race", async () => {
+    const harness = reconciliationHarness();
+    await Promise.all([harness.reconcile(), harness.reconcile()]);
+    expect(harness.tx.message.create).toHaveBeenCalledTimes(2);
+    expect(harness.terminal.botOutcomeAttempts).toBe(1);
+    expect(harness.terminal.botOutcomeReturnedAt).toBeInstanceOf(Date);
+  });
+
+  it("dead-letters an expired final claim after a worker crash", async () => {
+    vi.useFakeTimers();
+    const harness = reconciliationHarness();
+    harness.terminal.botOutcomeAttempts = 3;
+    harness.terminal.botOutcomeNextAttemptAt = new Date(Date.now() + 300_000);
+    await harness.reconcile();
+    expect(harness.terminal.botOutcomeFailedAt).toBeNull();
+    vi.setSystemTime(Date.now() + 300_000);
+    await harness.reconcile();
+    await harness.reconcile();
+    expect(harness.terminal.botOutcomeFailedAt).toBeInstanceOf(Date);
+    expect(harness.terminal.botOutcomeError).toBe("attempts_exhausted");
+    expect(harness.receipts()).toBe(1);
+    expect(harness.tx.message.create).not.toHaveBeenCalled();
+  });
+
+  it("keeps the retry durable when enqueue fails", async () => {
+    vi.useFakeTimers();
+    const harness = reconciliationHarness();
+    harness.tx.message.create.mockRejectedValueOnce(new Error("create failed"));
+    harness.enqueue.mockRejectedValueOnce(new Error("queue unavailable"));
+    await expect(harness.reconcile()).rejects.toThrow("queue unavailable");
+    expect(harness.terminal.botOutcomeAttempts).toBe(1);
+    await harness.reconcile();
+    expect(harness.tx.message.create).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(Date.now() + 30_000);
+    await createJobReconciler(harness.deps).reconcileOnce();
+    expect(harness.enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({ payload: { runId: run.id } }),
+    );
+    await harness.reconcile();
+    expect(harness.terminal.botOutcomeReturnedAt).toBeInstanceOf(Date);
+  });
+
+  it("bounds transcript read errors and unavailable recipients too", async () => {
+    vi.useFakeTimers();
+    for (const failure of ["transcript", "recipient"]) {
+      const harness = reconciliationHarness();
+      if (failure === "transcript")
+        vi.mocked(harness.deps.prisma.message.findMany).mockRejectedValue(new Error("read failed"));
+      else vi.mocked(harness.deps.prisma.bot.findMany).mockResolvedValue([]);
+      for (let tick = 0; tick < 4; tick++) {
+        await harness.reconcile();
+        vi.setSystemTime(Date.now() + 60_000);
+      }
+      expect(harness.terminal.botOutcomeAttempts).toBe(3);
+      expect(harness.terminal.botOutcomeFailedAt).toBeInstanceOf(Date);
+      expect(harness.receipts()).toBe(1);
+      expect(harness.tx.message.create).not.toHaveBeenCalled();
+    }
   });
 });

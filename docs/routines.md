@@ -4,6 +4,8 @@ A routine is a saved prompt that a bot runs on a schedule. Routines belong to a
 single bot inside a workspace and are managed through the `routines` RPC
 namespace (`list`, `create`, `update`, `remove`, `testRun`).
 
+For a gated live smoke check, follow [Prove one routine after the worker fix](worker-outcome-prove.md).
+
 ## Shape
 
 The `Routine` model (`packages/db/prisma/schema.prisma`) stores:

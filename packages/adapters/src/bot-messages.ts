@@ -9,10 +9,10 @@ import {
   nextBotMessageHop,
   resolveBotAddress,
 } from "@rakazo/core";
+import type { PrismaClient } from "@rakazo/db";
 import {
   appendEventInTransaction,
   createThreadMessageInTransaction,
-  type PrismaClient,
   withTransactionRetry,
 } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
@@ -221,14 +221,22 @@ export async function messageBot(
           returnToMessageId: outbound.id,
         };
         // This is the recipient's prompt, but it is still unread peer activity.
+        // JSON return addresses outlive the referenced message. Keep a surviving
+        // parent locked through the insert; a deleted parent degrades to an unthreaded reply.
+        const returnTo =
+          sourceContext?.fromBotId === target.id && intent !== "fyi"
+            ? sourceContext.returnToMessageId
+            : undefined;
+        const parents = returnTo
+          ? await tx.$queryRaw<
+              Array<{ id: string }>
+            >`SELECT id FROM messages WHERE id = ${returnTo} AND "threadId" = ${targetThreadId} FOR KEY SHARE`
+          : [];
         const inbound = await createThreadMessageInTransaction(tx, {
           threadId: targetThreadId,
           role: "user",
           blocks: [inboundBlock],
-          replyToMessageId:
-            sourceContext?.fromBotId === target.id && intent !== "fyi"
-              ? sourceContext.returnToMessageId
-              : undefined,
+          replyToMessageId: parents.length ? returnTo : undefined,
           clientNonce: deliveryKey,
           markUnread: true,
         });
@@ -382,7 +390,12 @@ async function markBotOutcomeReturned(prisma: PrismaClient, runId: string) {
       status: { in: ["completed", "failed"] },
       botOutcomeReturnedAt: null,
     },
-    data: { botOutcomeReturnedAt: new Date() },
+    data: {
+      botOutcomeReturnedAt: new Date(),
+      // A late successful attempt is authoritative even if recovery exhausted its lease.
+      botOutcomeFailedAt: null,
+      botOutcomeNextAttemptAt: null,
+    },
   });
 }
 

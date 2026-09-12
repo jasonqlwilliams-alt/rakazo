@@ -9,6 +9,7 @@ import type {
 import { messagingDeliverJob } from "@rakazo/adapter-kit";
 import type { PrismaClient, ThreadEvents } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
+import { reconcileBotMessageOutcome } from "./bot-outcome-reconciliation.js";
 import type { CloudAgentConnection } from "./cloud-agent-factory.js";
 import { pollCloudAgent } from "./cloud-agent-poll.js";
 import { expireComputerControl } from "./computer-control.js";
@@ -54,6 +55,7 @@ export function createBackgroundJobHandlers(deps: {
   return {
     "run.continue": async (payload) => {
       await deps.executor.continueRun(payload.runId, deps.workerId);
+      await reconcileBotMessageOutcome(deps, payload.runId);
       // Automatic messaging mirror: once the run's bot messages are durable,
       // copy them into the outbox. Never let mirror failures fail the run.
       if (deps.messaging) {
