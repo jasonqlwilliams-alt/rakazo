@@ -25,9 +25,11 @@ headers discarded by those transports cannot be recovered here.
 During the wait, the existing thread activity or subagent progress displays
 `Quota, retrying in 60s (1/3).` The delay and attempt count reflect the actual
 wait. The notice clears on continuation or cancellation. If all retries fail,
-the existing run failure receipt says
-`Quota retry failed after 3 retries. Try again later.` These messages appear only
-when quota interrupts work, so a quiet wait cannot look like a stalled run.
+the failure message is `Quota retry failed after 3 retries. Try again later.`,
+using the configured retry count. Parent failures use the existing run failure
+receipt; nested failures appear in the failed subagent result returned to the
+parent. These messages appear only when quota interrupts work, so a quiet wait
+cannot look like a stalled run.
 
 ## Operator settings
 
@@ -53,7 +55,7 @@ unchanged. Pi executes tool calls only after a successful model completion.
 
 Retries are pre-content-only by design. Once a stream has emitted text, reasoning,
 or tool-call events, Rakazo leaves that attempt unretried. A quota stop at that
-point uses the same run failure receipt as exhausted retries, with the message
+point uses the same failure reporting path as exhausted retries, with the message
 `Mid-response quota stop was not retried. Try again later.` This notice appears
 only on failure to explain why no retry followed the quota stop. Rakazo does not
 resume the stream or replay partial output or tool calls; previously completed

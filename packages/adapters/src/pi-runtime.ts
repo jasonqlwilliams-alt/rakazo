@@ -1627,8 +1627,8 @@ export function reliableStreamOptions(
 
   if (model.provider === "openai-codex" || model.api === "openai-codex-responses") {
     // Pi cannot fall back after a WebSocket has emitted its start event. Long tool
-    // runs then surface abnormal close 1006 as a terminal model error. SSE has
-    // bounded network retries and no long-lived connection between tool turns.
+    // runs then surface abnormal close 1006 as a terminal model error. SSE avoids
+    // keeping a connection open between tool turns.
     next = { ...next, transport: "sse" };
   }
 
