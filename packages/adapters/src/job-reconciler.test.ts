@@ -30,7 +30,11 @@ function fakePrisma(
   }> = [],
 ) {
   return {
-    run: { findMany: vi.fn(async () => runs) },
+    run: {
+      findMany: vi.fn(async (args: { where?: Record<string, unknown> } = {}) =>
+        args.where?.trigger ? [] : runs,
+      ),
+    },
     routine: { findMany: vi.fn(async () => routines) },
     computer: { findMany: vi.fn(async () => controls) },
     messagingOutbound: { findFirst: vi.fn(async () => null) },
@@ -278,7 +282,7 @@ describe("createJobReconciler", () => {
     const runPages = [runs.slice(0, 2), runs.slice(2, 4), runs.slice(4)];
     let runPage = 0;
     const runFindMany = vi.fn(async (args: { where?: Record<string, unknown> } = {}) =>
-      args.where?.messagingMirroredAt === null ? [] : (runPages[runPage++] ?? []),
+      args.where?.trigger ? [] : (runPages[runPage++] ?? []),
     );
     const routineFindMany = vi
       .fn()
@@ -311,7 +315,8 @@ describe("createJobReconciler", () => {
       "run:run-5",
       "routine:routine-5",
     ]);
-    expect(runFindMany.mock.calls[2]?.[0]).toMatchObject({
+    const runScans = runFindMany.mock.calls.filter(([args]) => args?.where?.AND);
+    expect(runScans[1]?.[0]).toMatchObject({
       orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
       where: {
         AND: [
@@ -361,7 +366,7 @@ describe("createJobReconciler", () => {
     expect(leadership.release).toHaveBeenCalledOnce();
   });
 
-  it("dispatches due terminal outcomes to the existing run queue", async () => {
+  it("dispatches due terminal outcomes without event dependencies", async () => {
     const prisma = fakePrisma();
     Object.assign(prisma.run, {
       findMany: vi.fn(async ({ where }) =>
@@ -369,8 +374,7 @@ describe("createJobReconciler", () => {
       ),
     });
     const { jobs, enqueue } = publisher();
-    const events = { notify: vi.fn() } as unknown as ThreadEvents;
-    await createJobReconciler({ prisma, jobs, events }).reconcileOnce();
+    await createJobReconciler({ prisma, jobs }).reconcileOnce();
     expect(enqueue).toHaveBeenCalledWith(
       expect.objectContaining({ name: "run.continue", payload: { runId: "terminal" } }),
     );

@@ -1,3 +1,4 @@
+import { runContinueJob } from "@rakazo/adapter-kit";
 import type { BotMessageIntent } from "@rakazo/contracts";
 import type { PrismaClient } from "@rakazo/db";
 import { createLogger, createTestSink, installLogger } from "@rakazo/logging";
@@ -11,6 +12,7 @@ import {
 } from "./bot-messages.js";
 import type { ExecutorDeps } from "./executor.js";
 import { createJobReconciler } from "./job-reconciler.js";
+import { InMemoryJobQueue } from "./wakeup.js";
 
 const run = {
   id: "run-1",
@@ -1382,6 +1384,84 @@ describe("outcome reconciliation persistence", () => {
     expect(harness.deps.prisma.$transaction).not.toHaveBeenCalled();
     expect(harness.enqueue).not.toHaveBeenCalled();
   });
+
+  it.each(["transient", "persistent"])(
+    "recovers a discarded in-memory wake after a %s failure using API dependencies",
+    async (failure) => {
+      vi.useFakeTimers();
+      const harness = reconciliationHarness();
+      vi.mocked(harness.deps.prisma.routine.findMany).mockResolvedValue([]);
+      const error = Object.assign(new Error("Connection lost"), { code: "P1017" });
+      if (failure === "transient") harness.tx.message.create.mockRejectedValueOnce(error);
+      else harness.tx.message.create.mockRejectedValue(error);
+
+      const startApiQueue = async () => {
+        const jobs = new InMemoryJobQueue();
+        const handlers = createBackgroundJobHandlers({
+          ...harness.deps,
+          jobs,
+          executor: { continueRun: vi.fn(async () => undefined) },
+        } as unknown as Parameters<typeof createBackgroundJobHandlers>[0]);
+        await jobs.start(handlers);
+        const reconciler = createJobReconciler({
+          prisma: harness.deps.prisma,
+          jobs,
+          reconcileCloudAgents: vi.fn(async () => undefined),
+          reconcileComputerUpdates: vi.fn(async () => undefined),
+        });
+        return { jobs, reconciler };
+      };
+
+      let runtime = await startApiQueue();
+      try {
+        await runtime.jobs.enqueue(runContinueJob(run.id));
+        await vi.advanceTimersByTimeAsync(1);
+        expect(harness.terminal.botOutcomeAttempts).toBe(1);
+        expect(harness.terminal.botOutcomeNextAttemptAt).toBeInstanceOf(Date);
+        expect(harness.terminal.botOutcomeReturnedAt).toBeNull();
+
+        const restarts = failure === "transient" ? 1 : 2;
+        for (let restart = 0; restart < restarts; restart++) {
+          const dueAt = harness.terminal.botOutcomeNextAttemptAt!.getTime();
+          await runtime.reconciler.stop();
+          await runtime.jobs.close();
+          runtime = await startApiQueue();
+
+          vi.setSystemTime(dueAt - 1);
+          await runtime.reconciler.reconcileOnce();
+          await vi.advanceTimersByTimeAsync(0);
+          expect(harness.terminal.botOutcomeAttempts).toBe(restart + 1);
+
+          vi.setSystemTime(dueAt);
+          await vi.advanceTimersByTimeAsync(0);
+          expect(harness.terminal.botOutcomeAttempts).toBe(restart + 1);
+          await runtime.reconciler.reconcileOnce();
+          await vi.advanceTimersByTimeAsync(1);
+          expect(harness.terminal.botOutcomeAttempts).toBe(restart + 2);
+        }
+
+        await runtime.reconciler.reconcileOnce();
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(harness.terminal.botOutcomeReturnedAt).toBeInstanceOf(Date);
+        expect(harness.terminal.botOutcomeNextAttemptAt).toBeNull();
+        expect(harness.terminal.botOutcomeAttempts).toBe(failure === "transient" ? 2 : 3);
+        expect(harness.tx.message.create).toHaveBeenCalledTimes(3);
+        expect(harness.receipts()).toBe(1);
+        if (failure === "transient") {
+          expect(harness.terminal.botOutcomeFailedAt).toBeNull();
+          expect(harness.deliveries).toHaveLength(2);
+          expect(harness.tx.run.create).toHaveBeenCalledOnce();
+        } else {
+          expect(harness.terminal.botOutcomeFailedAt).toBeInstanceOf(Date);
+          expect(harness.deliveries).toHaveLength(0);
+          expect(harness.tx.run.create).not.toHaveBeenCalled();
+        }
+      } finally {
+        await runtime.reconciler.stop();
+        await runtime.jobs.close();
+      }
+    },
+  );
 
   it("keeps the retry durable when enqueue fails", async () => {
     vi.useFakeTimers();
