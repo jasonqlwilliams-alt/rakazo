@@ -750,6 +750,14 @@ function reconciliationHarness() {
       ? { id: "committed-message" }
       : null;
   });
+  const messageFindMany = vi.fn(async ({ where }) =>
+    deliveries.filter(
+      (message) =>
+        (!where.threadId || message.threadId === where.threadId) &&
+        (!where.runId || message.runId === where.runId) &&
+        (!where.role || message.role === where.role),
+    ),
+  );
   Object.assign(harness.deps.prisma.message, {
     findFirst: vi.fn(async ({ where }) =>
       deliveries.some(
@@ -761,14 +769,7 @@ function reconciliationHarness() {
         ? { id: "committed-message" }
         : null,
     ),
-    findMany: vi.fn(async ({ where }) =>
-      deliveries.filter(
-        (message) =>
-          (!where.threadId || message.threadId === where.threadId) &&
-          (!where.runId || message.runId === where.runId) &&
-          (!where.role || message.role === where.role),
-      ),
-    ),
+    findMany: messageFindMany,
   });
   let receipts = 0;
   const applyRunUpdate = ({
@@ -851,6 +852,7 @@ function reconciliationHarness() {
     source,
     terminal,
     deliveries,
+    messageFindMany,
     updateMany,
     transaction,
     receipts: () => receipts,
@@ -1070,7 +1072,7 @@ describe("outcome reconciliation persistence", () => {
       expect(harness.deliveries).toHaveLength(0);
       expect(harness.terminal.botOutcomeReturnedAt).toBeNull();
 
-      const readMessages = vi.mocked(harness.deps.prisma.message.findMany);
+      const readMessages = harness.messageFindMany;
       const read = readMessages.getMockImplementation()!;
       readMessages.mockImplementationOnce(async (args) => {
         const messages = await read(args);
@@ -1486,7 +1488,7 @@ describe("outcome reconciliation persistence", () => {
     for (const failure of ["transcript", "recipient"]) {
       const harness = reconciliationHarness();
       if (failure === "transcript")
-        vi.mocked(harness.deps.prisma.message.findMany).mockImplementation(async (args) => {
+        harness.messageFindMany.mockImplementation(async (args) => {
           if (args?.where?.role === "bot") throw new Error("read failed");
           return [];
         });
