@@ -225,6 +225,8 @@ for (const scenario of cases) {
           events.push({ elapsedMs: performance.now() - startedAt, event });
           if (event.type === "progress") {
             publish("thread.progress", { text: event.text, activity: event.activity });
+          } else if (event.type === "tool") {
+            publish("agent.tool.called", { name: event.name, executionId: event.executionId });
           } else if (event.type === "text") {
             streamedText += event.text;
             publish("thread.progress", { delta: event.text, streaming: true });
@@ -327,10 +329,16 @@ for (const scenario of cases) {
             ),
           )
           .toBe(true);
+        const live = snapshot.messages.find((message) => message.id.startsWith("progress:"));
+        expect(live?.blocks).toEqual([
+          { kind: "steps", steps: [{ label: "Write file", count: 1 }] },
+          { kind: "progress", text: "Quota, retrying in 60s (1/3)." },
+        ]);
         await page.reload();
         await expect(page.getByText("Quota, retrying in 60s (1/3).", { exact: true })).toBeVisible({
           timeout: 2_000,
         });
+        await expect(page.getByText("Writing notes.txt")).toHaveCount(0);
         await captureScreenshot(page, testInfo, "quota-wait-desktop");
         await page.setViewportSize({ width: 390, height: 844 });
         await expect(

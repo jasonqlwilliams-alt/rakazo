@@ -100,6 +100,47 @@ describe("reduceLiveMessageBlocks", () => {
       }),
     ).toEqual([{ kind: "progress", text: "Full answer." }]);
   });
+
+  it("resolves a pending-tool tail before a non-activity text replace", () => {
+    const activity = reduceLiveMessageBlocks([], {
+      type: "progress",
+      payload: { text: "Writing notes.txt", activity: true },
+    });
+    const pending = reduceLiveMessageBlocks(activity, { type: "tool", name: "write_file" });
+    expect(pending).toEqual([
+      {
+        kind: "progress",
+        text: "Writing notes.txt",
+        activity: true,
+        pendingToolNames: ["write_file"],
+      },
+    ]);
+
+    const notice = reduceLiveMessageBlocks(pending, {
+      type: "progress",
+      payload: { text: "Quota, retrying in 60s (1/3)." },
+    });
+    expect(notice).toEqual([
+      { kind: "steps", steps: [{ label: "Write file", count: 1 }] },
+      { kind: "progress", text: "Quota, retrying in 60s (1/3)." },
+    ]);
+
+    const cleared = reduceLiveMessageBlocks(notice, {
+      type: "progress",
+      payload: { text: "" },
+    });
+    expect(cleared).toEqual([{ kind: "steps", steps: [{ label: "Write file", count: 1 }] }]);
+
+    expect(
+      reduceLiveMessageBlocks(cleared, {
+        type: "progress",
+        payload: { text: "Full answer.", streaming: true },
+      }),
+    ).toEqual([
+      { kind: "steps", steps: [{ label: "Write file", count: 1 }] },
+      { kind: "progress", text: "Full answer." },
+    ]);
+  });
 });
 
 describe("runFailureError", () => {
@@ -386,6 +427,66 @@ describe("projectMessages", () => {
     expect(messages[0]?.blocks).toEqual([
       { kind: "steps", steps: [{ label: "Shell", count: 1 }] },
       { kind: "progress", text: "The check passed." },
+    ]);
+  });
+
+  it("flushes a pending write_file tail before a quota notice replace and replay", () => {
+    const activity = {
+      id: "e1",
+      threadId: "t1",
+      seq: 0,
+      type: "thread.progress",
+      runId: "r1",
+      payload: { text: "Writing notes.txt", activity: true },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    const tool = {
+      id: "e2",
+      threadId: "t1",
+      seq: 1,
+      type: "agent.tool.called",
+      runId: "r1",
+      payload: { name: "write_file" },
+      createdAt: "2026-01-01T00:00:01.000Z",
+    };
+    const notice = {
+      id: "e3",
+      threadId: "t1",
+      seq: 2,
+      type: "thread.progress",
+      runId: "r1",
+      payload: { text: "Quota, retrying in 60s (1/3)." },
+      createdAt: "2026-01-01T00:00:02.000Z",
+    };
+    const cleared = {
+      id: "e4",
+      threadId: "t1",
+      seq: 3,
+      type: "thread.progress",
+      runId: "r1",
+      payload: { text: "" },
+      createdAt: "2026-01-01T00:00:03.000Z",
+    };
+    const replayed = {
+      id: "e5",
+      threadId: "t1",
+      seq: 4,
+      type: "thread.progress",
+      runId: "r1",
+      payload: { text: "Full answer.", streaming: true },
+      createdAt: "2026-01-01T00:00:04.000Z",
+    };
+
+    expect(projectMessages([activity, tool, notice])[0]?.blocks).toEqual([
+      { kind: "steps", steps: [{ label: "Write file", count: 1 }] },
+      { kind: "progress", text: "Quota, retrying in 60s (1/3)." },
+    ]);
+    expect(projectMessages([activity, tool, notice, cleared])[0]?.blocks).toEqual([
+      { kind: "steps", steps: [{ label: "Write file", count: 1 }] },
+    ]);
+    expect(projectMessages([activity, tool, notice, cleared, replayed])[0]?.blocks).toEqual([
+      { kind: "steps", steps: [{ label: "Write file", count: 1 }] },
+      { kind: "progress", text: "Full answer." },
     ]);
   });
 

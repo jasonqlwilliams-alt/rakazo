@@ -196,6 +196,16 @@ export function reduceLiveMessageBlocks(
   update: LiveMessageUpdate,
 ): MessageBlock[] {
   const tail = blocks.at(-1);
+  // A non-activity {text} replace must not land on a pending-tool tail.
+  if (
+    update.type === "progress" &&
+    update.payload?.activity !== true &&
+    typeof update.payload?.delta !== "string" &&
+    tail?.kind === "progress" &&
+    (tail.pendingToolNames?.length ?? 0) > 0
+  ) {
+    return reduceLiveMessageBlocks(flushPendingToolTail(blocks), update);
+  }
   const segments = tail?.kind === "progress" ? blocks.slice(0, -1) : blocks;
   const priorText = liveMessageText(blocks);
   const flushedLength =
@@ -230,6 +240,17 @@ export function reduceLiveMessageBlocks(
       ...(pendingToolNames.length > 0 ? { pendingToolNames } : {}),
     },
   ];
+}
+
+function flushPendingToolTail(blocks: readonly MessageBlock[]): MessageBlock[] {
+  const tail = blocks.at(-1);
+  if (tail?.kind !== "progress") return [...blocks];
+  const pendingToolNames = tail.pendingToolNames ?? [];
+  if (pendingToolNames.length === 0) return [...blocks];
+  const segments = blocks.slice(0, -1);
+  let next = tail.activity ? [...segments] : appendTextSegment(segments, tail.text);
+  for (const name of pendingToolNames) next = appendToolCallSegment(next, name);
+  return next;
 }
 
 function liveMessageText(blocks: readonly MessageBlock[]): string {

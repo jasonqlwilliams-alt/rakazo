@@ -91,9 +91,11 @@ headers, non-quota failure, cancellation, exhausted retries, replays after parti
 text, reasoning, or tool-call output without repeated text or effects, and a failed
 continuation after a tool write that must execute exactly once. The web e2e
 fixture proves the live bubble on desktop and mobile-web viewports: partial
-text, the quota notice, and the replayed answer once after completion. Web and
-mobile share `reduceLiveMessageBlocks` for `{delta}` appends, `{text}`
-replaces, and clears.
+text, the quota notice, and the replayed answer once after completion. It
+forwards runtime `tool` events as `agent.tool.called`. Web and mobile share
+`reduceLiveMessageBlocks` for `{delta}` appends, `{text}` replaces, and
+clears. A non-activity `{text}` replace on a pending-tool tail resolves the
+tail first.
 
 # Large sweeps through Antigravity
 
