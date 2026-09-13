@@ -1,4 +1,10 @@
-import type { ConnectionCatalogItem, SandboxKind } from "@rakazo/contracts";
+import type {
+  ConnectionCatalogItem,
+  ResearchErrorCode,
+  ResearchFindings,
+  ResearchStatus,
+  SandboxKind,
+} from "@rakazo/contracts";
 
 export interface AdapterContext {
   operationId: string;
@@ -819,4 +825,66 @@ export interface CloudAgentReplyRequest {
   prompt: string;
   images?: CloudAgentImage[];
   signal?: AbortSignal;
+}
+
+/** A status a research provider can observe; `queued` belongs to the job before dispatch. */
+export type ResearchObservedStatus = Exclude<ResearchStatus, "queued">;
+
+export interface ResearchCapabilities {
+  cancel: boolean;
+  /** True when the adapter never leaves the process (tests / Playwright). */
+  offline?: boolean;
+}
+
+export interface ResearchBrief {
+  title: string;
+  goal: string;
+  context?: string;
+  preferredSources?: string[];
+  successCriteria?: string;
+  nonGoals?: string;
+}
+
+/** Locates one research job on the bot computer. */
+export interface ResearchJobRef {
+  /** Repeated starts with this id resolve to the same job and never start another. */
+  jobId: string;
+  /** Workspace-relative folder that only this job writes. */
+  workdir: string;
+}
+
+export interface ResearchStartRequest extends ResearchJobRef {
+  brief: ResearchBrief;
+  depth: "standard" | "deep";
+  budgetMs: number;
+}
+
+export interface ResearchReceipt {
+  jobId: string;
+  provider: string;
+  adapterVersion: string;
+  status: ResearchObservedStatus;
+  /** Version the provider reports for itself, when it exposes one. */
+  providerVersion?: string;
+  model?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  exitCode?: number;
+  /** True when the provider stopped before producing a complete result. */
+  truncated: boolean;
+  permissionDenials: number;
+  /** sha256 of the canonical start request, once the provider has accepted one. */
+  requestSha256?: string;
+  /** sha256 of the canonical findings; present only with findings. */
+  findingsSha256?: string;
+  /** Opaque provider handle kept for inspection; never used to resume automatically. */
+  providerRef?: string;
+}
+
+export interface ResearchObservation {
+  status: ResearchObservedStatus;
+  /** Present only when status is `completed`, and always valid against ResearchFindingsSchema. */
+  findings?: ResearchFindings;
+  errorCode?: ResearchErrorCode;
+  receipt: ResearchReceipt;
 }

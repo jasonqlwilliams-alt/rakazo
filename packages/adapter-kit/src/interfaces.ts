@@ -49,6 +49,10 @@ import type {
   PageBrowserResult,
   PortableFile,
   ProcessEvent,
+  ResearchCapabilities,
+  ResearchJobRef,
+  ResearchObservation,
+  ResearchStartRequest,
   SandboxCapabilities,
   ScreenRequest,
   ScreenSession,
@@ -430,4 +434,29 @@ export interface CloudAgentProvider {
     context: AdapterContext,
   ): Promise<CloudAgentHandle>;
   cancel(id: string, context: AdapterContext, runId?: string): Promise<CloudAgentSnapshot>;
+}
+
+/**
+ * Provider-neutral long-running research on the bot computer. Core runs with
+ * none configured; research tools are injected only when a provider is present.
+ * Definitive outcomes are observations. Throw only when the outcome is unknown,
+ * so the caller observes again instead of starting a second job.
+ */
+export interface ResearchProvider {
+  describe(): AdapterDescriptor<ResearchCapabilities>;
+  start(
+    computer: ComputerRef,
+    request: ResearchStartRequest,
+    context: AdapterContext,
+  ): Promise<ResearchObservation>;
+  observe(
+    computer: ComputerRef,
+    job: ResearchJobRef,
+    context: AdapterContext,
+  ): Promise<ResearchObservation>;
+  cancel(
+    computer: ComputerRef,
+    job: ResearchJobRef,
+    context: AdapterContext,
+  ): Promise<ResearchObservation>;
 }

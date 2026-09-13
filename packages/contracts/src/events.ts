@@ -2,6 +2,7 @@ import * as z from "zod";
 import { BotSecretDestination } from "./bot-secrets.js";
 import { Id } from "./ids.js";
 import { McpTransportSchema } from "./mcp.js";
+import { ResearchBlockSchema } from "./research.js";
 
 export const ProductEventType = z.enum([
   "thread.message.created",
@@ -16,6 +17,7 @@ export const ProductEventType = z.enum([
   "thread.computer",
   "thread.subagent",
   "thread.cloud_agent",
+  "thread.research",
   "run.started",
   "run.checkpointed",
   "run.waiting_input",
@@ -215,6 +217,7 @@ export const MessageBlock = z.discriminatedUnion("kind", [
     prUrl: z.string().optional(),
     latestRunId: z.string().optional(),
   }),
+  ResearchBlockSchema,
   z.object({
     kind: z.literal("skill_draft"),
     skillId: Id,
