@@ -48,30 +48,33 @@ this is not a durable timer that survives a worker restart.
 
 ## Replay boundary
 
-`packages/adapters/src/pi-quota-retry.ts` wraps each parent or nested Pi model
-stream. It does not retry `agent.prompt`, a tool call, or a whole run. Previously
-completed tool results remain in the request context and existing effect IDs are
-unchanged. Pi executes tool calls only after a successful model completion.
+The retry unit is one model request, not an SSE stream, a turn, or a run.
+`streamWithQuotaRetry` in `packages/adapters/src/pi-quota-retry.ts` wraps each
+parent or nested Pi request. It does not retry `agent.prompt`, a tool call, or
+a whole run. Previously completed tool results stay in that request's context,
+and existing effect IDs are unchanged. Pi executes tool calls only after a
+successful model completion, so a quota stop that arrives while tokens are still
+streaming has produced no tool effect from that request.
 
-A quota stop partway through a response replays the same request under the same
-retry count. None of the discarded attempt's tool calls ran, and thinking is not
-displayed. Partial text can appear live, but it is removed before replayed text
-replaces it and is never published as a completed bot message. Rakazo never asks
-a provider to continue a partial response.
+That same request is what gets replayed, under the same retry count. Thinking
+and half-streamed tool calls are never shown. Partial assistant text can appear
+live; it is retracted before the replayed text arrives and is never published as
+a completed bot message. Rakazo never asks a provider to continue a partial
+response.
 
 The Pi runtime trims discarded text from both parent and nested results. For a
 parent request, it emits a `retract` event; the executor removes that text from
-the unpublished turn and restores the retained, redacted live text. Replayed
-tools wait for the executor to apply this update, so they cannot publish the
-discarded narration. If the executor cannot account for all the discarded text
-in the unpublished turn, the run fails with
+the unpublished turn and restores the retained, redacted live text with a
+`{text}` replace. Replayed tools wait until that update is applied, so they
+cannot publish the discarded narration. If the executor cannot account for all
+the discarded text in the unpublished turn, the run fails with
 `Mid-response quota stop was not retried. Try again later.` rather than guessing.
 Nested replays trim their own output without retracting the parent's text.
 
 Quota notices and clears follow Pi's handling of every event the wrapper already
 forwarded. This prevents delayed text from overwriting a later quota notice
 while the executor is still applying a retraction. These waits release when the
-run aborts or Pi closes the stream iterator.
+run aborts or Pi stops reading that request's events.
 
 [OpenRouter documents mid-stream errors](https://openrouter.ai/docs/api_reference/errors-and-debugging#mid-stream-errors),
 including rate-limit failures after streaming begins. These arrive in the stream
@@ -86,7 +89,11 @@ Tests use synthetic streams with fake timers and the real Pi/OpenAI-compatible
 transport against a loopback HTTP fixture. They cover a successful retry, longer
 headers, non-quota failure, cancellation, exhausted retries, replays after partial
 text, reasoning, or tool-call output without repeated text or effects, and a failed
-continuation after a tool write that must execute exactly once.
+continuation after a tool write that must execute exactly once. The web e2e
+fixture proves the live bubble on desktop and mobile-web viewports: partial
+text, the quota notice, and the replayed answer once after completion. Web and
+mobile share `reduceLiveMessageBlocks` for `{delta}` appends, `{text}`
+replaces, and clears.
 
 # Large sweeps through Antigravity
 
