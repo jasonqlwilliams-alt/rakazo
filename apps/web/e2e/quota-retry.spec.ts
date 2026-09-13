@@ -225,6 +225,8 @@ for (const scenario of cases) {
           events.push({ elapsedMs: performance.now() - startedAt, event });
           if (event.type === "progress") {
             publish("thread.progress", { text: event.text, activity: event.activity });
+          } else if (event.type === "tool") {
+            publish("agent.tool.called", { name: event.name, executionId: event.executionId });
           } else if (event.type === "text") {
             streamedText += event.text;
             publish("thread.progress", { delta: event.text, streaming: true });

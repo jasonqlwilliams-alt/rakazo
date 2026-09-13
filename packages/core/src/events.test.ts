@@ -100,6 +100,47 @@ describe("reduceLiveMessageBlocks", () => {
       }),
     ).toEqual([{ kind: "progress", text: "Full answer." }]);
   });
+
+  it("resolves a pending-tool tail before a non-activity text replace", () => {
+    const activity = reduceLiveMessageBlocks([], {
+      type: "progress",
+      payload: { text: "Writing notes.txt", activity: true },
+    });
+    const pending = reduceLiveMessageBlocks(activity, { type: "tool", name: "write_file" });
+    expect(pending).toEqual([
+      {
+        kind: "progress",
+        text: "Writing notes.txt",
+        activity: true,
+        pendingToolNames: ["write_file"],
+      },
+    ]);
+
+    const notice = reduceLiveMessageBlocks(pending, {
+      type: "progress",
+      payload: { text: "Quota, retrying in 60s (1/3)." },
+    });
+    expect(notice).toEqual([
+      { kind: "steps", steps: [{ label: "Write file", count: 1 }] },
+      { kind: "progress", text: "Quota, retrying in 60s (1/3)." },
+    ]);
+
+    const cleared = reduceLiveMessageBlocks(notice, {
+      type: "progress",
+      payload: { text: "" },
+    });
+    expect(cleared).toEqual([{ kind: "steps", steps: [{ label: "Write file", count: 1 }] }]);
+
+    expect(
+      reduceLiveMessageBlocks(cleared, {
+        type: "progress",
+        payload: { text: "Full answer.", streaming: true },
+      }),
+    ).toEqual([
+      { kind: "steps", steps: [{ label: "Write file", count: 1 }] },
+      { kind: "progress", text: "Full answer." },
+    ]);
+  });
 });
 
 describe("runFailureError", () => {
