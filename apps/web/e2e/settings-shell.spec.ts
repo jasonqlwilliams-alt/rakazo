@@ -37,11 +37,12 @@ test("settings shell is two-pane and deep-links Models Research Memory Voice Usa
   await settings.getByTestId("settings-nav-research").click();
   await expect(settings).toHaveAttribute("data-settings-section", "research");
   await expect(settings.getByRole("heading", { name: "Research", exact: true })).toBeVisible();
-  await expect(settings.getByTestId("research-settings")).toBeVisible();
-  await expect(settings.getByLabel("Model")).toBeVisible();
-  await expect(settings.getByLabel("Project")).toBeVisible();
-  await expect(settings.getByLabel("Executable")).toBeVisible();
-  await expect(settings.getByLabel("Mode")).toBeVisible();
+  const research = settings.getByTestId("research-settings");
+  await expect(research).toBeVisible();
+  await expect(research.getByLabel("Model", { exact: true })).toBeVisible();
+  await expect(research.getByLabel("Project", { exact: true })).toBeVisible();
+  await expect(research.getByLabel("Executable", { exact: true })).toBeVisible();
+  await expect(research.getByLabel("Mode", { exact: true })).toBeVisible();
   await captureScreenshot(page, testInfo, "settings-shell-research");
 
   await settings.getByTestId("settings-nav-memory").click();
