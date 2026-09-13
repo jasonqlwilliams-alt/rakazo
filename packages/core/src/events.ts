@@ -196,6 +196,7 @@ export function reduceLiveMessageBlocks(
   update: LiveMessageUpdate,
 ): MessageBlock[] {
   const tail = blocks.at(-1);
+  // A non-activity {text} replace must not land on a pending-tool tail.
   if (
     update.type === "progress" &&
     update.payload?.activity !== true &&

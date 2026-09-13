@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AgentRunRequest, AgentRuntimeEvent, ConnectorTool } from "@rakazo/adapter-kit";
 import { PiAgentRuntime } from "@rakazo/adapters";
+import type { MessageBlock } from "@rakazo/contracts";
+import { reduceLiveMessageBlocks } from "@rakazo/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { builtinAgentTools } from "../../adapters/src/builtin-tools.js";
 import { type ModelEmulatorRequest, startModelEmulator } from "./model-emulator.js";
@@ -436,6 +438,47 @@ describe("real Pi against an offline model HTTP endpoint", () => {
     expect(resumedTextIndex).toBeGreaterThanOrEqual(0);
     expect(events.slice(0, resumedTextIndex)).toContainEqual({ type: "progress", text: "" });
     expect(events.at(-1)).toEqual({ type: "done", text: "Saved." });
+
+    // Same mapping the web quota-retry fixture uses: progress + agent.tool.called.
+    let live: MessageBlock[] = [];
+    let streamedText = "";
+    let atNotice: MessageBlock[] | undefined;
+    let afterClear: MessageBlock[] | undefined;
+    let afterReplay: MessageBlock[] | undefined;
+    for (const event of events) {
+      if (event.type === "progress") {
+        live = reduceLiveMessageBlocks(live, {
+          type: "progress",
+          payload: { text: event.text, activity: event.activity },
+        });
+        if (event.text.startsWith("Quota, retrying")) atNotice = live;
+        if (event.text === "" && event.activity !== true) afterClear = live;
+      } else if (event.type === "tool") {
+        live = reduceLiveMessageBlocks(live, { type: "tool", name: event.name });
+      } else if (event.type === "text") {
+        streamedText += event.text;
+        live = reduceLiveMessageBlocks(live, {
+          type: "progress",
+          payload: { delta: event.text, streaming: true },
+        });
+        afterReplay = live;
+      } else if (event.type === "retract") {
+        streamedText = streamedText.slice(0, streamedText.length - event.chars);
+        live = reduceLiveMessageBlocks(live, {
+          type: "progress",
+          payload: { text: streamedText, streaming: true },
+        });
+      }
+    }
+    expect(atNotice).toEqual([
+      { kind: "steps", steps: [{ label: "Write file", count: 1 }] },
+      { kind: "progress", text: "Quota, retrying in 1s (1/3)." },
+    ]);
+    expect(afterClear).toEqual([{ kind: "steps", steps: [{ label: "Write file", count: 1 }] }]);
+    expect(afterReplay).toEqual([
+      { kind: "steps", steps: [{ label: "Write file", count: 1 }] },
+      { kind: "progress", text: "Saved." },
+    ]);
   });
 
   it("preserves Retry-After and clears visible quota progress on cancellation", async () => {

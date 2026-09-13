@@ -5,6 +5,7 @@
  * @vitest-environment jsdom
  */
 import type { MessageBlock, ThreadMessage } from "@rakazo/contracts";
+import { reduceLiveMessageBlocks } from "@rakazo/core";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { MessageView } from "./Shell";
@@ -40,6 +41,18 @@ function message(role: ThreadMessage["role"], blocks: MessageBlock[]): ThreadMes
   };
 }
 
+function liveMessage(blocks: MessageBlock[]): ThreadMessage {
+  return {
+    id: "progress:run-1",
+    threadId: "thread-1",
+    seq: 1,
+    role: "bot",
+    blocks,
+    runId: "run-1",
+    createdAt: new Date(0).toISOString(),
+  };
+}
+
 const messageProps = {
   artifactTarget: { botId: "bot-1" },
   onOpenPeerMessages: vi.fn(),
@@ -63,6 +76,40 @@ function render(message: ThreadMessage, onOpenBot = vi.fn()) {
     />,
   );
 }
+
+describe("live quota replay after a pending write_file", () => {
+  it("shows the notice, then the replayed answer, never the stale notice after replay", () => {
+    const activity = reduceLiveMessageBlocks([], {
+      type: "progress",
+      payload: { text: "Writing notes.txt", activity: true },
+    });
+    const pending = reduceLiveMessageBlocks(activity, { type: "tool", name: "write_file" });
+    const notice = reduceLiveMessageBlocks(pending, {
+      type: "progress",
+      payload: { text: "Quota, retrying in 60s (1/3)." },
+    });
+    const cleared = reduceLiveMessageBlocks(notice, {
+      type: "progress",
+      payload: { text: "" },
+    });
+    const replayed = reduceLiveMessageBlocks(cleared, {
+      type: "progress",
+      payload: { text: "Full answer.", streaming: true },
+    });
+
+    const waiting = render(liveMessage(notice));
+    expect(waiting).toContain("Quota, retrying in 60s (1/3).");
+    expect(waiting).toContain('data-testid="message-bot-bubble"');
+    expect(waiting).not.toContain("Writing notes.txt");
+    expect(waiting).not.toContain("Write file");
+
+    const afterReplay = render(liveMessage(replayed));
+    expect(afterReplay).toContain("Full answer.");
+    expect(afterReplay).toContain('data-testid="message-bot-bubble"');
+    expect(afterReplay).not.toContain("Quota, retrying");
+    expect(afterReplay).not.toContain("Writing notes.txt");
+  });
+});
 
 describe("the spawn opener in a child bot's thread", () => {
   it("renders a meta block as a centered setup line, never as the user's bubble", () => {

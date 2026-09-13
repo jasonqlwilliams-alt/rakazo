@@ -1069,6 +1069,67 @@ describe("thread event reduction", () => {
     ]);
   });
 
+  it("resolves a pending write_file tail before a quota notice replace and replay", () => {
+    const afterActivity = reduceThreadSnapshot(
+      snapshot([]),
+      event({
+        type: "thread.progress",
+        seq: 4,
+        payload: { text: "Writing notes.txt", activity: true },
+      }),
+    );
+    const afterTool = reduceThreadSnapshot(
+      afterActivity,
+      event({
+        type: "agent.tool.called",
+        seq: 5,
+        payload: { name: "write_file" },
+      }),
+    );
+    expect(afterTool?.messages[0]?.blocks).toEqual([
+      {
+        kind: "progress",
+        text: "Writing notes.txt",
+        activity: true,
+        pendingToolNames: ["write_file"],
+      },
+    ]);
+
+    const afterNotice = reduceThreadSnapshot(
+      afterTool,
+      event({
+        type: "thread.progress",
+        seq: 6,
+        payload: { text: "Quota, retrying in 60s (1/3)." },
+      }),
+    );
+    expect(afterNotice?.messages[0]?.blocks).toEqual([
+      { kind: "steps", steps: [{ label: "Write file", count: 1 }] },
+      { kind: "progress", text: "Quota, retrying in 60s (1/3)." },
+    ]);
+
+    const afterClear = reduceThreadSnapshot(
+      afterNotice,
+      event({ type: "thread.progress", seq: 7, payload: { text: "" } }),
+    );
+    expect(afterClear?.messages[0]?.blocks).toEqual([
+      { kind: "steps", steps: [{ label: "Write file", count: 1 }] },
+    ]);
+
+    const afterReplay = reduceThreadSnapshot(
+      afterClear,
+      event({
+        type: "thread.progress",
+        seq: 8,
+        payload: { text: "Full answer.", streaming: true },
+      }),
+    );
+    expect(afterReplay?.messages[0]?.blocks).toEqual([
+      { kind: "steps", steps: [{ label: "Write file", count: 1 }] },
+      { kind: "progress", text: "Full answer." },
+    ]);
+  });
+
   it("does not leak pending tool calls after clearing a thread", () => {
     const withPending = snapshot([
       message("progress:run-1", [

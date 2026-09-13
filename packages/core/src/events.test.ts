@@ -430,6 +430,66 @@ describe("projectMessages", () => {
     ]);
   });
 
+  it("flushes a pending write_file tail before a quota notice replace and replay", () => {
+    const activity = {
+      id: "e1",
+      threadId: "t1",
+      seq: 0,
+      type: "thread.progress",
+      runId: "r1",
+      payload: { text: "Writing notes.txt", activity: true },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    const tool = {
+      id: "e2",
+      threadId: "t1",
+      seq: 1,
+      type: "agent.tool.called",
+      runId: "r1",
+      payload: { name: "write_file" },
+      createdAt: "2026-01-01T00:00:01.000Z",
+    };
+    const notice = {
+      id: "e3",
+      threadId: "t1",
+      seq: 2,
+      type: "thread.progress",
+      runId: "r1",
+      payload: { text: "Quota, retrying in 60s (1/3)." },
+      createdAt: "2026-01-01T00:00:02.000Z",
+    };
+    const cleared = {
+      id: "e4",
+      threadId: "t1",
+      seq: 3,
+      type: "thread.progress",
+      runId: "r1",
+      payload: { text: "" },
+      createdAt: "2026-01-01T00:00:03.000Z",
+    };
+    const replayed = {
+      id: "e5",
+      threadId: "t1",
+      seq: 4,
+      type: "thread.progress",
+      runId: "r1",
+      payload: { text: "Full answer.", streaming: true },
+      createdAt: "2026-01-01T00:00:04.000Z",
+    };
+
+    expect(projectMessages([activity, tool, notice])[0]?.blocks).toEqual([
+      { kind: "steps", steps: [{ label: "Write file", count: 1 }] },
+      { kind: "progress", text: "Quota, retrying in 60s (1/3)." },
+    ]);
+    expect(projectMessages([activity, tool, notice, cleared])[0]?.blocks).toEqual([
+      { kind: "steps", steps: [{ label: "Write file", count: 1 }] },
+    ]);
+    expect(projectMessages([activity, tool, notice, cleared, replayed])[0]?.blocks).toEqual([
+      { kind: "steps", steps: [{ label: "Write file", count: 1 }] },
+      { kind: "progress", text: "Full answer." },
+    ]);
+  });
+
   it("keeps a tool call hidden while narration keeps streaming with no sentence end", () => {
     const messages = projectMessages([
       {
