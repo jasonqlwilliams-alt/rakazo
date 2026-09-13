@@ -1,6 +1,6 @@
 import type { MessageBlock, ThreadMessage } from "@rakazo/contracts";
 import { cloudAgentBlockFromPayload } from "./cloud-agent.js";
-import { researchBlockFromPayload } from "./research.js";
+import { updateResearchMessages } from "./thread-message-updates.js";
 
 export function projectMessages(
   events: Array<{
@@ -88,13 +88,9 @@ export function projectMessages(
       continue;
     }
     if (event.type === "thread.research") {
-      const block = researchBlockFromPayload(payload);
-      for (const message of messages) {
-        if (message.id === payload.messageId)
-          message.blocks = message.blocks.map((old) =>
-            old.kind === "research" && old.researchId === block.researchId ? block : old,
-          );
-      }
+      const next = updateResearchMessages(messages, payload);
+      messages.length = 0;
+      messages.push(...next);
       continue;
     }
     if (event.type === "thread.progress") {

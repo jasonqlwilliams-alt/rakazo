@@ -630,7 +630,8 @@ rather not grant the capability.
 
 ## Model quota retries and research
 
-For model rate-limit waits and optional research on the bot computer, see [Model quota retries and Antigravity](model-quota-retry.md).
+For model rate-limit waits, see [Model quota retries](model-quota-retry.md).
+For research on the bot computer, see [Research](research.md).
 
 ## Other deployment layouts
 

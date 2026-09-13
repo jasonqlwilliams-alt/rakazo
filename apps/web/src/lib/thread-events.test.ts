@@ -319,6 +319,80 @@ describe("thread event reduction", () => {
     expect(isThreadSnapshotEvent(event({ type: "run.completed" }))).toBe(true);
     expect(isThreadSnapshotEvent(event({ type: "computer.takeover.requested" }))).toBe(true);
     expect(isThreadSnapshotEvent(event({ type: "agent.tool.completed" }))).toBe(true);
+    expect(isThreadSnapshotEvent(event({ type: "thread.research" }))).toBe(true);
+  });
+
+  it("updates a research card from thread.research", () => {
+    const initial = snapshot([
+      message("msg-research", [
+        { kind: "research", researchId: "rj_1", title: "Pricing survey", status: "running" },
+      ]),
+    ]);
+    const next = reduceThreadSnapshot(
+      initial,
+      event({
+        type: "thread.research",
+        seq: 9,
+        payload: {
+          messageId: "msg-research",
+          kind: "research",
+          researchId: "rj_1",
+          title: "Pricing survey",
+          status: "failed",
+          errorCode: "unavailable",
+        },
+      }),
+    );
+    expect(next?.cursor).toBe(9);
+    expect(next?.messages[0]?.blocks[0]).toEqual({
+      kind: "research",
+      researchId: "rj_1",
+      title: "Pricing survey",
+      status: "failed",
+      errorCode: "unavailable",
+    });
+  });
+
+  it("appends findings files from a completed thread.research event", () => {
+    const initial = snapshot([
+      message("msg-research", [
+        { kind: "research", researchId: "rj_1", title: "Pricing survey", status: "running" },
+      ]),
+    ]);
+    const findings = {
+      kind: "file" as const,
+      artifactId: "art-findings",
+      mimeType: "application/json",
+      name: "findings.json",
+      size: 128,
+    };
+    const report = {
+      kind: "file" as const,
+      artifactId: "art-report",
+      mimeType: "text/markdown",
+      name: "report.md",
+      size: 256,
+    };
+    const next = reduceThreadSnapshot(
+      initial,
+      event({
+        type: "thread.research",
+        seq: 10,
+        payload: {
+          messageId: "msg-research",
+          kind: "research",
+          researchId: "rj_1",
+          title: "Pricing survey",
+          status: "completed",
+          files: [findings, report],
+        },
+      }),
+    );
+    expect(next?.messages[0]?.blocks).toEqual([
+      { kind: "research", researchId: "rj_1", title: "Pricing survey", status: "completed" },
+      findings,
+      report,
+    ]);
   });
 
   it("event-sources the active run on run.started so Stop does not wait on threads.get", () => {

@@ -161,6 +161,11 @@ import {
   promptFocus,
   startOnboarding,
 } from "./onboarding.js";
+import {
+  disableSpaceResearchSettings,
+  loadSpaceResearchSettings,
+  saveSpaceResearchSettings,
+} from "./research-settings.js";
 import { listSpaceRuns } from "./runs.js";
 import { addScreenProxyCapability } from "./screen-proxy.js";
 import { querySpaceSearch } from "./search.js";
@@ -2300,6 +2305,17 @@ export function createRouter(deps: RouterDeps) {
       ),
       disconnectProvider: authed.memory.disconnectProvider.handler(async ({ context }) =>
         disconnectMemoryProvider(deps, context.actor),
+      ),
+    },
+    research: {
+      get: authed.research.get.handler(async ({ context }) =>
+        loadSpaceResearchSettings(deps.prisma, context.actor),
+      ),
+      save: authed.research.save.handler(async ({ context, input }) =>
+        saveSpaceResearchSettings(deps.prisma, context.actor, input),
+      ),
+      disable: authed.research.disable.handler(async ({ context }) =>
+        disableSpaceResearchSettings(deps.prisma, context.actor),
       ),
     },
     routines: {

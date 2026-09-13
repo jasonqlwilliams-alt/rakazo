@@ -10,7 +10,11 @@ import type {
 } from "@rakazo/adapter-kit";
 import { researchPollJob } from "@rakazo/adapter-kit";
 import type { ResearchBlock, ResearchStatus } from "@rakazo/contracts";
-import { ResearchFindingsSchema, ResearchStatusSchema } from "@rakazo/contracts";
+import {
+  ResearchErrorCodeSchema,
+  ResearchFindingsSchema,
+  ResearchStatusSchema,
+} from "@rakazo/contracts";
 import {
   appendEventInTransaction,
   createThreadMessageInTransaction,
@@ -81,8 +85,17 @@ export function researchStatus(job: Pick<ResearchJob, "status">): ResearchStatus
   return parsed.success ? parsed.data : "uncertain";
 }
 
-export function researchBlock(job: Pick<ResearchJob, "id" | "title" | "status">): ResearchBlock {
-  return { kind: "research", researchId: job.id, title: job.title, status: researchStatus(job) };
+export function researchBlock(
+  job: Pick<ResearchJob, "id" | "title" | "status" | "errorCode">,
+): ResearchBlock {
+  const error = job.errorCode ? ResearchErrorCodeSchema.safeParse(job.errorCode) : undefined;
+  return {
+    kind: "research",
+    researchId: job.id,
+    title: job.title,
+    status: researchStatus(job),
+    ...(error?.success ? { errorCode: error.data } : {}),
+  };
 }
 
 export function researchTerminal(status: string): boolean {

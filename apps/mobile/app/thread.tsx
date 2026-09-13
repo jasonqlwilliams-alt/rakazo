@@ -894,6 +894,7 @@ function Thread() {
                 event.type === "thread.message.reaction" ||
                 event.type === "thread.subagent" ||
                 event.type === "thread.cloud_agent" ||
+                event.type === "thread.research" ||
                 event.type === "thread.cleared" ||
                 event.type === "run.waiting_input" ||
                 event.type === "computer.takeover.requested" ||
@@ -2411,7 +2412,8 @@ const MessageBubble = memo(function MessageBubble({
       block.kind === "subagent" ||
       block.kind === "child_bot" ||
       block.kind === "agent_note" ||
-      block.kind === "cloud_agent",
+      block.kind === "cloud_agent" ||
+      block.kind === "research",
   );
   if (special?.kind === "agent_note") {
     const received = special.direction === "received";
@@ -2544,6 +2546,136 @@ const MessageBubble = memo(function MessageBubble({
           </Text>
         ) : null}
       </Pressable>
+    );
+  }
+  if (special?.kind === "research") {
+    const title = special.title;
+    const statusLabel =
+      special.status === "queued"
+        ? t("queued")
+        : special.status === "running"
+          ? t("running")
+          : special.status === "completed"
+            ? t("completed")
+            : special.status === "failed"
+              ? t("failed")
+              : special.status === "cancelled"
+                ? t("cancelled")
+                : special.status === "timed_out"
+                  ? t("timeout")
+                  : t("uncertain");
+    const reason =
+      special.status === "failed" && special.errorCode
+        ? special.errorCode === "unavailable"
+          ? t("unavailable")
+          : special.errorCode === "auth_required"
+            ? t("auth")
+            : special.errorCode === "quota_exhausted"
+              ? t("quota")
+              : special.errorCode === "permission_denied"
+                ? t("permission")
+                : special.errorCode === "invalid_request"
+                  ? t("invalid")
+                  : special.errorCode === "invalid_output"
+                    ? t("output")
+                    : t("error")
+        : null;
+    const running = special.status === "running" || special.status === "queued";
+    const failed = special.status === "failed";
+    const files = message.blocks.filter(
+      (block): block is Extract<MessageBlock, { kind: "file" }> => block.kind === "file",
+    );
+    const card = (
+      <View
+        testID="research-card"
+        accessibilityRole="text"
+        accessibilityLabel={`${title}: ${statusLabel}${reason ? ` ${reason}` : ""}`}
+        style={{
+          width: "90%",
+          borderRadius: 18,
+          borderWidth: 1,
+          borderColor: tokens.border,
+          backgroundColor: tokens.card,
+          paddingHorizontal: 16,
+          paddingVertical: 14,
+        }}
+      >
+        <View style={{ flexDirection: "row", justifyContent: "space-between", gap: 8 }}>
+          <Text style={{ color: tokens.cardForeground, fontSize: 15, fontWeight: "600" }}>
+            {title}
+          </Text>
+          <Text
+            style={{
+              color: failed
+                ? tokens.destructive
+                : special.status === "completed"
+                  ? tokens.success
+                  : running
+                    ? tokens.warning
+                    : tokens.mutedForeground,
+              fontSize: 13,
+            }}
+          >
+            {statusLabel}
+          </Text>
+        </View>
+        {reason ? (
+          <Text style={{ color: tokens.mutedForeground, marginTop: 8, fontSize: 13.5 }}>
+            {reason}
+          </Text>
+        ) : null}
+      </View>
+    );
+    if (files.length === 0) return card;
+    return (
+      <View style={{ gap: 8, width: "100%" }}>
+        {card}
+        {files.map((file, index) => (
+          <Pressable
+            {...actionProps}
+            key={`${file.artifactId}-${index}`}
+            accessibilityRole="button"
+            accessibilityLabel={file.name}
+            onPress={() =>
+              file.mimeType === "text/markdown"
+                ? onPreviewMarkdown({
+                    artifactId: file.artifactId,
+                    name: file.name ?? t("Markdown file"),
+                    mimeType: file.mimeType,
+                  })
+                : void openMobileArtifact(
+                    artifactTarget,
+                    file.artifactId,
+                    file.name ?? t("File"),
+                    file.mimeType ?? "text/plain",
+                  ).catch((err) =>
+                    Alert.alert(
+                      t("Could not open file"),
+                      err instanceof Error ? err.message : t("Try again."),
+                    ),
+                  )
+            }
+            style={{
+              width: "90%",
+              borderRadius: 18,
+              borderWidth: 1,
+              borderColor: tokens.border,
+              backgroundColor: tokens.card,
+              paddingHorizontal: 16,
+              paddingVertical: 14,
+            }}
+          >
+            <Text style={{ color: tokens.foreground, fontSize: 15 }}>
+              📎 {file.name ?? t("File")}
+            </Text>
+            {file.size ? (
+              <Text style={{ color: tokens.mutedForeground, marginTop: 4, fontSize: 13 }}>
+                {file.mimeType ?? "file"} · {file.size} bytes
+              </Text>
+            ) : null}
+          </Pressable>
+        ))}
+      </View>
     );
   }
   if (special?.kind === "child_bot") {

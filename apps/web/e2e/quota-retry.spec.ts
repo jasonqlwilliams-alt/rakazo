@@ -309,13 +309,13 @@ for (const scenario of cases) {
       await expect(page.getByTestId("shell-root")).toHaveAttribute("data-ready", "true");
       const composer = page.getByRole("combobox", { name: /^Message/ });
       if (scenario === "retry") {
-        await composer.fill("/antigravity");
-        const skill = page.getByRole("button", { name: "Skill antigravity-research", exact: true });
+        await composer.fill("/deep-research");
+        const skill = page.getByRole("button", { name: "Skill deep-research", exact: true });
         await expect(skill).toBeVisible();
-        await captureScreenshot(page, testInfo, "antigravity-skill-picker");
+        await captureScreenshot(page, testInfo, "deep-research-skill-picker");
         await skill.click();
-        await expect(page.getByTestId("skill-chip")).toContainText("antigravity-research");
-        await page.getByRole("button", { name: "Remove skill antigravity-research" }).click();
+        await expect(page.getByTestId("skill-chip")).toContainText("deep-research");
+        await page.getByRole("button", { name: "Remove skill deep-research" }).click();
       }
       await composer.fill("Save hello to notes.txt.");
       await page.getByRole("button", { name: "Send", exact: true }).click();

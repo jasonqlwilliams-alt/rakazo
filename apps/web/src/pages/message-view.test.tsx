@@ -111,6 +111,103 @@ describe("live quota replay after a pending write_file", () => {
   });
 });
 
+describe("research card in the thread", () => {
+  it("renders the title, status, and a failure reason", () => {
+    const html = render(
+      message("bot", [
+        {
+          kind: "research",
+          researchId: "rj_1",
+          title: "Pricing survey",
+          status: "failed",
+          errorCode: "unavailable",
+        },
+      ]),
+    );
+    expect(html).toContain("research-card");
+    expect(html).toContain("Pricing survey");
+    expect(html).toContain("failed");
+    expect(html).toContain("unavailable");
+  });
+
+  it("renders findings.json and report.md chips with a completed card", () => {
+    const html = render(
+      message("bot", [
+        {
+          kind: "research",
+          researchId: "rj_1",
+          title: "Pricing survey",
+          status: "completed",
+        },
+        {
+          kind: "file",
+          artifactId: "art-findings",
+          mimeType: "application/json",
+          name: "findings.json",
+          size: 128,
+        },
+        {
+          kind: "file",
+          artifactId: "art-report",
+          mimeType: "text/markdown",
+          name: "report.md",
+          size: 256,
+        },
+      ]),
+    );
+    expect(html).toContain("research-card");
+    expect(html).toContain("Pricing survey");
+    expect(html).toContain("completed");
+    expect(html).toContain("findings.json");
+    expect(html).toContain("report.md");
+  });
+
+  it("treats only completed as the success color", () => {
+    const completed = render(
+      message("bot", [
+        {
+          kind: "research",
+          researchId: "rj_1",
+          title: "Pricing survey",
+          status: "completed",
+        },
+      ]),
+    );
+    expect(completed).toContain("text-success");
+    expect(completed).not.toContain("text-destructive");
+
+    const failed = render(
+      message("bot", [
+        {
+          kind: "research",
+          researchId: "rj_1",
+          title: "Pricing survey",
+          status: "failed",
+          errorCode: "unavailable",
+        },
+      ]),
+    );
+    expect(failed).toContain("text-destructive");
+    expect(failed).not.toContain("text-success");
+
+    for (const status of ["queued", "running", "cancelled", "timed_out", "uncertain"] as const) {
+      const html = render(
+        message("bot", [
+          {
+            kind: "research",
+            researchId: "rj_1",
+            title: "Pricing survey",
+            status,
+          },
+        ]),
+      );
+      expect(html, status).toContain("text-muted-foreground");
+      expect(html, status).not.toContain("text-success");
+      expect(html, status).not.toContain("text-destructive");
+    }
+  });
+});
+
 describe("the spawn opener in a child bot's thread", () => {
   it("renders a meta block as a centered setup line, never as the user's bubble", () => {
     const html = render(message("system", [{ kind: "meta", text: SPAWN_PROMPT }]));

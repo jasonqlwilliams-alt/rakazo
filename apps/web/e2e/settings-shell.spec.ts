@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { captureScreenshot, completeOnboarding, openUserSettings, signup } from "./helpers";
 
-test("settings shell is two-pane and deep-links Models Memory Voice Usage", async ({
+test("settings shell is two-pane and deep-links Models Research Memory Voice Usage", async ({
   page,
 }, testInfo) => {
   const stamp = Date.now();
@@ -33,6 +33,17 @@ test("settings shell is two-pane and deep-links Models Memory Voice Usage", asyn
   await expect(settings.getByRole("heading", { name: "Models", exact: true })).toBeVisible();
   await expect(settings.getByTestId("model-settings")).toBeVisible();
   await captureScreenshot(page, testInfo, "settings-shell-models");
+
+  await settings.getByTestId("settings-nav-research").click();
+  await expect(settings).toHaveAttribute("data-settings-section", "research");
+  await expect(settings.getByRole("heading", { name: "Research", exact: true })).toBeVisible();
+  const research = settings.getByTestId("research-settings");
+  await expect(research).toBeVisible();
+  await expect(research.getByLabel("Model", { exact: true })).toBeVisible();
+  await expect(research.getByLabel("Project", { exact: true })).toBeVisible();
+  await expect(research.getByLabel("Executable", { exact: true })).toBeVisible();
+  await expect(research.getByLabel("Mode", { exact: true })).toBeVisible();
+  await captureScreenshot(page, testInfo, "settings-shell-research");
 
   await settings.getByTestId("settings-nav-memory").click();
   await expect(settings).toHaveAttribute("data-settings-section", "memory");

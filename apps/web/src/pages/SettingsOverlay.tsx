@@ -1,7 +1,17 @@
 import { useLingui } from "@lingui/react/macro";
-import type { AvatarStyle, SpaceMemoryConfig } from "@rakazo/contracts";
+import type { AvatarStyle, SpaceMemoryConfig, SpaceResearchSettingsView } from "@rakazo/contracts";
 import { Button, Dialog, DialogClose, DialogContent, DialogTitle } from "@rakazo/ui-web";
-import { Brain, CloudDownload, Cpu, Gauge, Monitor, Settings, Volume2, XIcon } from "lucide-react";
+import {
+  Brain,
+  CloudDownload,
+  Cpu,
+  Gauge,
+  Monitor,
+  Search,
+  Settings,
+  Volume2,
+  XIcon,
+} from "lucide-react";
 import { type ComponentType, useEffect, useRef, useState } from "react";
 import { computersAreUnavailable } from "../components/ComputersUnavailableHint";
 import {
@@ -12,12 +22,14 @@ import {
 } from "./AccountSettingsOverlay";
 import { MemorySettingsOverlay } from "./MemorySettingsOverlay";
 import { ModelSettingsOverlay } from "./ModelSettingsOverlay";
+import { ResearchSettingsOverlay } from "./ResearchSettingsOverlay";
 import { VoiceSettingsOverlay } from "./VoiceSettingsOverlay";
 
 export type SettingsSection =
   | "general"
   | "models"
   | "memory"
+  | "research"
   | "voice"
   | "usage"
   | "computer"
@@ -42,6 +54,8 @@ export function SettingsOverlay({
   onOpenMessaging,
   memoryConfig,
   onMemoryConfigChange,
+  researchConfig,
+  onResearchConfigChange,
   onClose,
   onVoiceStatusMaybeChanged,
 }: {
@@ -57,6 +71,8 @@ export function SettingsOverlay({
   onOpenMessaging?: () => void;
   memoryConfig: SpaceMemoryConfig | null | undefined;
   onMemoryConfigChange: (config: SpaceMemoryConfig | null) => void;
+  researchConfig: SpaceResearchSettingsView | null | undefined;
+  onResearchConfigChange: (config: SpaceResearchSettingsView | null) => void;
   onClose: () => void;
   onVoiceStatusMaybeChanged?: () => void | Promise<void>;
 }) {
@@ -65,9 +81,10 @@ export function SettingsOverlay({
   const usageRef = useRef<HTMLDivElement>(null);
   const [section, setSection] = useState<SettingsSection>(initialSection);
   const [memoryBusy, setMemoryBusy] = useState(false);
+  const [researchBusy, setResearchBusy] = useState(false);
   const [voiceBusy, setVoiceBusy] = useState(false);
   const showComputer = isDeploymentOwner && computersAreUnavailable(sandboxProvider);
-  const panelBusy = memoryBusy || voiceBusy;
+  const panelBusy = memoryBusy || researchBusy || voiceBusy;
 
   useEffect(() => {
     setSection(initialSection);
@@ -83,6 +100,7 @@ export function SettingsOverlay({
     { id: "general", label: t`General`, icon: Settings },
     { id: "models", label: t`Models`, icon: Cpu },
     { id: "memory", label: t`Memory`, icon: Brain },
+    { id: "research", label: t`Research`, icon: Search },
     { id: "voice", label: t`Voice`, icon: Volume2 },
     { id: "usage", label: t`Usage`, icon: Gauge },
     ...(showComputer ? [{ id: "computer" as const, label: t`Computer`, icon: Monitor }] : []),
@@ -98,9 +116,11 @@ export function SettingsOverlay({
       ? t`Close model settings`
       : section === "memory"
         ? t`Close memory settings`
-        : section === "voice"
-          ? t`Close voice settings`
-          : t`Close user settings`;
+        : section === "research"
+          ? t`Close research settings`
+          : section === "voice"
+            ? t`Close voice settings`
+            : t`Close user settings`;
 
   async function refreshVoiceStatus() {
     await onVoiceStatusMaybeChanged?.();
@@ -224,6 +244,13 @@ export function SettingsOverlay({
                   config={memoryConfig}
                   onConfigChange={onMemoryConfigChange}
                   onBusyChange={setMemoryBusy}
+                />
+              ) : null}
+              {section === "research" ? (
+                <ResearchSettingsOverlay
+                  config={researchConfig}
+                  onConfigChange={onResearchConfigChange}
+                  onBusyChange={setResearchBusy}
                 />
               ) : null}
               {section === "voice" ? (

@@ -1,6 +1,6 @@
 import type { MessageBlock } from "@rakazo/contracts";
 import { cloudAgentBlockFromPayload } from "./cloud-agent.js";
-import { researchBlockFromPayload } from "./research.js";
+import { researchBlockFromPayload, researchFileBlocksFromPayload } from "./research.js";
 
 /** Remove this run's live message and obsolete unscoped progress without reordering history. */
 export function takeLiveMessage<Message extends { id: string; runId?: string | null }>(
@@ -48,6 +48,7 @@ export function updateResearchMessages<Message extends { id: string; blocks: Mes
   const researchId = String(payload.researchId ?? "");
   const messageId = String(payload.messageId ?? "");
   const block = researchBlockFromPayload(payload);
+  const files = researchFileBlocksFromPayload(payload);
   return messages.map((message) => {
     if (
       (messageId && message.id === messageId) ||
@@ -55,11 +56,24 @@ export function updateResearchMessages<Message extends { id: string; blocks: Mes
         (existing) => existing.kind === "research" && existing.researchId === researchId,
       )
     ) {
+      const present = new Set(
+        message.blocks.flatMap((existing) =>
+          existing.kind === "file" ? [existing.artifactId] : [],
+        ),
+      );
+      const added = files.filter((file) => {
+        if (present.has(file.artifactId)) return false;
+        present.add(file.artifactId);
+        return true;
+      });
       return {
         ...message,
-        blocks: message.blocks.map((existing) =>
-          existing.kind === "research" && existing.researchId === researchId ? block : existing,
-        ),
+        blocks: [
+          ...message.blocks.map((existing) =>
+            existing.kind === "research" && existing.researchId === researchId ? block : existing,
+          ),
+          ...added,
+        ],
       };
     }
     return message;

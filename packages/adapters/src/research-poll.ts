@@ -449,7 +449,10 @@ async function finishPoll(
           block.kind === "research" && block.researchId === job.id,
       );
       const researchChanged =
-        !prior || prior.title !== nextBlock.title || prior.status !== nextBlock.status;
+        !prior ||
+        prior.title !== nextBlock.title ||
+        prior.status !== nextBlock.status ||
+        prior.errorCode !== nextBlock.errorCode;
       const blocks = [
         ...current.map((block) =>
           block.kind === "research" && block.researchId === job.id ? nextBlock : block,
@@ -466,7 +469,11 @@ async function finishPoll(
           threadId: job.threadId,
           botId: job.botId,
           type: "thread.research",
-          payload: { messageId: message.id, ...nextBlock },
+          payload: {
+            messageId: message.id,
+            ...nextBlock,
+            ...(addedFiles.length > 0 ? { files: addedFiles } : {}),
+          },
         });
         seq = event.seq;
       }

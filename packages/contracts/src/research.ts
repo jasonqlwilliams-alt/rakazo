@@ -130,11 +130,43 @@ export const ResearchFindingsSchema = z
   });
 export type ResearchFindings = z.infer<typeof ResearchFindingsSchema>;
 
-/** Compact thread payload reserved for future research rendering. */
+/** Compact thread payload for the research card. */
 export const ResearchBlockSchema = z.object({
   kind: z.literal("research"),
   researchId: z.string(),
   title: z.string(),
   status: ResearchStatusSchema,
+  /** Present on failure so the card can show one short reason. */
+  errorCode: ResearchErrorCodeSchema.optional(),
 });
 export type ResearchBlock = z.infer<typeof ResearchBlockSchema>;
+
+const researchFlagValue = z
+  .string()
+  .trim()
+  .min(1)
+  .max(200)
+  .refine((value) => !value.startsWith("-") && !/[\p{Cc}]/u.test(value), "Not a flag value");
+
+/** Space-level research settings. Model, project and executable never come from a bot request. */
+export const SpaceResearchSettingsSchema = z
+  .object({
+    executable: z
+      .string()
+      .trim()
+      .min(1)
+      .max(1_024)
+      .refine((value) => !value.startsWith("-") && !/[\p{Cc}]/u.test(value), "Not a command")
+      .default("agy"),
+    model: researchFlagValue,
+    project: researchFlagValue.optional(),
+    mode: z.enum(["accept-edits", "plan"]).default("accept-edits"),
+  })
+  .strict();
+export type SpaceResearchSettings = z.infer<typeof SpaceResearchSettingsSchema>;
+export type SpaceResearchSettingsInput = z.input<typeof SpaceResearchSettingsSchema>;
+
+export const SpaceResearchSettingsViewSchema = SpaceResearchSettingsSchema.extend({
+  updatedAt: IsoDate,
+});
+export type SpaceResearchSettingsView = z.infer<typeof SpaceResearchSettingsViewSchema>;
