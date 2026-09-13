@@ -445,7 +445,8 @@ async function finishPoll(
         (block) => block.kind === "file" && !present.has(block.artifactId),
       );
       const prior = current.find(
-        (block) => block.kind === "research" && block.researchId === job.id,
+        (block): block is Extract<MessageBlock, { kind: "research" }> =>
+          block.kind === "research" && block.researchId === job.id,
       );
       const researchChanged =
         !prior || prior.title !== nextBlock.title || prior.status !== nextBlock.status;
