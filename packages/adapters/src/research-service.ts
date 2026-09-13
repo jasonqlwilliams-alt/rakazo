@@ -14,7 +14,7 @@ import { ResearchFindingsSchema, ResearchStatusSchema } from "@rakazo/contracts"
 import {
   appendEventInTransaction,
   createThreadMessageInTransaction,
-  Prisma,
+  type Prisma,
   type PrismaClient,
   parseComputerMode,
   type ResearchJob,
@@ -115,7 +115,7 @@ export async function executeResearchTool(
     if (outcome.seq !== undefined)
       await deps.events.notify(run.threadId, outcome.seq).catch(() => undefined);
     if (outcome.job.nextPollAt) await enqueueResearchJob(deps, outcome.job.id);
-    return { researchId: outcome.job.id, title: outcome.job.title, status: "queued" as const };
+    return researchSnapshot(outcome.job);
   }
   const { researchId } = researchIdSchema.parse(args);
   const owned = await deps.prisma.researchJob.findFirst({
@@ -158,12 +158,7 @@ async function startResearch(
       const existing = await tx.researchJob.findUnique({
         where: { operationKey: context.operationId },
       });
-      if (existing) {
-        if (existing.spaceId !== context.spaceId || existing.userId !== context.userId) {
-          throw new Error("Research operation scope changed");
-        }
-        return { job: existing };
-      }
+      if (existing) return ownedResearchJob(existing, context);
       const bot = await tx.bot.findFirst({
         where: {
           id: context.botId,
@@ -187,24 +182,19 @@ async function startResearch(
         depth,
         budgetMs: RESEARCH_DEFAULT_BUDGET_MS,
       });
-      const created = await tx.researchJob
-        .create({
-          data: {
-            id: jobId,
-            operationKey: context.operationId,
-            spaceId: context.spaceId,
-            userId: context.userId,
-            botId: context.botId,
-            threadId: run.threadId,
-            computerId: bot.computer.id,
-            title: brief.title,
-            request: request as unknown as Prisma.InputJsonValue,
-          },
-        })
-        .catch((error: unknown) => {
-          if (activeJobConflict(error)) throw new ResearchComputerBusy();
-          throw error;
-        });
+      const created = await tx.researchJob.create({
+        data: {
+          id: jobId,
+          operationKey: context.operationId,
+          spaceId: context.spaceId,
+          userId: context.userId,
+          botId: context.botId,
+          threadId: run.threadId,
+          computerId: bot.computer.id,
+          title: brief.title,
+          request: request as unknown as Prisma.InputJsonValue,
+        },
+      });
       const blocks = [researchBlock(created)];
       const message = await createThreadMessageInTransaction(tx, {
         threadId: run.threadId,
@@ -228,16 +218,58 @@ async function startResearch(
       return { job: saved, seq: event.seq };
     });
   } catch (error) {
-    if (error instanceof ResearchComputerBusy) {
-      return { error: `${error.message} Wait for it to finish or cancel it first.` };
-    }
-    throw error;
+    if (!researchJobUniqueConflict(error)) throw error;
+    const existing = await deps.prisma.researchJob.findUnique({
+      where: { operationKey: context.operationId },
+    });
+    if (existing) return ownedResearchJob(existing, context);
+    return {
+      error: `${new ResearchComputerBusy().message} Wait for it to finish or cancel it first.`,
+    };
   }
 }
 
-/** The partial unique index on active rows rejects a second queued or running job per computer. */
-function activeJobConflict(error: unknown): boolean {
-  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
+function ownedResearchJob(
+  job: ResearchJob,
+  context: Pick<AdapterContext, "spaceId" | "userId">,
+): { job: ResearchJob } {
+  if (job.spaceId !== context.spaceId || job.userId !== context.userId) {
+    throw new Error("Research operation scope changed");
+  }
+  return { job };
+}
+
+const OPERATION_KEY_TARGETS = new Set(["operationKey", "research_jobs_operationKey_key"]);
+const ACTIVE_COMPUTER_TARGETS = new Set(["computerId", "research_jobs_active_computer_key"]);
+
+function uniqueConstraintFailed(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === "P2002");
+}
+
+function uniqueConstraintNames(error: unknown): string[] {
+  if (!error || typeof error !== "object" || !("meta" in error)) return [];
+  const meta = error.meta;
+  if (!meta || typeof meta !== "object") return [];
+  const names: string[] = [];
+  const target = "target" in meta ? meta.target : undefined;
+  if (Array.isArray(target)) names.push(...target.map(String));
+  else if (typeof target === "string") names.push(target);
+  const constraint = "constraint" in meta ? meta.constraint : undefined;
+  if (typeof constraint === "string") names.push(constraint);
+  const driver = "driverAdapterError" in meta ? meta.driverAdapterError : undefined;
+  if (!driver || typeof driver !== "object" || !("cause" in driver)) return names;
+  const cause = driver.cause;
+  if (!cause || typeof cause !== "object" || !("constraint" in cause)) return names;
+  if (typeof cause.constraint === "string") names.push(cause.constraint);
+  return names;
+}
+
+/** operationKey replay or the one-active-job index — not a message/event sequence conflict. */
+function researchJobUniqueConflict(error: unknown): boolean {
+  if (!uniqueConstraintFailed(error)) return false;
+  const names = uniqueConstraintNames(error);
+  if (names.length === 0) return true;
+  return names.some((name) => OPERATION_KEY_TARGETS.has(name) || ACTIVE_COMPUTER_TARGETS.has(name));
 }
 
 export function researchSnapshot(job: ResearchJob) {

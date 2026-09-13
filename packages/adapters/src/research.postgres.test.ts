@@ -144,17 +144,14 @@ describePostgres("research job lifecycle and recovery (PostgreSQL + research emu
       botId: bot.id,
       signal: new AbortController().signal,
     };
+    const brief = { title: "Pricing survey", goal: "Compare vendor pricing pages" };
     const tool = (
       name: string,
       args: Record<string, unknown>,
       overrides: Partial<typeof context> = {},
     ) => executeResearchTool(deps, { ...context, ...overrides }, run, `research_${name}`, args);
     const start = async (overrides: Partial<typeof context> = {}) => {
-      const result = await tool(
-        "start",
-        { title: "Pricing survey", goal: "Compare vendor pricing pages" },
-        overrides,
-      );
+      const result = await tool("start", brief, overrides);
       if (!("researchId" in result)) throw new Error(`Start failed: ${JSON.stringify(result)}`);
       return result.researchId;
     };
@@ -184,6 +181,7 @@ describePostgres("research job lifecycle and recovery (PostgreSQL + research emu
       events,
       deps,
       context,
+      brief,
       tool,
       start,
       state: state_,
@@ -342,6 +340,39 @@ describePostgres("research job lifecycle and recovery (PostgreSQL + research emu
         where: { computerId: h.computer.id, status: { in: ["queued", "running"] } },
       }),
     ).toBe(1);
+  });
+
+  it("replays the same operationId with the job's current status", async () => {
+    const h = await setup();
+    const first = await h.tool("start", h.brief);
+    expect(first).toMatchObject({ status: "queued" });
+    if (!("researchId" in first)) throw new Error(`Start failed: ${JSON.stringify(first)}`);
+    await h.poll(first.researchId);
+    expect(await h.tool("start", h.brief)).toMatchObject({
+      researchId: first.researchId,
+      status: "running",
+    });
+    await h.finish(first.researchId);
+    expect(await h.tool("start", h.brief)).toMatchObject({
+      researchId: first.researchId,
+      status: "completed",
+      receipt: expect.objectContaining({ status: "completed" }),
+    });
+  });
+
+  it("returns the same researchId for concurrent starts with the same operationId", async () => {
+    const h = await setup();
+    const [a, b] = await Promise.all([h.tool("start", h.brief), h.tool("start", h.brief)]);
+    expect(a).not.toHaveProperty("error");
+    expect(b).not.toHaveProperty("error");
+    if (!("researchId" in a) || !("researchId" in b)) {
+      throw new Error(`Start failed: ${JSON.stringify({ a, b })}`);
+    }
+    expect(a.researchId).toBe(b.researchId);
+    expect(a).toMatchObject({ status: "queued" });
+    expect(b).toMatchObject({ status: "queued" });
+    expect(await prisma.researchJob.count({ where: { userId: h.id } })).toBe(1);
+    expect(await prisma.message.count({ where: { threadId: h.thread.id } })).toBe(1);
   });
 
   it("lets only one of two concurrent pollers observe the computer", async () => {
