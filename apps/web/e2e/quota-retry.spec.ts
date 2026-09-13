@@ -19,7 +19,7 @@ for (const scenario of cases) {
     test.setTimeout(150_000);
     const previousDelay = process.env.RAKAZO_QUOTA_RETRY_MS;
     const previousMax = process.env.RAKAZO_QUOTA_RETRY_MAX;
-    if (scenario === "retry") delete process.env.RAKAZO_QUOTA_RETRY_MS;
+    if (scenario === "retry" || scenario === "partial") delete process.env.RAKAZO_QUOTA_RETRY_MS;
     else process.env.RAKAZO_QUOTA_RETRY_MS = "1";
     delete process.env.RAKAZO_QUOTA_RETRY_MAX;
     const controller = new AbortController();
@@ -115,6 +115,8 @@ for (const scenario of cases) {
     let work: Promise<void> | undefined;
     let error: string | undefined;
     let failedRequest: unknown;
+    let partialPublished = false;
+    let releasePartial: (() => void) | undefined;
     const steps: ModelEmulatorStep[] =
       scenario === "retry"
         ? [
@@ -226,6 +228,22 @@ for (const scenario of cases) {
           } else if (event.type === "text") {
             streamedText += event.text;
             publish("thread.progress", { delta: event.text, streaming: true });
+            if (
+              scenario === "partial" &&
+              streamedText.includes("Partial answer") &&
+              !partialPublished
+            ) {
+              await new Promise<void>((resolve, reject) => {
+                const onAbort = () => reject(controller.signal.reason ?? new Error("aborted"));
+                if (controller.signal.aborted) {
+                  onAbort();
+                  return;
+                }
+                controller.signal.addEventListener("abort", onAbort, { once: true });
+                releasePartial = resolve;
+                partialPublished = true;
+              });
+            }
           } else if (event.type === "retract") {
             streamedText = streamedText.slice(0, streamedText.length - event.chars);
             publish("thread.progress", { text: streamedText, streaming: true });
@@ -275,7 +293,7 @@ for (const scenario of cases) {
         } else if (procedure === "threads/send") {
           const input = route.request().postDataJSON().json;
           work = run(input.text);
-          if (scenario !== "retry") await work;
+          if (scenario !== "retry" && scenario !== "partial") await work;
           result = { taskId: "fixture-run", runId: "fixture-run", seq };
         } else if (procedure === "spaces/list") {
           result = { spaces: [], current: { bots: [bot], groups: [], botSections: [] } };
@@ -320,6 +338,40 @@ for (const scenario of cases) {
         ).toBeVisible();
         await captureScreenshot(page, testInfo, "quota-wait-mobile-web");
       }
+      if (scenario === "partial") {
+        try {
+          await expect.poll(() => partialPublished).toBe(true);
+          await page.reload();
+          await expect(page.getByText("Partial answer", { exact: true })).toBeVisible({
+            timeout: 2_000,
+          });
+          await captureScreenshot(page, testInfo, "quota-midstream-partial-desktop");
+          await page.setViewportSize({ width: 390, height: 844 });
+          await expect(page.getByText("Partial answer", { exact: true })).toBeVisible();
+          await captureScreenshot(page, testInfo, "quota-midstream-partial-mobile-web");
+        } finally {
+          releasePartial?.();
+        }
+        await expect
+          .poll(() =>
+            events.some(
+              ({ event }) =>
+                event.type === "progress" && event.text === "Quota, retrying in 60s (1/3).",
+            ),
+          )
+          .toBe(true);
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.reload();
+        await expect(page.getByText("Quota, retrying in 60s (1/3).", { exact: true })).toBeVisible({
+          timeout: 2_000,
+        });
+        await captureScreenshot(page, testInfo, "quota-midstream-wait-desktop");
+        await page.setViewportSize({ width: 390, height: 844 });
+        await expect(
+          page.getByText("Quota, retrying in 60s (1/3).", { exact: true }),
+        ).toBeVisible();
+        await captureScreenshot(page, testInfo, "quota-midstream-wait-mobile-web");
+      }
       await work;
       server.assertComplete();
       await page.setViewportSize({ width: 1440, height: 900 });
@@ -332,10 +384,12 @@ for (const scenario of cases) {
         await expect(page.getByText("Saved.", { exact: true })).toBeVisible();
         await expect(page.getByText(/^Quota, retrying/)).toHaveCount(0);
       } else if (scenario === "partial") {
+        await page.reload();
         expect(error).toBeUndefined();
         expect(requestTimes).toHaveLength(2);
-        await expect(page.getByText("Full answer.", { exact: true })).toBeVisible();
+        await expect(page.getByText("Full answer.", { exact: true })).toHaveCount(1);
         await expect(page.getByText(/Partial answer/)).toHaveCount(0);
+        await expect(page.getByText(/^Quota, retrying/)).toHaveCount(0);
       } else {
         const expected =
           scenario === "exhausted"
@@ -346,6 +400,11 @@ for (const scenario of cases) {
         if (scenario !== "exhausted") expect(requestTimes).toHaveLength(1);
       }
       await captureScreenshot(page, testInfo, `quota-${scenario}-result`);
+      if (scenario === "partial") {
+        await page.setViewportSize({ width: 390, height: 844 });
+        await expect(page.getByText("Full answer.", { exact: true })).toHaveCount(1);
+        await captureScreenshot(page, testInfo, "quota-partial-result-mobile-web");
+      }
       const receiptPath = testInfo.outputPath("runtime-receipt.json");
       await writeFile(
         receiptPath,
