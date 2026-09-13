@@ -5,11 +5,13 @@ settings are stored, the model gets `research_start`, `research_status`, and
 `research_cancel`. Start needs the same approval as `cloud_agent_launch`. Status
 is read-only. Cancel does not need approval. One computer runs one research job at
 a time. Findings arrive as `findings.json` and `report.md` on that job's thread
-message. The card shows the title and one status word.
+message. The card shows the title and one status word, plus one short reason on
+failure.
 
 Install the Antigravity CLI on the bot's computer and sign in there. Set Model.
 Project, Executable, and Mode are optional. The default executable is `agy`.
-Research is unconfigured when there is no computer.
+There is no provider-specific environment variable. Research is unconfigured
+when there is no computer.
 
 The built-in `deep-research` skill names those tools. It does not launch a
 shell.

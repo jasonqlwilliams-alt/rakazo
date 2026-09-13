@@ -161,6 +161,51 @@ describe("research card in the thread", () => {
     expect(html).toContain("findings.json");
     expect(html).toContain("report.md");
   });
+
+  it("treats only completed as the success color", () => {
+    const completed = render(
+      message("bot", [
+        {
+          kind: "research",
+          researchId: "rj_1",
+          title: "Pricing survey",
+          status: "completed",
+        },
+      ]),
+    );
+    expect(completed).toContain("text-success");
+    expect(completed).not.toContain("text-destructive");
+
+    const failed = render(
+      message("bot", [
+        {
+          kind: "research",
+          researchId: "rj_1",
+          title: "Pricing survey",
+          status: "failed",
+          errorCode: "unavailable",
+        },
+      ]),
+    );
+    expect(failed).toContain("text-destructive");
+    expect(failed).not.toContain("text-success");
+
+    for (const status of ["queued", "running", "cancelled", "timed_out", "uncertain"] as const) {
+      const html = render(
+        message("bot", [
+          {
+            kind: "research",
+            researchId: "rj_1",
+            title: "Pricing survey",
+            status,
+          },
+        ]),
+      );
+      expect(html, status).toContain("text-muted-foreground");
+      expect(html, status).not.toContain("text-success");
+      expect(html, status).not.toContain("text-destructive");
+    }
+  });
 });
 
 describe("the spawn opener in a child bot's thread", () => {

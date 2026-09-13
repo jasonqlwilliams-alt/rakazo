@@ -290,7 +290,7 @@ describePostgres("research job lifecycle and recovery (PostgreSQL + research emu
       status: "completed",
     });
     expect(
-      ((completedEvent?.payload as { files?: { name: string }[] }).files ?? []).map(
+      ((completedEvent?.payload as { files?: { name: string }[] } | undefined)?.files ?? []).map(
         (file) => file.name,
       ),
     ).toEqual(["findings.json", "report.md"]);

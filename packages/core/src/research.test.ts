@@ -76,11 +76,7 @@ describe("shared research projection", () => {
         },
       },
     ]);
-    expect(messages[0]?.blocks).toEqual([
-      { ...block, status: "completed" },
-      findings,
-      report,
-    ]);
+    expect(messages[0]?.blocks).toEqual([{ ...block, status: "completed" }, findings, report]);
   });
 
   it("treats an unknown status as uncertain rather than inventing progress", () => {

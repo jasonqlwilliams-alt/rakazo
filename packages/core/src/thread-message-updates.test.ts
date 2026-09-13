@@ -107,11 +107,7 @@ describe("shared message updates", () => {
       files: [findings, report, { kind: "text", text: "nope" }, findings],
     };
     const first = updateResearchMessages(messages, completed);
-    expect(first[0]?.blocks).toEqual([
-      { ...research, status: "completed" },
-      findings,
-      report,
-    ]);
+    expect(first[0]?.blocks).toEqual([{ ...research, status: "completed" }, findings, report]);
     const second = updateResearchMessages(first, completed);
     expect(second[0]?.blocks).toEqual(first[0]?.blocks);
     expect(messages[0]?.blocks).toEqual([research]);
