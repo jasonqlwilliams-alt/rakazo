@@ -174,7 +174,7 @@ const STDERR_RULES = {
   quotaExhausted: /quota|rate.?limit|resource.?exhausted|too many requests|\b429\b/i,
   usageError:
     /^(?:error: )?(?:unknown (?:flag|shorthand flag|command)|unexpected argument|flag needs an argument|invalid (?:argument|value)|usage:)/i,
-  timedOut: /print.?timeout|timed out|timeout (?:of|after).*(?:partial|reached)|partial output/i,
+  timedOut: /print.?timeout|returning (?:the )?partial output/i,
   permissionDenial:
     /permission (?:denied|auto-denied|rejected)|auto-den(?:ied|y)|denied permission/i,
   fatalError: /^error:/i,
@@ -355,11 +355,28 @@ export function resolveAntigravityOutcome(state: AntigravityJobState): Antigravi
   }
 
   const exit = `exit ${state.exitCode}`;
-  if (signals.timedOut || (TIMEOUT_EXIT_CODES.has(state.exitCode) && !state.cancelRequested)) {
-    return { status: "timed_out", truncated: true, reason: `print timeout (${exit})`, ...base };
+  const result = state.exitCode === 0 ? antigravityFinalResult(log) : undefined;
+  const parsed = result === undefined ? undefined : ResearchFindingsSchema.safeParse(result);
+  const findings = parsed?.success ? parsed.data : undefined;
+  const sourced = findings !== undefined && findings.sources.length > 0;
+
+  if (TIMEOUT_EXIT_CODES.has(state.exitCode) && !state.cancelRequested) {
+    return { status: "timed_out", truncated: true, reason: `hard timeout (${exit})`, ...base };
   }
   if (MISSING_EXIT_CODES.has(state.exitCode)) {
     return failure("unavailable", signals.firstError ?? `executable unavailable (${exit})`, base);
+  }
+  if (findings && (sourced || signals.permissionDenials === 0)) {
+    return {
+      status: "completed",
+      findings,
+      truncated: false,
+      reason: "final result validated",
+      ...base,
+    };
+  }
+  if (signals.timedOut) {
+    return { status: "timed_out", truncated: true, reason: `print timeout (${exit})`, ...base };
   }
   if (signals.authRequired) {
     return failure("auth_required", signals.firstError ?? `sign-in required (${exit})`, base);
@@ -373,34 +390,27 @@ export function resolveAntigravityOutcome(state: AntigravityJobState): Antigravi
   if (state.cancelRequested && state.exitCode !== 0) {
     return { status: "cancelled", truncated: true, reason: `cancelled (${exit})`, ...base };
   }
+  if (signals.permissionDenials > 0) {
+    return failure(
+      "permission_denied",
+      `no source gathered after ${signals.permissionDenials} permission denials (${exit})`,
+      base,
+    );
+  }
   if (state.exitCode !== 0) {
     return failure("provider_error", signals.firstError ?? exit, base);
   }
-  const result = antigravityFinalResult(log);
-  if (result === undefined) {
+  if (parsed === undefined) {
     return signals.fatalError
       ? failure("provider_error", signals.firstError ?? "no final result", base)
       : failure("invalid_output", "no final result in the event stream", base);
   }
-  const parsed = ResearchFindingsSchema.safeParse(result);
-  if (!parsed.success) {
-    const issue = parsed.error.issues[0];
-    return failure(
-      "invalid_output",
-      `findings rejected: ${issue ? `${issue.path.join(".") || "document"}: ${issue.message}` : "schema"}`,
-      base,
-    );
-  }
-  if (signals.permissionDenials > 0 && parsed.data.sources.length === 0) {
-    return failure("permission_denied", "every source read was denied", base);
-  }
-  return {
-    status: "completed",
-    findings: parsed.data,
-    truncated: false,
-    reason: "final result validated",
-    ...base,
-  };
+  const issue = parsed.success ? undefined : parsed.error.issues[0];
+  return failure(
+    "invalid_output",
+    `findings rejected: ${issue ? `${issue.path.join(".") || "document"}: ${issue.message}` : "schema"}`,
+    base,
+  );
 }
 
 function bullets(items: string[]): string[] {
@@ -643,6 +653,8 @@ export class AntigravityResearchProvider implements ResearchProvider {
           reason: "killed after the budget and grace elapsed",
         };
       }
+    } else if (outcome.status !== "running" && exitCode === undefined && state.marker !== "idle") {
+      await this.kill(computer, launch, context);
     }
     if (outcome.status === "running") return this.running(launch, outcome);
     return this.settle(computer, job, launch, outcome, exitCode, context);
@@ -659,13 +671,15 @@ export class AntigravityResearchProvider implements ResearchProvider {
     if (!launch) return this.bare(job.jobId, "uncertain");
     const settled = await this.settledObservation(computer, job, launch, snapshot, context);
     if (settled) return settled;
-    if (!snapshot.files.has(ANTIGRAVITY_JOB_FILES.cancel)) {
-      await this.write(computer, job.workdir, ANTIGRAVITY_JOB_FILES.cancel, {
-        content: `${this.now().toISOString()}\n`,
-        context,
-      });
+    if (snapshot.exitCode === undefined) {
+      if (!snapshot.files.has(ANTIGRAVITY_JOB_FILES.cancel)) {
+        await this.write(computer, job.workdir, ANTIGRAVITY_JOB_FILES.cancel, {
+          content: `${this.now().toISOString()}\n`,
+          context,
+        });
+      }
+      await this.kill(computer, launch, context);
     }
-    if (snapshot.exitCode === undefined) await this.kill(computer, launch, context);
     return this.observe(computer, job, context);
   }
 
@@ -733,10 +747,13 @@ export class AntigravityResearchProvider implements ResearchProvider {
       // with a fresh exit.code is a finished run, not an uncertain one.
       if (marker === "idle") snapshot = await this.snapshot(computer, job.workdir, context);
     }
+    const ended = snapshot.exitCode !== undefined || marker === "idle";
     const eventsBytes = snapshot.files.get(ANTIGRAVITY_JOB_FILES.events) ?? 0;
     const stderrBytes = snapshot.files.get(ANTIGRAVITY_JOB_FILES.stderr) ?? 0;
     const bounded = async (name: string, bytes: number, max: number) =>
-      bytes > 0 && bytes <= max ? this.read(computer, job.workdir, name, context, max) : "";
+      ended && bytes > 0 && bytes <= max
+        ? this.read(computer, job.workdir, name, context, max)
+        : "";
     return {
       exitCode: snapshot.exitCode,
       events: await bounded(

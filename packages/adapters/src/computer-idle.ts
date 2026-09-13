@@ -38,7 +38,8 @@ export function researchWorkRunId(jobId: string): string {
  * Positional args: computerId runId nonce workdir hardTimeoutSeconds -- argv...
  * Inside the workdir it writes events.ndjson (stdout), stderr.log (stderr) and,
  * when the process ends, exit.code. An executable that cannot be found ends the
- * job before the marker exists with exit code 127 in those files.
+ * job before the marker exists with exit code 127 in those files; a computer
+ * without setsid or a timeout that accepts --kill-after ends it with 126.
  */
 export const RESEARCH_WORK_LAUNCH = [
   `marker="${BACKGROUND_WORK_MARKER_PREFIX}$1-$2-$3"`,
@@ -54,6 +55,11 @@ export const RESEARCH_WORK_LAUNCH = [
   `  printf 'error: research executable not found: %s\\n' "$1" >stderr.log`,
   "  printf '127\\n' >exit.code",
   "  exit 127",
+  "fi",
+  "if ! command -v setsid >/dev/null 2>&1 || ! timeout --kill-after=1s 1s true >/dev/null 2>&1; then",
+  `  printf 'error: research launch needs setsid and a timeout that accepts --kill-after\\n' >stderr.log`,
+  "  printf '126\\n' >exit.code",
+  "  exit 126",
   "fi",
   "set -o noclobber",
   'exec 9>"$marker" || exit 1',

@@ -1,5 +1,5 @@
-import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type {
@@ -268,6 +268,10 @@ describe("antigravity output classification", () => {
       permissionDenials: 0,
       timedOut: false,
     });
+    expect(classifyAntigravityStderr("error: request timed out; retrying\n")).toMatchObject({
+      fatalError: true,
+      timedOut: false,
+    });
   });
 
   it("reads the final result from either result shape and tolerates noise", () => {
@@ -362,6 +366,76 @@ describe("antigravity output classification", () => {
       status: "failed",
       errorCode: "provider_error",
       reason: "error: planner gave up",
+    });
+  });
+
+  it("keeps a validated result over recovered stderr signals", () => {
+    const done = loadAnyAgyFixture("completed");
+    const recovered = [
+      "warning: rate limit reached, retrying in 2s",
+      "warning: authentication expired; refreshed the token",
+      "error: request timed out; retrying",
+    ];
+    for (const line of recovered) {
+      const outcome = resolveAntigravityOutcome({
+        ...fixtureState({ ...done, stderr: `${line}\n` }),
+        exitCode: 0,
+      });
+      expect(outcome, line).toMatchObject({
+        status: "completed",
+        findings: EMULATOR_RESEARCH_FINDINGS,
+      });
+    }
+    const unrecovered = (line: string, exitCode: number) =>
+      resolveAntigravityOutcome({
+        ...fixtureState({ events: "", stderr: `${line}\n` }),
+        exitCode,
+      });
+    expect(unrecovered(recovered[0]!, 0)).toMatchObject({
+      status: "failed",
+      errorCode: "quota_exhausted",
+    });
+    expect(unrecovered(recovered[0]!, 1)).toMatchObject({
+      status: "failed",
+      errorCode: "quota_exhausted",
+    });
+    expect(unrecovered(recovered[1]!, 0)).toMatchObject({
+      status: "failed",
+      errorCode: "auth_required",
+    });
+    expect(unrecovered(recovered[2]!, 0)).toMatchObject({
+      status: "failed",
+      errorCode: "provider_error",
+    });
+    expect(
+      unrecovered("warning: print timeout of 60s reached; returning the partial output", 0),
+    ).toMatchObject({ status: "timed_out", truncated: true });
+  });
+
+  it("reports permission denied whenever denials left no gathered source", () => {
+    const denial = "permission denied: read_url_content https://research.test/sources/1\n";
+    const denied = (events: string, stderr: string, exitCode: number) =>
+      resolveAntigravityOutcome({ ...fixtureState({ events, stderr }), exitCode });
+    expect(denied("", `${denial}error: planner gave up\n`, 1)).toMatchObject({
+      status: "failed",
+      errorCode: "permission_denied",
+      permissionDenials: 1,
+    });
+    expect(denied("", denial, 0)).toMatchObject({
+      status: "failed",
+      errorCode: "permission_denied",
+    });
+    const unlisted = loadAnyAgyFixture("schema-violation").events;
+    expect(denied(unlisted, denial, 0)).toMatchObject({
+      status: "failed",
+      errorCode: "permission_denied",
+    });
+    expect(denied(loadAnyAgyFixture("completed").events, denial, 0)).toMatchObject({
+      status: "completed",
+      permissionDenials: 1,
+    });
+    expect(denied("", `${denial}error: quota exhausted: 429\n`, 1)).toMatchObject({
+      errorCode: "quota_exhausted",
     });
   });
 
@@ -549,6 +623,82 @@ describe("antigravity provider over the computer emulator", () => {
     expect(agy.launches).toHaveLength(1);
   });
 
+  it("kills a process whose output crossed the read bound before settling invalid output", async () => {
+    const { agy, provider } = harness();
+    const job = request("oversize-running");
+    await provider.start(computer, job, ctx);
+    const process = [...agy.processes.values()][0]!;
+    await agy.writeFile(
+      computer,
+      {
+        path: `${job.workdir}/${ANTIGRAVITY_JOB_FILES.events}`,
+        content: new TextEncoder().encode(AGY_GENERATED_FIXTURES["oversize-events"]!().events),
+      },
+      ctx,
+    );
+    expect(process.alive).toBe(true);
+    const observed = await provider.observe(computer, job, ctx);
+    expect(observed).toMatchObject({
+      status: "failed",
+      errorCode: "invalid_output",
+      receipt: { truncated: true },
+    });
+    expect(observed.receipt.exitCode).toBeUndefined();
+    expect(process.alive).toBe(false);
+    expect(JSON.parse(agy.jobFile(job.workdir, ANTIGRAVITY_JOB_FILES.outcome)!)).toMatchObject({
+      status: "failed",
+      errorCode: "invalid_output",
+    });
+    expect(await provider.observe(computer, job, ctx)).toEqual(observed);
+  });
+
+  it("reads the event and stderr files only once the process has ended", async () => {
+    const agy = new AgyComputerEmulator();
+    const reads: string[] = [];
+    const provider = new AntigravityResearchProvider({
+      sandbox: {
+        execute: (target, command, context) => agy.execute(target, command, context),
+        readFile: (target, filePath, context, options) => {
+          reads.push(filePath);
+          return agy.readFile(target, filePath, context, options);
+        },
+        writeFile: (target, file, context) => agy.writeFile(target, file, context),
+      },
+      settings: { model: "fixture-model" },
+    });
+    const job = request("lazy-read");
+    const jobFiles = () => reads.map((filePath) => filePath.slice(job.workdir.length + 1));
+    await provider.start(computer, job, ctx);
+    await agy.writeFile(
+      computer,
+      {
+        path: `${job.workdir}/${ANTIGRAVITY_JOB_FILES.events}`,
+        content: new TextEncoder().encode('{"type":"system","conversation_id":"live"}\n'),
+      },
+      ctx,
+    );
+    expect((await provider.observe(computer, job, ctx)).status).toBe("running");
+    expect(jobFiles()).not.toContain(ANTIGRAVITY_JOB_FILES.events);
+    expect(jobFiles()).not.toContain(ANTIGRAVITY_JOB_FILES.stderr);
+    agy.finish(job.jobId, "completed");
+    expect((await provider.observe(computer, job, ctx)).status).toBe("completed");
+    expect(jobFiles()).toContain(ANTIGRAVITY_JOB_FILES.events);
+  });
+
+  it("keeps a run that ended before a late cancel as timed out", async () => {
+    const { agy, provider } = harness();
+    const job = request("late-cancel");
+    await provider.start(computer, job, ctx);
+    agy.finish(job.jobId, { events: "", stderr: "", exitCode: "124\n" });
+    const observed = await provider.cancel(computer, job, ctx);
+    expect(observed).toMatchObject({
+      status: "timed_out",
+      receipt: { truncated: true, exitCode: 124 },
+    });
+    expect(agy.jobFile(job.workdir, ANTIGRAVITY_JOB_FILES.cancel)).toBeUndefined();
+    expect((await provider.cancel(computer, job, ctx)).status).toBe("timed_out");
+  });
+
   it("refuses a job folder that belongs to another job and surfaces snapshot failures", async () => {
     const { provider } = harness();
     const job = request("owner");
@@ -579,7 +729,7 @@ describe("research work launch script", () => {
   afterEach(() => {
     for (const child of children.splice(0)) child.kill("SIGKILL");
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
-    for (const marker of ["a", "b", "c", "d"]) {
+    for (const marker of ["a", "b", "c", "d", "e"]) {
       rmSync(`/tmp/rakazo-background-launch-test-research.${marker}-n`, { force: true });
     }
   });
@@ -590,9 +740,13 @@ describe("research work launch script", () => {
     return dir;
   }
 
-  function run(argv: string[], cwd?: string) {
+  function run(argv: string[], cwd?: string, env?: NodeJS.ProcessEnv) {
     return new Promise<{ code: number; stdout: string; stderr: string }>((resolve, reject) => {
-      const child = spawn(argv[0]!, argv.slice(1), { cwd, stdio: ["ignore", "pipe", "pipe"] });
+      const child = spawn(argv[0]!, argv.slice(1), {
+        cwd,
+        env: env ?? process.env,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
       children.push(child);
       let stdout = "";
       let stderr = "";
@@ -608,8 +762,43 @@ describe("research work launch script", () => {
   }
 
   const probe = (jobId: string) => run(researchWorkProbeArgv("launch-test", jobId));
+  const posix = process.platform !== "win32";
+  const detachTools =
+    posix &&
+    spawnSync("bash", ["-c", "command -v setsid >/dev/null && timeout --kill-after=1s 1s true"], {
+      stdio: "ignore",
+    }).status === 0;
 
-  it.skipIf(process.platform === "win32")(
+  it.skipIf(!posix)(
+    "ends with exit 126 and a recorded reason when setsid is missing, without a marker",
+    async () => {
+      const cwd = root();
+      const bin = path.join(cwd, "bin");
+      const tools = execFileSync("bash", ["-c", "command -v bash mkdir"], { encoding: "utf8" })
+        .trim()
+        .split("\n");
+      execFileSync("mkdir", ["-p", bin]);
+      for (const tool of tools) symlinkSync(tool, path.join(bin, path.basename(tool)));
+      const argv = researchWorkLaunchArgv({
+        computerId: "launch-test",
+        jobId: "e",
+        nonce: "n",
+        workdir: "research/e",
+        hardTimeoutSeconds: 60,
+        command: ["bash", "-c", "true"],
+      });
+      const launched = await run([tools[0]!, ...argv.slice(1)], cwd, { PATH: bin });
+      expect(launched.code).toBe(126);
+      expect(readFileSync(path.join(cwd, "research/e/exit.code"), "utf8")).toBe("126\n");
+      expect(readFileSync(path.join(cwd, "research/e/stderr.log"), "utf8")).toMatch(
+        /^error: .*setsid.*\n$/,
+      );
+      expect(existsSync("/tmp/rakazo-background-launch-test-research.e-n")).toBe(false);
+      expect(existsSync(path.join(cwd, "research/e/events.ndjson"))).toBe(false);
+    },
+  );
+
+  it.skipIf(!detachTools)(
     "returns at once, keeps the marker held, passes argv byte for byte and writes exit.code",
     async () => {
       const cwd = root();
@@ -651,7 +840,7 @@ describe("research work launch script", () => {
     60_000,
   );
 
-  it.skipIf(process.platform === "win32")(
+  it.skipIf(!posix)(
     "records a missing executable as exit 127 without opening a marker",
     async () => {
       const cwd = root();
@@ -675,7 +864,7 @@ describe("research work launch script", () => {
     },
   );
 
-  it.skipIf(process.platform === "win32")(
+  it.skipIf(!detachTools)(
     "is killed by the cancel script for its own run id only",
     async () => {
       const cwd = root();
@@ -708,7 +897,7 @@ describe("research work launch script", () => {
     60_000,
   );
 
-  it.skipIf(process.platform === "win32")(
+  it.skipIf(!detachTools)(
     "enforces the hard timeout on the process itself",
     async () => {
       const cwd = root();
