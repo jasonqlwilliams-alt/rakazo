@@ -99,15 +99,22 @@ tail first.
 
 # Large sweeps through Antigravity
 
-The built-in `antigravity-research` skill routes large sweeps, deep research, and
-catalog migrations through the optional Antigravity CLI. It appears in the shared
-skill catalog and uses the existing `skill_read`, shell, and file tools on the
-bot's computer. The skill handles delegation; model selection of a skill remains
-model-driven, not a deterministic task classifier. Explicitly invoke the skill
-when routing must be requested directly.
+When a Space has stored research settings and the bot has a computer, the model
+gets `research_start`, `research_status`, and `research_cancel`. Start needs the
+same approval as `cloud_agent_launch`. Status is read-only and returns at most
+48 KiB of findings, or a summary and file path when larger. Cancel does not need
+approval. One computer runs one research job at a time. The worker polls the job,
+attaches findings, and wakes the bot once. Research is unconfigured when there is
+no computer. The start brief is bounded to 8192 UTF-8 bytes.
 
-Install/configure Antigravity independently on that computer and set
-`RAKAZO_ANTIGRAVITY_CLI` there to its executable path; the default is `agy`.
+The built-in `antigravity-research` skill is a separate catalog recipe that
+invokes the optional Antigravity CLI through `skill_read`, shell, and file tools
+on that computer. It is not the durable job. Model selection of a skill remains
+model-driven, not a deterministic task classifier. Explicitly invoke the skill
+when that CLI recipe must be requested directly.
+
+For the skill, install/configure Antigravity independently on that computer and
+set `RAKAZO_ANTIGRAVITY_CLI` there to its executable path; the default is `agy`.
 This is a skill-consumed computer setting, not a worker host-command setting.
 Configure an existing project and an explicit non-Grok Antigravity model for the
 bot. On Windows, reuse existing projects under
