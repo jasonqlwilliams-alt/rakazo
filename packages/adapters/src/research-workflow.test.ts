@@ -1,9 +1,6 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import type {
   AdapterContext,
   ComputerRef,
-  ResearchObservation,
   ResearchProvider,
   ResearchStartRequest,
 } from "@rakazo/adapter-kit";
@@ -46,14 +43,6 @@ const request: ResearchStartRequest = {
   depth: "deep",
   budgetMs: 60_000,
 };
-
-/** Optional serialized library output for reviewers; ordinary test runs write nothing. */
-function evidence(name: string, value: unknown) {
-  const directory = process.env.RESEARCH_TEST_EVIDENCE_DIR;
-  if (!directory) return;
-  mkdirSync(directory, { recursive: true });
-  writeFileSync(join(directory, name), `${JSON.stringify(value, null, 2)}\n`);
-}
 
 afterEach(() => vi.useRealTimers());
 
@@ -104,7 +93,7 @@ describe("research library workflow (offline)", () => {
 
     // These are contract round trips, not executor dispatch or client rendering.
     const states: ResearchStatus[] = ["queued", started.status, durable.status];
-    const threadContracts = states.map((status, seq) => {
+    states.forEach((status, seq) => {
       const block = MessageBlock.parse({
         kind: "research",
         researchId: request.jobId,
@@ -132,7 +121,6 @@ describe("research library workflow (offline)", () => {
       });
       expect(ProductEventSchema.parse(JSON.parse(JSON.stringify(event)))).toEqual(event);
       expect(ThreadMessageSchema.parse(JSON.parse(JSON.stringify(message)))).toEqual(message);
-      return { event, message };
     });
     const run = RunSchema.parse({
       id: "fixture-run",
@@ -164,21 +152,6 @@ describe("research library workflow (offline)", () => {
     });
     expect(run.trigger).toBe("research");
     expect(activity.trigger).toBe("research");
-    evidence("research-workflow.json", {
-      surface: "Offline library calls; thread payloads are contract examples for later slices.",
-      descriptor: provider.describe(),
-      request,
-      calls: [
-        { operation: "start", response: started },
-        { operation: "replayed start with changed depth", response: replayed },
-        { operation: "observe after worker restart", response: running },
-        { operation: "observe completion", response: durable },
-      ],
-      providerJobCount: emulator.jobs.size,
-      threadContracts,
-      run,
-      activity,
-    });
   });
 
   it("recovers a lost start response by observing and keeps cancellation durable", async () => {
@@ -216,12 +189,5 @@ describe("research library workflow (offline)", () => {
       expect(observation.findings).toBeUndefined();
       expect(observation.receipt.findingsSha256).toBeUndefined();
     }
-    const calls: Array<{ operation: string; response: ResearchObservation }> = [
-      { operation: "observe after simulated lost start response and worker restart", response: recovered },
-      { operation: "cancel", response: cancelled },
-      { operation: "replayed start after cancellation", response: replayed },
-      { operation: "observe untraced job", response: absent },
-    ];
-    evidence("research-recovery.json", { request, calls, providerJobCount: emulator.jobs.size });
   });
 });
