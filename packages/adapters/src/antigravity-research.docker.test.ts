@@ -16,7 +16,7 @@ import {
   antigravityResearchArgv,
   antigravityResearchSettingsSchema,
 } from "./antigravity-research.js";
-import { BACKGROUND_WORK_PROBE } from "./computer-idle.js";
+import { BACKGROUND_WORK_PROBE, RESEARCH_WORK_DIR } from "./computer-idle.js";
 import { EMULATOR_RESEARCH_FINDINGS } from "./research-emulator.js";
 import { loadAgyFixture } from "./testing/agy-computer-emulator.js";
 
@@ -224,7 +224,7 @@ describe("Antigravity library on a Docker computer (opt-in)", () => {
       expect(await read(ANTIGRAVITY_JOB_FILES.stderr)).toBe("stub finished\n");
       expect(JSON.parse(await read(ANTIGRAVITY_JOB_FILES.findings))).toEqual(done.findings);
       expect(await read(ANTIGRAVITY_JOB_FILES.report)).toContain("## Confirmed");
-      const argv = (await read("argv.bin")).split("\0").slice(0, -1);
+      const argv = (await read(`${RESEARCH_WORK_DIR}/argv.bin`)).split("\0").slice(0, -1);
       expect(argv).toEqual(
         antigravityResearchArgv(
           antigravityResearchSettingsSchema.parse({

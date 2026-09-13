@@ -24,6 +24,9 @@ export const BACKGROUND_WORK_LAUNCH = [
   'exec bash -lc "$4"',
 ].join("\n");
 
+/** Subfolder of a research job folder that the launched process runs in and may write to. */
+export const RESEARCH_WORK_DIR = "work";
+
 /** Run-id slot a research job's marker uses, so cancelling the originating run leaves it alone. */
 export function researchWorkRunId(jobId: string): string {
   return `research.${jobId}`;
@@ -36,10 +39,12 @@ export function researchWorkRunId(jobId: string): string {
  * job files, and returns as soon as the process is running.
  *
  * Positional args: computerId runId nonce workdir hardTimeoutSeconds -- argv...
- * Inside the workdir it writes events.ndjson (stdout), stderr.log (stderr) and,
- * when the process ends, exit.code. An executable that cannot be found ends the
- * job before the marker exists with exit code 127 in those files; a computer
- * without setsid or a timeout that accepts --kill-after ends it with 126.
+ * The workdir is the harness-owned job folder: the wrapper alone writes
+ * events.ndjson (stdout), stderr.log (stderr) and, when the process ends,
+ * exit.code there. The process itself runs one level down in work/, the only
+ * place it writes. An executable that cannot be found ends the job before the
+ * marker exists with exit code 127 in those files; a computer without setsid or
+ * a timeout that accepts --kill-after ends it with 126.
  */
 export const RESEARCH_WORK_LAUNCH = [
   `marker="${BACKGROUND_WORK_MARKER_PREFIX}$1-$2-$3"`,
@@ -50,7 +55,7 @@ export const RESEARCH_WORK_LAUNCH = [
   "shift",
   '[ "$#" -ge 1 ] || exit 2',
   `case "$limit" in ''|*[!0-9]*) exit 2 ;; esac`,
-  'mkdir -p -- "$workdir" && cd -- "$workdir" || exit 1',
+  `mkdir -p -- "$workdir/${RESEARCH_WORK_DIR}" && cd -- "$workdir" || exit 1`,
   'if ! command -v -- "$1" >/dev/null 2>&1; then',
   `  printf 'error: research executable not found: %s\\n' "$1" >stderr.log`,
   "  printf '127\\n' >exit.code",
@@ -68,7 +73,7 @@ export const RESEARCH_WORK_LAUNCH = [
   ": >events.ndjson",
   ": >stderr.log",
   // The wrapper inherits fd 9, so the marker stays held until the process ends.
-  `setsid bash -c 'limit="$1"; shift; timeout --kill-after=30s "$limit" "$@" </dev/null >events.ndjson 2>stderr.log; code=$?; printf "%s\\n" "$code" >exit.code.tmp && mv -f exit.code.tmp exit.code' rakazo-research-run "\${limit}s" "$@" </dev/null >/dev/null 2>&1 &`,
+  `setsid bash -c 'limit="$1"; shift; (cd ${RESEARCH_WORK_DIR} && exec timeout --kill-after=30s "$limit" "$@") </dev/null >events.ndjson 2>stderr.log; code=$?; printf "%s\\n" "$code" >exit.code.tmp && mv -f exit.code.tmp exit.code' rakazo-research-run "\${limit}s" "$@" </dev/null >/dev/null 2>&1 &`,
   "exit 0",
 ].join("\n");
 

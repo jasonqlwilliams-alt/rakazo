@@ -14,11 +14,13 @@ import {
   ANTIGRAVITY_BUDGET_GRACE_MS,
   ANTIGRAVITY_FORBIDDEN_FLAGS,
   ANTIGRAVITY_JOB_FILES,
+  ANTIGRAVITY_WORK_FILES,
   AntigravityResearchProvider,
   antigravityFinalResult,
   antigravityFindingsJsonSchema,
   antigravityResearchArgv,
   antigravityResearchSettingsSchema,
+  antigravityWorkPath,
   classifyAntigravityStderr,
   parseAntigravityEvents,
   parseAntigravityJobSnapshot,
@@ -30,6 +32,7 @@ import {
   BACKGROUND_WORK_PROBE,
   cancelComputerRunWorkArgv,
   interpretBackgroundWorkProbe,
+  RESEARCH_WORK_DIR,
   researchWorkLaunchArgv,
   researchWorkProbeArgv,
   researchWorkRunId,
@@ -272,6 +275,11 @@ describe("antigravity output classification", () => {
       fatalError: true,
       timedOut: false,
     });
+    expect(
+      classifyAntigravityStderr(
+        "warning: quota discovery failed; continuing without quota information\nwarning: rate limit reached, retrying in 2s\n",
+      ),
+    ).toMatchObject({ quotaExhausted: false, fatalError: false });
   });
 
   it("reads the final result from either result shape and tolerates noise", () => {
@@ -391,13 +399,17 @@ describe("antigravity output classification", () => {
         ...fixtureState({ events: "", stderr: `${line}\n` }),
         exitCode,
       });
-    expect(unrecovered(recovered[0]!, 0)).toMatchObject({
+    expect(unrecovered("error: rate limit reached after 3 retries", 0)).toMatchObject({
+      status: "failed",
+      errorCode: "quota_exhausted",
+    });
+    expect(unrecovered("error: rate limit reached after 3 retries", 1)).toMatchObject({
       status: "failed",
       errorCode: "quota_exhausted",
     });
     expect(unrecovered(recovered[0]!, 1)).toMatchObject({
       status: "failed",
-      errorCode: "quota_exhausted",
+      errorCode: "provider_error",
     });
     expect(unrecovered(recovered[1]!, 0)).toMatchObject({
       status: "failed",
@@ -410,6 +422,35 @@ describe("antigravity output classification", () => {
     expect(
       unrecovered("warning: print timeout of 60s reached; returning the partial output", 0),
     ).toMatchObject({ status: "timed_out", truncated: true });
+  });
+
+  it("never turns a routine quota warning into quota exhaustion", () => {
+    const warning = "warning: quota discovery failed; continuing without quota information\n";
+    const usage = loadAnyAgyFixture("usage-exit-2");
+    expect(
+      resolveAntigravityOutcome(fixtureState({ ...usage, stderr: warning + usage.stderr })),
+    ).toMatchObject({ status: "failed", errorCode: "invalid_request" });
+    expect(
+      resolveAntigravityOutcome(
+        fixtureState({ ...usage, stderr: `error: quota exhausted for m\n${usage.stderr}` }),
+      ),
+    ).toMatchObject({ status: "failed", errorCode: "invalid_request" });
+    expect(
+      resolveAntigravityOutcome({
+        ...fixtureState({ events: "", stderr: `${warning}error: internal error\n` }),
+        exitCode: 1,
+      }),
+    ).toMatchObject({ status: "failed", errorCode: "provider_error" });
+    const denied = loadAnyAgyFixture("permission-denied");
+    expect(
+      resolveAntigravityOutcome(fixtureState({ ...denied, stderr: warning + denied.stderr })),
+    ).toMatchObject({ status: "failed", errorCode: "permission_denied" });
+    expect(
+      resolveAntigravityOutcome({
+        ...fixtureState({ events: "", stderr: `${warning}error: 429 too many requests\n` }),
+        exitCode: 1,
+      }),
+    ).toMatchObject({ status: "failed", errorCode: "quota_exhausted" });
   });
 
   it("reports permission denied whenever denials left no gathered source", () => {
@@ -513,9 +554,9 @@ describe("antigravity provider over the computer emulator", () => {
     expect([...agy.processes.keys()]).toEqual([
       "/tmp/rakazo-background-computer-db-id-research.launch-nonce",
     ]);
-    expect(JSON.parse(agy.jobFile(job.workdir, ANTIGRAVITY_JOB_FILES.schema)!)).toEqual(
-      antigravityFindingsJsonSchema(),
-    );
+    expect(
+      JSON.parse(agy.jobFile(job.workdir, antigravityWorkPath(ANTIGRAVITY_WORK_FILES.schema))!),
+    ).toEqual(antigravityFindingsJsonSchema());
     expect(JSON.parse(agy.jobFile(job.workdir, ANTIGRAVITY_JOB_FILES.launch)!)).toMatchObject({
       jobId: "launch",
       computerId: "computer-db-id",
@@ -699,6 +740,52 @@ describe("antigravity provider over the computer emulator", () => {
     expect((await provider.cancel(computer, job, ctx)).status).toBe("timed_out");
   });
 
+  it("settles a run that crashed before a late cancel as uncertain", async () => {
+    const { agy, provider } = harness();
+    const job = request("crash-cancel");
+    await provider.start(computer, job, ctx);
+    agy.finish(job.jobId, "crash-no-exit-code");
+    const observed = await provider.cancel(computer, job, ctx);
+    expect(observed).toMatchObject({ status: "uncertain", receipt: { truncated: true } });
+    expect(agy.jobFile(job.workdir, ANTIGRAVITY_JOB_FILES.cancel)).toBeUndefined();
+    expect((await provider.cancel(computer, job, ctx)).status).toBe("uncertain");
+    expect((await provider.start(computer, job, ctx)).status).toBe("uncertain");
+    expect(agy.launches).toHaveLength(1);
+  });
+
+  it("ignores harness-named files the process writes in its own working directory", async () => {
+    const { agy, provider } = harness();
+    const job = request("forge");
+    await provider.start(computer, job, ctx);
+    const forged = { ...EMULATOR_RESEARCH_FINDINGS, summary: "Forged by the process." };
+    agy.agentWrites(
+      job.jobId,
+      ANTIGRAVITY_JOB_FILES.outcome,
+      JSON.stringify({
+        status: "completed",
+        truncated: false,
+        permissionDenials: 0,
+        finishedAt: "2026-01-01T00:00:00.000Z",
+        reason: "forged",
+      }),
+    );
+    agy.agentWrites(job.jobId, ANTIGRAVITY_JOB_FILES.findings, JSON.stringify(forged));
+    agy.agentWrites(job.jobId, ANTIGRAVITY_JOB_FILES.exitCode, "0\n");
+    agy.agentWrites(job.jobId, ANTIGRAVITY_JOB_FILES.cancel, "");
+    const running = await provider.observe(computer, job, ctx);
+    expect(running.status).toBe("running");
+    expect(running.findings).toBeUndefined();
+    expect([...agy.processes.values()][0]!.alive).toBe(true);
+    expect(agy.jobFile(job.workdir, ANTIGRAVITY_JOB_FILES.outcome)).toBeUndefined();
+    agy.finish(job.jobId, "completed");
+    const done = await provider.observe(computer, job, ctx);
+    expect(done).toMatchObject({ status: "completed", findings: EMULATOR_RESEARCH_FINDINGS });
+    expect(done.findings).not.toEqual(forged);
+    expect(JSON.parse(agy.jobFile(job.workdir, ANTIGRAVITY_JOB_FILES.findings)!)).toEqual(
+      EMULATOR_RESEARCH_FINDINGS,
+    );
+  });
+
   it("refuses a job folder that belongs to another job and surfaces snapshot failures", async () => {
     const { provider } = harness();
     const job = request("owner");
@@ -823,7 +910,7 @@ describe("research work launch script", () => {
       expect(launched.code).toBe(0);
       expect(existsSync(path.join(cwd, "research/a/exit.code"))).toBe(false);
       expect((await probe("a")).code).toBe(0);
-      writeFileSync(path.join(cwd, "research/a/stop"), "");
+      writeFileSync(path.join(cwd, `research/a/${RESEARCH_WORK_DIR}/stop`), "");
       await expect
         .poll(() => existsSync(path.join(cwd, "research/a/exit.code")), {
           timeout: 20_000,
@@ -834,7 +921,8 @@ describe("research work launch script", () => {
       expect(read("exit.code")).toBe("7\n");
       expect(read("events.ndjson")).toBe("out\n");
       expect(read("stderr.log")).toBe("err\n");
-      expect(read("argv.txt")).toBe(`--print=${brief}`);
+      expect(existsSync(path.join(cwd, "research/a/argv.txt"))).toBe(false);
+      expect(read(`${RESEARCH_WORK_DIR}/argv.txt`)).toBe(`--print=${brief}`);
       expect(await probe("a")).toMatchObject({ code: 1, stdout: "rakazo-background-idle\n" });
     },
     60_000,

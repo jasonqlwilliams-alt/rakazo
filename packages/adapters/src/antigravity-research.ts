@@ -17,6 +17,7 @@ import * as z from "zod";
 import {
   cancelComputerRunWorkArgv,
   interpretBackgroundWorkProbe,
+  RESEARCH_WORK_DIR,
   researchWorkLaunchArgv,
   researchWorkProbeArgv,
   researchWorkRunId,
@@ -44,19 +45,36 @@ export const ANTIGRAVITY_FORBIDDEN_FLAGS = [
   "--add-dir",
 ] as const;
 
-/** Files inside one job's workdir. The launch script owns events, stderr and exit. */
+/**
+ * Layout of one job folder, `research/<jobId>/`. The folder itself is
+ * harness-owned: the provider writes launch.json, cancel.requested,
+ * outcome.json, findings.json and report.md, and the launch wrapper alone
+ * writes events.ndjson, stderr.log and exit.code. `agy` runs one level down in
+ * `work/`, the only place it writes; the schema it reads and the log it keeps
+ * live there with whatever else it creates, and nothing under work/ is ever
+ * read as harness state.
+ */
 export const ANTIGRAVITY_JOB_FILES = {
-  schema: "findings.schema.json",
   launch: "launch.json",
   events: "events.ndjson",
   stderr: "stderr.log",
-  log: "agy.log",
   exitCode: "exit.code",
   cancel: "cancel.requested",
   outcome: "outcome.json",
   findings: "findings.json",
   report: "report.md",
 } as const;
+/** Files `agy` reads or writes in its own working directory, `work/` inside the job folder. */
+export const ANTIGRAVITY_WORK_FILES = {
+  schema: "findings.schema.json",
+  log: "agy.log",
+} as const;
+
+export function antigravityWorkPath(
+  name: (typeof ANTIGRAVITY_WORK_FILES)[keyof typeof ANTIGRAVITY_WORK_FILES],
+): string {
+  return `${RESEARCH_WORK_DIR}/${name}`;
+}
 
 const flagValue = z
   .string()
@@ -144,13 +162,13 @@ export function antigravityResearchArgv(
     settings.executable,
     `--print=${renderAntigravityBrief(request.brief, request.depth)}`,
     "--output-format=stream-json",
-    `--json-schema=${ANTIGRAVITY_JOB_FILES.schema}`,
+    `--json-schema=${ANTIGRAVITY_WORK_FILES.schema}`,
     `--model=${settings.model}`,
     `--effort=${antigravityEffort(request.depth)}`,
     `--mode=${settings.mode}`,
     "--sandbox",
     `--print-timeout=${Math.ceil(request.budgetMs / 1000)}s`,
-    `--log-file=${ANTIGRAVITY_JOB_FILES.log}`,
+    `--log-file=${ANTIGRAVITY_WORK_FILES.log}`,
     ...(settings.project ? [`--project=${settings.project}`] : []),
   ];
 }
@@ -171,7 +189,8 @@ export interface AntigravityStderrSignals {
 const STDERR_RULES = {
   authRequired:
     /headless ?auth|authentication (?:is )?required|not (?:signed|logged) in|sign in (?:to|at)|auth(?:orization|entication)? (?:required|expired)|invalid_grant/i,
-  quotaExhausted: /quota|rate.?limit|resource.?exhausted|too many requests|\b429\b/i,
+  quotaExhausted:
+    /quota (?:exhausted|exceeded|reached)|insufficient_quota|rate.?limit(?:ed|\s+(?:exceeded|reached|hit))|resource.?exhausted|too many requests|\b429\b/i,
   usageError:
     /^(?:error: )?(?:unknown (?:flag|shorthand flag|command)|unexpected argument|flag needs an argument|invalid (?:argument|value)|usage:)/i,
   timedOut: /print.?timeout|returning (?:the )?partial output/i,
@@ -197,12 +216,13 @@ export function classifyAntigravityStderr(stderr: string): AntigravityStderrSign
   for (const raw of stderr.split(/\r?\n/)) {
     const line = raw.trim();
     if (!line) continue;
+    const fatal = STDERR_RULES.fatalError.test(line);
     if (STDERR_RULES.authRequired.test(line)) signals.authRequired = true;
-    if (STDERR_RULES.quotaExhausted.test(line)) signals.quotaExhausted = true;
+    if (fatal && STDERR_RULES.quotaExhausted.test(line)) signals.quotaExhausted = true;
     if (STDERR_RULES.usageError.test(line)) signals.usageError = true;
     if (STDERR_RULES.timedOut.test(line)) signals.timedOut = true;
     if (STDERR_RULES.permissionDenial.test(line)) signals.permissionDenials++;
-    if (STDERR_RULES.fatalError.test(line)) {
+    if (fatal) {
       signals.fatalError = true;
       signals.firstError ??= line;
     }
@@ -378,14 +398,14 @@ export function resolveAntigravityOutcome(state: AntigravityJobState): Antigravi
   if (signals.timedOut) {
     return { status: "timed_out", truncated: true, reason: `print timeout (${exit})`, ...base };
   }
+  if (signals.usageError && state.exitCode !== 0) {
+    return failure("invalid_request", signals.firstError ?? `usage error (${exit})`, base);
+  }
   if (signals.authRequired) {
     return failure("auth_required", signals.firstError ?? `sign-in required (${exit})`, base);
   }
   if (signals.quotaExhausted) {
     return failure("quota_exhausted", signals.firstError ?? `quota exhausted (${exit})`, base);
-  }
-  if (signals.usageError && state.exitCode !== 0) {
-    return failure("invalid_request", signals.firstError ?? `usage error (${exit})`, base);
   }
   if (state.cancelRequested && state.exitCode !== 0) {
     return { status: "cancelled", truncated: true, reason: `cancelled (${exit})`, ...base };
@@ -538,7 +558,9 @@ const decoder = new TextDecoder();
 
 /**
  * Runs `agy` detached on the bot computer under the background-work marker,
- * keeps every job fact in the job folder, and classifies the end from files.
+ * keeps every job fact in the harness-owned job folder, and classifies the end
+ * from exit.code and stderr.log there; the process works in work/ underneath
+ * and nothing it writes is read as harness state (see ANTIGRAVITY_JOB_FILES).
  * Idempotent on jobId through launch.json: a replay observes, never launches.
  */
 export class AntigravityResearchProvider implements ResearchProvider {
@@ -588,7 +610,7 @@ export class AntigravityResearchProvider implements ResearchProvider {
       budgetMs: job.budgetMs,
       nonce: this.nonce(),
     };
-    await this.write(computer, job.workdir, ANTIGRAVITY_JOB_FILES.schema, {
+    await this.write(computer, job.workdir, antigravityWorkPath(ANTIGRAVITY_WORK_FILES.schema), {
       content: JSON.stringify(antigravityFindingsJsonSchema(), null, 2),
       context,
     });
@@ -672,13 +694,16 @@ export class AntigravityResearchProvider implements ResearchProvider {
     const settled = await this.settledObservation(computer, job, launch, snapshot, context);
     if (settled) return settled;
     if (snapshot.exitCode === undefined) {
-      if (!snapshot.files.has(ANTIGRAVITY_JOB_FILES.cancel)) {
-        await this.write(computer, job.workdir, ANTIGRAVITY_JOB_FILES.cancel, {
-          content: `${this.now().toISOString()}\n`,
-          context,
-        });
+      const marker = await this.probe(computer, launch, context);
+      if (marker !== "idle") {
+        if (!snapshot.files.has(ANTIGRAVITY_JOB_FILES.cancel)) {
+          await this.write(computer, job.workdir, ANTIGRAVITY_JOB_FILES.cancel, {
+            content: `${this.now().toISOString()}\n`,
+            context,
+          });
+        }
+        await this.kill(computer, launch, context);
       }
-      await this.kill(computer, launch, context);
     }
     return this.observe(computer, job, context);
   }

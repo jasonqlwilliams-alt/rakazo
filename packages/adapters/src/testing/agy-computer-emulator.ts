@@ -17,6 +17,7 @@ import {
   BACKGROUND_WORK_IDLE_SENTINEL,
   BACKGROUND_WORK_PROBE,
   CANCEL_COMPUTER_RUN_WORK,
+  RESEARCH_WORK_DIR,
   RESEARCH_WORK_LAUNCH,
 } from "../computer-idle.js";
 import type { FakeBox } from "../fake-sandbox.js";
@@ -100,7 +101,10 @@ interface AgyProcess {
   jobId: string;
   marker: string;
   box: FakeBox;
+  /** The harness-owned job folder the wrapper writes to. */
   workdir: string;
+  /** Where the process itself runs and writes, as the launch script places it. */
+  cwd: string;
   alive: boolean;
   probes: number;
 }
@@ -194,6 +198,12 @@ export class AgyComputerEmulator {
     this.running(jobId).alive = false;
   }
 
+  /** Write a file as the running process would, inside its own working directory. */
+  agentWrites(jobId: string, name: string, content: string) {
+    const process = this.running(jobId);
+    put(process.box, process.cwd, name, content);
+  }
+
   /** Read one job file back for assertions, from whichever computer holds it. */
   jobFile(workdir: string, name: string): string | undefined {
     for (const box of this.files.boxes.values()) {
@@ -239,6 +249,7 @@ export class AgyComputerEmulator {
       marker,
       box,
       workdir: workdir!,
+      cwd: `${workdir}/${RESEARCH_WORK_DIR}`,
       alive: true,
       probes: 0,
     });
