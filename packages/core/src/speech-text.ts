@@ -203,6 +203,7 @@ export function speechFromBlocks(blocks: MessageBlock[]): string {
       if (block.kind === "ask") return block.text;
       if (block.kind === "cloud_agent")
         return `${block.title}: ${block.status}${block.prUrl ? ` ${block.prUrl}` : ""}`;
+      if (block.kind === "research") return `${block.title}: ${block.status}`;
       if (block.kind === "computer") return block.text;
       if (block.kind === "subagent") {
         if (block.status === "running") return `${block.name} is working on ${block.task}`;

@@ -1,6 +1,10 @@
 import type { MessageBlock } from "@rakazo/contracts";
 import { describe, expect, it } from "vitest";
-import { takeLiveMessage, updateCloudAgentMessages } from "./thread-message-updates.js";
+import {
+  takeLiveMessage,
+  updateCloudAgentMessages,
+  updateResearchMessages,
+} from "./thread-message-updates.js";
 
 const cloud = (agentId: string): MessageBlock => ({
   kind: "cloud_agent",
@@ -47,5 +51,29 @@ describe("shared message updates", () => {
     expect(result[0]?.blocks[1]).toBe(messages[0]?.blocks[1]);
     expect(result[2]).toBe(messages[2]);
     expect(messages[0]?.blocks[0]).toMatchObject({ status: "running" });
+  });
+
+  it("updates every matching research block while preserving unrelated messages", () => {
+    const research = (researchId: string, status: "running" | "completed" = "running") => ({
+      kind: "research" as const,
+      researchId,
+      title: "Pricing survey",
+      status,
+    });
+    const messages = [
+      { id: "first", blocks: [research("job"), research("other")] },
+      { id: "second", blocks: [research("job")] },
+      { id: "third", blocks: [{ kind: "text" as const, text: "unchanged" }] },
+    ];
+    const result = updateResearchMessages(messages, {
+      messageId: "first",
+      researchId: "job",
+      title: "Pricing survey",
+      status: "completed",
+    });
+    expect(result[0]?.blocks[0]).toMatchObject({ researchId: "job", status: "completed" });
+    expect(result[1]?.blocks[0]).toMatchObject({ researchId: "job", status: "completed" });
+    expect(result[0]?.blocks[1]).toBe(messages[0]?.blocks[1]);
+    expect(result[2]).toBe(messages[2]);
   });
 });

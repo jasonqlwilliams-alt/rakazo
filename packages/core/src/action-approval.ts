@@ -32,6 +32,7 @@ const APPROVAL_REQUIRED_BUILTIN_TOOLS = new Set([
   "cloud_agent_launch",
   "cloud_agent_reply",
   "cloud_agent_cancel",
+  "research_start",
 ]);
 const EXPLICIT_APPROVAL_BUILTIN_TOOLS = new Set(["create_space"]);
 
@@ -44,6 +45,7 @@ const UNATTENDED_SAFE_BUILTIN_TOOLS = new Set([
   "read_file",
   "recall_memory",
   "request_takeover",
+  "research_status",
   "run_subagent",
   "schedule_list",
   "scratchpad_list",

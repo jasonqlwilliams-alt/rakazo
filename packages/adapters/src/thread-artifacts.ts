@@ -34,7 +34,8 @@ export async function attachWorkspaceFileToThread(
     userId: string;
     botId: string;
     groupId?: string;
-    runId: string;
+    /** Absent for files a background job stores outside any run. */
+    runId?: string;
     filePath: string;
     bytes: Uint8Array;
     operationId: string;

@@ -23,6 +23,7 @@ import {
   createJobReconciler,
   createMessagingContextLoader,
   createMessagingTeamChatSender,
+  createResearchConnection,
   createRunExecutor,
   createRunSandbox,
   createRunSecretWriter,
@@ -53,8 +54,10 @@ import {
   piSessionsRoot,
   pushTokenPath,
   type RemoteConnectorDependencies,
+  type ResearchConnection,
   reconcileCloudAgents,
   reconcileComputerUpdates,
+  reconcileResearchJobs,
   removePiUserSessions,
   ScriptedAgentRuntime,
   SmtpEmailProvider,
@@ -130,6 +133,8 @@ export async function createApp(
     email?: TransactionalEmailProvider;
     remoteConnectors?: RemoteConnectorDependencies;
     logger?: Logger;
+    /** Research adapter override; tests bind the offline emulator here. */
+    research?: ResearchConnection | null;
   } = {},
 ): Promise<AppHandles> {
   const {
@@ -142,6 +147,7 @@ export async function createApp(
     email: emailOverride,
     remoteConnectors,
     logger: loggerOverride,
+    research: researchOverride,
     ...envOverrides
   } = overrides;
   const env = { ...loadEnv(process.env), ...envOverrides };
@@ -330,6 +336,9 @@ export async function createApp(
     CURSOR_API_KEY: env.cursorApiKey,
     CLOUD_AGENT_SPACE_ID: env.cloudAgentSpaceId,
   });
+  // Research runs on the bot computer; without a computer host it stays uninjected.
+  const research =
+    researchOverride === undefined ? createResearchConnection(sandbox) : researchOverride;
   const shutdown = new AbortController();
   const executor = createRunExecutor({
     prisma,
@@ -367,6 +376,7 @@ export async function createApp(
     messaging: messaging ? createMessagingContextLoader(prisma) : undefined,
     web: createWebProvider(),
     cloudAgent,
+    research,
     shutdownSignal: shutdown.signal,
   });
 
@@ -384,6 +394,9 @@ export async function createApp(
     deploymentModelKey: env.deploymentModelKey,
     messaging,
     cloudAgent,
+    research,
+    artifacts,
+    dataDir: env.dataDir,
   });
   if (inMemoryJobs) {
     await inMemoryJobs.start(jobHandlers);
@@ -393,6 +406,7 @@ export async function createApp(
         prisma,
         jobs,
         reconcileCloudAgents: () => reconcileCloudAgents({ prisma, jobs, cloudAgent }),
+        reconcileResearchJobs: () => reconcileResearchJobs({ prisma, jobs, research }),
         reconcileComputerUpdates: () => reconcileComputerUpdates({ prisma, jobs }),
       })
     : undefined;

@@ -102,6 +102,8 @@ export function blocksToAgentHistoryText(blocks: MessageBlock[]): string {
       if (block.kind === "handoff") {
         return `[handoff ${block.fromBotId} -> ${block.toBotId}] ${block.text}`;
       }
+      // A later turn must still know the research job existed; findings stay a tool result.
+      if (block.kind === "research") return `[research: ${block.title} - ${block.status}]`;
       if ("text" in block && typeof block.text === "string") return block.text;
       return "";
     })

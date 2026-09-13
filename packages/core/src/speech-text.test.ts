@@ -83,6 +83,11 @@ describe("speakable", () => {
         { kind: "ask", text: "Ship it?", status: "pending" },
       ]),
     ).toContain("Ship it?");
+    expect(
+      speechFromBlocks([
+        { kind: "research", researchId: "rj_1", title: "Pricing survey", status: "running" },
+      ]),
+    ).toBe("Pricing survey: running");
   });
 });
 

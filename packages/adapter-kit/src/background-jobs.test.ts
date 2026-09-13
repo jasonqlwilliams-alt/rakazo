@@ -5,6 +5,8 @@ import {
   historyCompactJobKey,
   messagingDeliverJob,
   parseBackgroundJob,
+  researchPollJob,
+  researchPollJobKey,
 } from "./background-jobs.js";
 import type { BackgroundJobHandlers } from "./types.js";
 
@@ -19,6 +21,7 @@ function handlers(): BackgroundJobHandlers {
     "history.compact": vi.fn(async () => undefined),
     "messaging.deliver": vi.fn(async () => undefined),
     "cloud_agent.poll": vi.fn(async () => undefined),
+    "research.poll": vi.fn(async () => undefined),
   };
 }
 
@@ -92,5 +95,23 @@ describe("historyCompactJob", () => {
 
   it("keys different threads differently", () => {
     expect(historyCompactJobKey("thread-1")).not.toBe(historyCompactJobKey("thread-2"));
+  });
+});
+
+describe("researchPollJob", () => {
+  it("replaces earlier polls of the same job and carries the wake time", async () => {
+    const at = new Date("2026-09-12T10:00:00.000Z");
+    expect(researchPollJob({ jobId: "job-1" }, at)).toEqual({
+      name: "research.poll",
+      payload: { jobId: "job-1" },
+      replaceKey: researchPollJobKey("job-1"),
+      availableAt: at,
+    });
+    expect(researchPollJob({ jobId: "job-1" })).not.toHaveProperty("availableAt");
+    expect(researchPollJobKey("job-1")).not.toBe(researchPollJobKey("job-2"));
+    expect(() => parseBackgroundJob("research.poll", { jobId: "" })).toThrow();
+    const target = handlers();
+    await dispatchBackgroundJob(target, "research.poll", { jobId: "job-1" });
+    expect(target["research.poll"]).toHaveBeenCalledWith({ jobId: "job-1" });
   });
 });

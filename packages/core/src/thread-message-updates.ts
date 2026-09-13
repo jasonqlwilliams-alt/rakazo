@@ -1,5 +1,6 @@
 import type { MessageBlock } from "@rakazo/contracts";
 import { cloudAgentBlockFromPayload } from "./cloud-agent.js";
+import { researchBlockFromPayload } from "./research.js";
 
 /** Remove this run's live message and obsolete unscoped progress without reordering history. */
 export function takeLiveMessage<Message extends { id: string; runId?: string | null }>(
@@ -33,6 +34,31 @@ export function updateCloudAgentMessages<Message extends { id: string; blocks: M
         ...message,
         blocks: message.blocks.map((existing) =>
           existing.kind === "cloud_agent" && existing.agentId === agentId ? block : existing,
+        ),
+      };
+    }
+    return message;
+  });
+}
+
+export function updateResearchMessages<Message extends { id: string; blocks: MessageBlock[] }>(
+  messages: readonly Message[],
+  payload: Record<string, unknown>,
+): Message[] {
+  const researchId = String(payload.researchId ?? "");
+  const messageId = String(payload.messageId ?? "");
+  const block = researchBlockFromPayload(payload);
+  return messages.map((message) => {
+    if (
+      (messageId && message.id === messageId) ||
+      message.blocks.some(
+        (existing) => existing.kind === "research" && existing.researchId === researchId,
+      )
+    ) {
+      return {
+        ...message,
+        blocks: message.blocks.map((existing) =>
+          existing.kind === "research" && existing.researchId === researchId ? block : existing,
         ),
       };
     }

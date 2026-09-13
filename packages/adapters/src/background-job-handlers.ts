@@ -1,6 +1,7 @@
 import type {
   AgentHomeStore,
   AgentRuntime,
+  ArtifactStore,
   BackgroundJobHandlers,
   JobPublisher,
   MessagingSurface,
@@ -19,6 +20,8 @@ import type { createRunExecutor } from "./executor.js";
 import { compactHistory } from "./history-compaction.js";
 import type { MemoryProviderResolver } from "./memory-provider-factory.js";
 import { deliverMessagingOutbound, mirrorMessagingOutbound } from "./messaging-delivery.js";
+import { pollResearchJob } from "./research-poll.js";
+import type { ResearchConnection } from "./research-service.js";
 import type { EncryptedSecretStore } from "./secrets.js";
 import { expireTaughtSkillTeaching } from "./teaching-session.js";
 
@@ -36,6 +39,10 @@ export function createBackgroundJobHandlers(deps: {
   deploymentModelKey?: string;
   messaging?: MessagingSurface;
   cloudAgent?: CloudAgentConnection | null;
+  /** Research on the bot computer; null/omit leaves research.poll a no-op. */
+  research?: ResearchConnection | null;
+  artifacts?: ArtifactStore;
+  dataDir?: string;
 }): BackgroundJobHandlers {
   const deliverMessaging = async (runId?: string) => {
     if (!deps.messaging) return;
@@ -96,6 +103,22 @@ export function createBackgroundJobHandlers(deps: {
           jobs: deps.jobs,
           events: deps.events,
           cloudAgent: deps.cloudAgent,
+        },
+        payload,
+      );
+    },
+    "research.poll": async (payload) => {
+      if (!deps.research || !deps.artifacts) return;
+      await pollResearchJob(
+        {
+          prisma: deps.prisma,
+          jobs: deps.jobs,
+          events: deps.events,
+          sandbox: deps.sandbox,
+          home: deps.home,
+          artifacts: deps.artifacts,
+          research: deps.research,
+          dataDir: deps.dataDir,
         },
         payload,
       );

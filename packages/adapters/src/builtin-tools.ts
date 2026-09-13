@@ -505,6 +505,55 @@ export const builtinAgentTools: ConnectorTool[] = [
       required: ["id"],
     },
   },
+  // Research tools: exposed by selectResearchTools() only when the Space enabled
+  // research and the bot has a computer. The job runs on that computer; the
+  // poller wakes this bot once with the result.
+  {
+    name: "research_start",
+    description:
+      "Start a long research job on your computer for work that needs many sources or long reading. Returns immediately with a research id; you are woken once when it ends. Reference sources instead of pasting them. Do not start a second job for the same goal while one runs.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Short title for the job." },
+        goal: { type: "string", description: "What the research must answer." },
+        context: { type: "string", description: "Background the researcher needs." },
+        preferredSources: {
+          type: "array",
+          description: "URLs or workspace paths to prefer.",
+          items: { type: "string" },
+        },
+        successCriteria: { type: "string", description: "What a complete answer contains." },
+        nonGoals: { type: "string", description: "What to leave out." },
+        depth: { type: "string", enum: ["standard", "deep"] },
+      },
+      required: ["title", "goal"],
+    },
+  },
+  {
+    name: "research_status",
+    description:
+      "Read a research job: status, receipt, and once completed its findings with cited sources.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        researchId: { type: "string", description: "Research id from research_start." },
+      },
+      required: ["researchId"],
+    },
+    readOnly: true,
+  },
+  {
+    name: "research_cancel",
+    description: "Stop a running research job. Partial work stays on the computer.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        researchId: { type: "string", description: "Research id from research_start." },
+      },
+      required: ["researchId"],
+    },
+  },
   // Semantic-memory tools: exposed by selectMemoryTools() only when a
   // A Space memory provider is configured (which hides `remember`).
   {

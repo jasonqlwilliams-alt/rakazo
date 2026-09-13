@@ -523,6 +523,8 @@ export interface BackgroundJobPayloads {
   "messaging.deliver": { runId?: string };
   /** Reconcile durable remote-agent intent; scope is loaded from the database. */
   "cloud_agent.poll": { agentId: string };
+  /** Reconcile one durable research job on the bot computer; scope is loaded from the database. */
+  "research.poll": { jobId: string };
 }
 
 export type BackgroundJobName = keyof BackgroundJobPayloads;
