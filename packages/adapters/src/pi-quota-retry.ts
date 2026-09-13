@@ -121,6 +121,61 @@ async function waitForRetry(ms: number, signal?: AbortSignal) {
  */
 export const QUOTA_REPLAY = Symbol("rakazo.quotaReplay");
 
+class QuotaRetryEventStream extends AssistantMessageEventStream {
+  private forwardedEvents = 0;
+  private handledEvents = 0;
+  private onHandled?: () => void;
+
+  constructor(private readonly consumerClosed: AbortController) {
+    super();
+  }
+
+  override push(event: AssistantMessageEvent) {
+    this.forwardedEvents++;
+    super.push(event);
+  }
+
+  override [Symbol.asyncIterator](): AsyncIterator<AssistantMessageEvent> {
+    const events = this.readEvents();
+    return {
+      next: () => events.next(),
+      return: () => {
+        this.consumerClosed.abort();
+        return events.return();
+      },
+      throw: (error) => {
+        this.consumerClosed.abort();
+        return events.throw(error);
+      },
+    };
+  }
+
+  private async *readEvents() {
+    const source = { [Symbol.asyncIterator]: () => super[Symbol.asyncIterator]() };
+    for await (const event of source) {
+      yield event;
+      this.handledEvents++;
+      this.onHandled?.();
+    }
+  }
+
+  async waitForHandled(signal: AbortSignal) {
+    const target = this.forwardedEvents;
+    if (this.handledEvents >= target || signal.aborted) return;
+    await new Promise<void>((resolve) => {
+      const finish = () => {
+        this.onHandled = undefined;
+        signal.removeEventListener("abort", finish);
+        resolve();
+      };
+      this.onHandled = () => {
+        if (this.handledEvents >= target) finish();
+      };
+      signal.addEventListener("abort", finish, { once: true });
+    });
+  }
+}
+
 /** Replay one model request after a quota stop; never replay an agent turn. */
 export function streamWithQuotaRetry(
   models: Pick<Models, "streamSimple">,
@@ -129,9 +184,12 @@ export function streamWithQuotaRetry(
   options: SimpleStreamOptions | undefined,
   progress: (text: string) => void,
 ): AssistantMessageEventStream {
-  const output = new AssistantMessageEventStream();
+  const consumerClosed = new AbortController();
+  const output = new QuotaRetryEventStream(consumerClosed);
   const config = quotaRetryConfig();
-  const signal = options?.signal;
+  const signal = options?.signal
+    ? AbortSignal.any([options.signal, consumerClosed.signal])
+    : consumerClosed.signal;
   const emptyMessage = (error: unknown): AssistantMessage => ({
     role: "assistant",
     content: [],
@@ -165,6 +223,7 @@ export function streamWithQuotaRetry(
         let replayMarked = false;
         const attemptOptions: SimpleStreamOptions = {
           ...options,
+          signal,
           maxRetries: 0,
           onResponse: async (value, selected) => {
             response = value;
@@ -199,6 +258,8 @@ export function streamWithQuotaRetry(
               break;
             }
             if (retrying) {
+              await output.waitForHandled(signal);
+              signal.throwIfAborted();
               progress("");
               retrying = false;
             }
@@ -246,6 +307,8 @@ export function streamWithQuotaRetry(
           return;
         }
         const delay = Math.max(config.delayMs, quota.retryAfterMs);
+        await output.waitForHandled(signal);
+        signal.throwIfAborted();
         retrying = true;
         progress(
           `Quota, retrying in ${Math.ceil(delay / 1000)}s (${retries + 1}/${config.maxRetries}).`,
@@ -259,7 +322,10 @@ export function streamWithQuotaRetry(
         error: emptyMessage(error),
       });
     } finally {
-      if (retrying) progress("");
+      if (retrying) {
+        await output.waitForHandled(signal);
+        progress("");
+      }
       output.end();
     }
   })();

@@ -242,7 +242,10 @@ describe("real Pi against an offline model HTTP endpoint", () => {
           expect() {},
           response: { type: "stream-error", text: "Saving now. ", message: "429 rate limit" },
         },
-        { expect() {}, response: { type: "text", text: "Saved." } },
+        {
+          expect() {},
+          response: { type: "stream-error", text: "Retrying. ", message: "429 rate limit" },
+        },
       ],
     });
     cleanups.push(() => server.close());
@@ -252,6 +255,45 @@ describe("real Pi against an offline model HTTP endpoint", () => {
       if (event.type === "retract") break;
     }
     expect(seen.at(-1)).toBe("retract");
+    server.assertComplete();
+  });
+
+  it("orders consecutive quota notices after replayed text during a slow retraction", async () => {
+    vi.stubEnv("RAKAZO_QUOTA_RETRY_MS", "1");
+    const server = await startModelEmulator({
+      steps: [
+        {
+          expect() {},
+          response: { type: "stream-error", text: "First attempt. ", message: "429 rate limit" },
+        },
+        {
+          expect() {},
+          response: { type: "stream-error", text: "Second attempt. ", message: "429 rate limit" },
+        },
+        { expect() {}, response: { type: "text", text: "Saved." } },
+      ],
+    });
+    cleanups.push(() => server.close());
+    const events: AgentRuntimeEvent[] = [];
+    for await (const event of new PiAgentRuntime().run(runRequest(server.model))) {
+      events.push(event);
+      if (event.type === "retract" && event.chars === "First attempt. ".length) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+    }
+    server.assertComplete();
+    expect(events.filter((event) => event.type !== "usage")).toEqual([
+      { type: "text", text: "First attempt. " },
+      { type: "progress", text: "Quota, retrying in 1s (1/3)." },
+      { type: "progress", text: "" },
+      { type: "retract", chars: "First attempt. ".length },
+      { type: "text", text: "Second attempt. " },
+      { type: "progress", text: "Quota, retrying in 1s (2/3)." },
+      { type: "progress", text: "" },
+      { type: "retract", chars: "Second attempt. ".length },
+      { type: "text", text: "Saved." },
+      { type: "done", text: "Saved." },
+    ]);
   });
 
   it("drops a nested model call's discarded text from the subagent result", async () => {

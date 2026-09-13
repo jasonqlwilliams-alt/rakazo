@@ -1,4 +1,10 @@
-import type { AssistantMessage, Context, Models, SimpleStreamOptions } from "@earendil-works/pi-ai";
+import type {
+  AssistantMessage,
+  AssistantMessageEvent,
+  Context,
+  Models,
+  SimpleStreamOptions,
+} from "@earendil-works/pi-ai";
 import { AssistantMessageEventStream } from "@earendil-works/pi-ai/utils/event-stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { openAiCompatibleModel } from "./pi-openai-compatible-provider.js";
@@ -79,6 +85,12 @@ function fixture(
   return { streamSimple, progress, run };
 }
 
+async function collect(stream: AsyncIterable<AssistantMessageEvent>) {
+  const events: AssistantMessageEvent[] = [];
+  for await (const event of stream) events.push(event);
+  return events;
+}
+
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
@@ -141,6 +153,7 @@ describe("one model request quota retry", () => {
       vi.useFakeTimers();
       const f = fixture([{ error: "429 quota exceeded", retryAfter }, {}]);
       const stream = f.run();
+      const consumed = collect(stream);
       const waiting = retryAfter === "90" ? 90_000 : 60_000;
       await vi.advanceTimersByTimeAsync(0);
       expect(f.progress).toHaveBeenCalledWith(`Quota, retrying in ${waiting / 1000}s (1/3).`);
@@ -152,9 +165,7 @@ describe("one model request quota retry", () => {
       expect(f.streamSimple.mock.calls[1]?.[1]).toBe(context);
       expect(f.streamSimple.mock.calls[1]?.[2]?.maxRetries).toBe(0);
       expect(f.progress).toHaveBeenLastCalledWith("");
-      const events = [];
-      for await (const event of stream) events.push(event.type);
-      expect(events).toEqual(["start", "done"]);
+      expect((await consumed).map((event) => event.type)).toEqual(["start", "done"]);
     },
   );
 
@@ -172,11 +183,13 @@ describe("one model request quota retry", () => {
     vi.useFakeTimers();
     const f = fixture(Array.from({ length: 4 }, () => ({ error: "insufficient_quota" })));
     const stream = f.run();
+    const consumed = collect(stream);
     await vi.advanceTimersByTimeAsync(180_000);
     expect((await stream.result()).errorMessage).toBe(
       "Quota retry failed after 3 retries. Try again later.",
     );
     expect(f.streamSimple).toHaveBeenCalledTimes(4);
+    await consumed;
   });
 
   it.each(["response", "exception"] as const)(
@@ -215,6 +228,7 @@ describe("one model request quota retry", () => {
       vi.useFakeTimers();
       const f = fixture([{ error: "429 rate limit", partial }, {}]);
       const stream = f.run();
+      const consumed = collect(stream);
       await vi.advanceTimersByTimeAsync(0);
       expect(f.progress).toHaveBeenCalledWith("Quota, retrying in 60s (1/3).");
       await vi.advanceTimersByTimeAsync(60_000);
@@ -223,8 +237,7 @@ describe("one model request quota retry", () => {
       expect(f.streamSimple).toHaveBeenCalledTimes(2);
       expect(f.streamSimple.mock.calls[1]?.[1]).toBe(context);
       expect(f.progress).toHaveBeenLastCalledWith("");
-      const events = [];
-      for await (const event of stream) events.push(event);
+      const events = await consumed;
       // Pi adds a partial assistant message per start, so the replay reuses the first one.
       expect(events.map((event) => event.type)).toEqual(["start", eventType, "done"]);
       expect(QUOTA_REPLAY in events[1]!).toBe(false);
@@ -237,10 +250,10 @@ describe("one model request quota retry", () => {
     vi.useFakeTimers();
     const f = fixture([{ error: "429 rate limit", partial: "text" }, { partial: "text" }]);
     const stream = f.run();
+    const consumed = collect(stream);
     await vi.advanceTimersByTimeAsync(60_000);
     const result = await stream.result();
-    const events = [];
-    for await (const event of stream) events.push(event);
+    const events = await consumed;
     expect(events.map((event) => event.type)).toEqual([
       "start",
       "text_delta",
@@ -257,6 +270,7 @@ describe("one model request quota retry", () => {
       Array.from({ length: 4 }, () => ({ error: "429 rate limit", partial: "text" as const })),
     );
     const stream = f.run();
+    const consumed = collect(stream);
     await vi.advanceTimersByTimeAsync(180_000);
     expect(await stream.result()).toMatchObject({
       stopReason: "error",
@@ -264,6 +278,49 @@ describe("one model request quota retry", () => {
       errorMessage: "Quota retry failed after 3 retries. Try again later.",
     });
     expect(f.streamSimple).toHaveBeenCalledTimes(4);
+    await consumed;
+  });
+
+  it.each(["abort", "return", "throw"] as const)(
+    "releases an unacknowledged event on %s without starting a retry",
+    async (stop) => {
+      vi.useFakeTimers();
+      const f = fixture([{ error: "429 rate limit", partial: "text" }, {}]);
+      const controller = new AbortController();
+      const stream = f.run({ signal: controller.signal });
+      const events = stream[Symbol.asyncIterator]();
+      expect((await events.next()).value.type).toBe("start");
+      expect((await events.next()).value.type).toBe("text_delta");
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(f.progress).not.toHaveBeenCalled();
+      expect(f.streamSimple).toHaveBeenCalledTimes(1);
+
+      if (stop === "abort") controller.abort();
+      else if (stop === "return") await events.return!();
+      else
+        await expect(events.throw!(new Error("consumer failed"))).rejects.toThrow("consumer failed");
+
+      expect((await stream.result()).stopReason).toBe("aborted");
+      expect(f.streamSimple.mock.calls[0]?.[2]?.signal?.aborted).toBe(true);
+      await events.return!();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(f.progress).not.toHaveBeenCalled();
+      expect(f.streamSimple).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("clears the last quota notice after the terminal event is handled or closed", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("RAKAZO_QUOTA_RETRY_MAX", "1");
+    const f = fixture([{ error: "429" }, { error: "429" }]);
+    const stream = f.run();
+    const events = stream[Symbol.asyncIterator]();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect((await events.next()).value.type).toBe("error");
+    expect((await stream.result()).stopReason).toBe("error");
+    expect(f.progress).toHaveBeenLastCalledWith("Quota, retrying in 60s (1/1).");
+    await events.return!();
+    expect(f.progress).toHaveBeenLastCalledWith("");
   });
 
   it("cancels the wait without another request", async () => {
