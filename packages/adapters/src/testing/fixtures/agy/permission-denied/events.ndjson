@@ -1,0 +1,6 @@
+{"type":"system","subtype":"init","model":"fixture-model","conversation_id":"fixture-conversation-denied"}
+{"type":"tool_use","name":"read_url_content","input":{"url":"https://research.test/sources/1"}}
+{"type":"tool_result","name":"read_url_content","output":"permission denied"}
+{"type":"tool_use","name":"run_command","input":{"command":"curl https://research.test/sources/1"}}
+{"type":"tool_result","name":"run_command","output":"permission denied"}
+{"type":"result","subtype":"success","is_error":false,"result":"{\"summary\":\"No source could be read, so nothing is confirmed.\",\"claims\":[{\"text\":\"The topic is probably covered by the fixture source.\",\"label\":\"inference\",\"sourceIds\":[]}],\"sources\":[],\"gaps\":[\"Every source read was denied.\"],\"applyNotes\":[]}","conversation_id":"fixture-conversation-denied"}

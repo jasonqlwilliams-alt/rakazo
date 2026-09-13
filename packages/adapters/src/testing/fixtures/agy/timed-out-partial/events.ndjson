@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","model":"fixture-model","conversation_id":"fixture-conversation-timeout"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Reading the first of many sources."}]}}
+{"type":"tool_use","name":"read_url_content","input":{"url":"https://research.test/sources/1"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Partial notes: the first source states the confirmed fact. More sources remain."}]}}

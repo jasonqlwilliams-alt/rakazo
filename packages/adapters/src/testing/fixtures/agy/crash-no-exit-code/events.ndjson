@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","model":"fixture-model","conversation_id":"fixture-conversation-crash"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Reading the fixture source."}]}}

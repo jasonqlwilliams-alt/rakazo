@@ -8,9 +8,11 @@ import type {
 import type { ResearchErrorCode } from "@rakazo/contracts";
 import { ResearchErrorCodeSchema, ResearchFindingsSchema } from "@rakazo/contracts";
 import { describe, expect, it } from "vitest";
+import { AntigravityResearchProvider } from "./antigravity-research.js";
 import type { EmulatorResearchJob } from "./research-emulator.js";
 import { EMULATOR_RESEARCH_FINDINGS, EmulatorResearchProvider } from "./research-emulator.js";
 import { RESEARCH_BRIEF_MAX_BYTES, RESEARCH_BUDGET_MAX_MS } from "./research-request.js";
+import { AgyComputerEmulator } from "./testing/agy-computer-emulator.js";
 
 const ctx: AdapterContext = {
   operationId: "operation",
@@ -34,6 +36,7 @@ function request(
   return {
     jobId,
     workdir: `bots/test-bot/research/${jobId}`,
+    computerId: "test-computer-db-id",
     brief: { title: "Fixture topic", goal: "Find what the fixture says about the topic." },
     depth: "standard",
     budgetMs: 30 * 60_000,
@@ -64,6 +67,30 @@ const factories: Record<string, () => ConformanceHarness> = {
       timeOut: (jobId) => provider.timeOut(jobId),
       vanish: (jobId) => provider.vanish(jobId),
       startedJobs: () => jobs.size,
+    };
+  },
+  antigravity() {
+    const agy = new AgyComputerEmulator();
+    const create = () =>
+      new AntigravityResearchProvider({ sandbox: agy, settings: { model: "fixture-model" } });
+    // One recorded run per error code; every fixture is pinned in antigravity-research.test.ts.
+    const failures: Record<ResearchErrorCode, string> = {
+      unavailable: "unavailable",
+      auth_required: "auth-required",
+      quota_exhausted: "quota-exhausted",
+      permission_denied: "permission-denied",
+      invalid_request: "usage-exit-2",
+      invalid_output: "schema-violation",
+      provider_error: "provider-error",
+    };
+    return {
+      provider: create(),
+      restart: create,
+      complete: (jobId, findings = EMULATOR_RESEARCH_FINDINGS) => agy.complete(jobId, findings),
+      fail: (jobId, errorCode) => agy.finish(jobId, failures[errorCode]),
+      timeOut: (jobId) => agy.finish(jobId, "timed-out-partial"),
+      vanish: (jobId) => agy.vanish(jobId),
+      startedJobs: () => agy.launches.length,
     };
   },
 };

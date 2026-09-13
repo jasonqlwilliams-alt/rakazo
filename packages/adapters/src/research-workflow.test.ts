@@ -32,6 +32,7 @@ const computer: ComputerRef = {
 const request: ResearchStartRequest = {
   jobId: "fixture-research",
   workdir: "bots/fixture-bot/research/fixture-research",
+  computerId: "fixture-computer-db-id",
   brief: {
     title: "Check the fixture fact",
     goal: "Find a supported claim and distinguish it from inference.",

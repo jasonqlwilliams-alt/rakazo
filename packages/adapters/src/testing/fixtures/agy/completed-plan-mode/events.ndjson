@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","model":"fixture-model","conversation_id":"fixture-conversation-plan","mode":"plan"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Plan mode: reading sources without writing files."}]}}
+{"type":"tool_use","name":"search_web","input":{"query":"fixture topic"}}
+{"type":"tool_result","name":"search_web","output":"1. Fixture source - https://research.test/sources/1"}
+{"type":"result","subtype":"success","is_error":false,"structured_output":{"summary":"Plan mode found one cited fact and one inference.","claims":[{"text":"The fixture index lists the source page.","label":"confirmed","sourceIds":["s1"]},{"text":"A second page would add detail.","label":"inference","sourceIds":[]}],"sources":[{"id":"s1","kind":"url","locator":"https://research.test/sources/1","title":"Fixture source"}],"gaps":["No page was opened in plan mode."],"applyNotes":["Run in accept-edits mode to read the page body."]},"conversation_id":"fixture-conversation-plan"}

@@ -860,6 +860,12 @@ export interface ResearchJobRef {
 }
 
 export interface ResearchStartRequest extends ResearchJobRef {
+  /**
+   * Durable computer id that idle suspension probes for background work.
+   * ComputerRef.id is the provider handle and can differ, so a provider that
+   * launches a process on the computer tags it with this id.
+   */
+  computerId: string;
   brief: ResearchBrief;
   depth: "standard" | "deep";
   budgetMs: number;
