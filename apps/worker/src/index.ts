@@ -12,6 +12,7 @@ import {
   createJobReconciler,
   createMessagingContextLoader,
   createPostgresReconciliationLeadership,
+  createResearchConnection,
   createRunExecutor,
   createRunSandbox,
   createRunSecretWriter,
@@ -37,6 +38,7 @@ import {
   pipedreamConfigFromEnv,
   reconcileCloudAgents,
   reconcileComputerUpdates,
+  reconcileResearchJobs,
   resolveDeploymentModel,
   resolvePiSessionRoot,
   resolveSandboxProvider,
@@ -144,6 +146,8 @@ async function main() {
   const jobHost: JobWorkerHost = inMemoryJobs ?? new GraphileJobWorkerHost(databaseUrl);
   // One provider instance so emulator launches and polls share the same Map.
   const cloudAgent = createCloudAgentConnection();
+  // Research runs on the bot computer; without a computer host it stays uninjected.
+  const research = createResearchConnection(sandbox);
   const executor = createRunExecutor({
     prisma,
     runtime,
@@ -179,6 +183,7 @@ async function main() {
     messaging: messaging ? createMessagingContextLoader(prisma) : undefined,
     web: createWebProvider(),
     cloudAgent,
+    research,
   });
 
   const jobHandlers = createBackgroundJobHandlers({
@@ -195,6 +200,9 @@ async function main() {
     deploymentModelKey,
     messaging,
     cloudAgent,
+    research,
+    artifacts,
+    dataDir,
   });
   await jobHost.start(jobHandlers);
   const reconciler = createJobReconciler({
@@ -202,6 +210,7 @@ async function main() {
     jobs,
     leadership: createPostgresReconciliationLeadership(pool),
     reconcileCloudAgents: () => reconcileCloudAgents({ prisma, jobs, cloudAgent }),
+    reconcileResearchJobs: () => reconcileResearchJobs({ prisma, jobs, research }),
     reconcileComputerUpdates: () => reconcileComputerUpdates({ prisma, jobs }),
   });
   reconciler.start();

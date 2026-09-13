@@ -108,4 +108,12 @@ describe("peer message history", () => {
       ]),
     ).toBe("[to Analyst] chart it");
   });
+
+  it("renders a research card as its title and status so a later turn knows the job existed", () => {
+    expect(
+      blocksToAgentHistoryText([
+        { kind: "research", researchId: "rj_1", title: "Pricing survey", status: "completed" },
+      ]),
+    ).toBe("[research: Pricing survey - completed]");
+  });
 });

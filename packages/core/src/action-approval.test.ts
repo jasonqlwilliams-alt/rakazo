@@ -25,6 +25,9 @@ describe("toolRequiresApproval", () => {
     expect(toolRequiresApproval("delete_bot", false)).toBe(true);
     expect(toolRequiresApproval("archive_bot", false)).toBe(true);
     expect(toolRequiresApproval("cloud_agent_launch", false)).toBe(true);
+    expect(toolRequiresApproval("research_start", false)).toBe(true);
+    expect(toolRequiresApproval("research_status", false)).toBe(false);
+    expect(toolRequiresApproval("research_cancel", false)).toBe(false);
     expect(toolRequiresApproval("create_space", false)).toBe(true);
     expect(toolRequiresExplicitApproval("create_space")).toBe(true);
     expect(toolRequiresExplicitApproval("archive_bot")).toBe(false);
@@ -82,10 +85,12 @@ describe("unattendedTriggerToolRequiresApproval", () => {
       "web_search",
       "browser_snapshot",
       "request_takeover",
+      "research_status",
       "run_subagent",
     ]) {
       expect(unattendedTriggerToolRequiresApproval("webhook", name, false)).toBe(false);
     }
+    expect(unattendedTriggerToolRequiresApproval("webhook", "research_cancel", false)).toBe(true);
     expect(unattendedTriggerToolRequiresApproval("webhook", "github_get_issue", true)).toBe(false);
   });
 

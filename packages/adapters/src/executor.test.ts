@@ -206,6 +206,19 @@ describe("run tool selection", () => {
     expect(names).not.toContain("computer_act");
   });
 
+  it.each([false, true])("shows research tools only when the space enabled research (%s)", (on) => {
+    const names = selectBuiltinToolsForRun({
+      graphicalToolsAllowed: false,
+      groupId: null,
+      trigger: "message",
+      semanticMemoryEnabled: false,
+      messagingChannelRun: false,
+      researchEnabled: on,
+    }).map((tool) => tool.name);
+    for (const name of ["research_start", "research_status", "research_cancel"])
+      expect(names.includes(name)).toBe(on);
+  });
+
   const toolNames = (
     trigger: string,
     groupId: string | null = null,

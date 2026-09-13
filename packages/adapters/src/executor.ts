@@ -248,6 +248,12 @@ import {
 import type { RemoteTransportDependencies } from "./remote-mcp.js";
 import { loadReplyContext, messageToAgentHistoryText } from "./reply-context.js";
 import {
+  executeResearchTool,
+  loadResearchSettings,
+  type ResearchConnection,
+} from "./research-service.js";
+import { selectResearchTools, validResearchArgs } from "./research-tools.js";
+import {
   commitConsumedRunSecret,
   normalizeSecretAskPurpose,
   reconcileManagedConnection,
@@ -320,6 +326,7 @@ const READ_ONLY_AGENT_TOOLS = new Set([
   "browser_snapshot",
   "list_secrets",
   "cloud_agent_status",
+  "research_status",
 ]);
 const MAX_MODEL_FILE_BYTES = 250_000;
 const TURN_ATTACHMENT_UNAVAILABLE =
@@ -669,6 +676,8 @@ export interface ExecutorDeps {
   secretHttp?: RemoteTransportDependencies;
   /** Remote cloud coding agents. Null/omit means tools stay uninjected. */
   cloudAgent?: CloudAgentConnection | null;
+  /** Research on the bot computer. Null/omit means tools stay uninjected. */
+  research?: ResearchConnection | null;
   /** Aborted when createApp stop() begins so in-flight continueRun boot waits exit promptly. */
   shutdownSignal?: AbortSignal;
 }
@@ -902,6 +911,8 @@ export function createRunExecutor(deps: ExecutorDeps) {
   const web = deps.web ?? createWebProvider();
   const browser = deps.browser ?? createBrowserProvider(undefined, { sandbox: deps.sandbox });
   const cloudAgent = deps.cloudAgent;
+  // Findings live in the artifact store, so research needs it as much as the provider.
+  const research = deps.artifacts ? (deps.research ?? null) : null;
   const resolveConnectedModel = async (
     scope: { userId: string; spaceId: string },
     provider: string,
@@ -1595,6 +1606,11 @@ export function createRunExecutor(deps: ExecutorDeps) {
           : undefined;
         const graphicalToolsAllowed = graphical && acceptsImages;
         const pageBrowserAllowed = graphical && browser.describe().capabilities.page;
+        // Research tools appear only when this Space enabled research and the bot has a computer.
+        const researchEnabled =
+          research !== null &&
+          Boolean(bot.computer) &&
+          (await loadResearchSettings(deps.prisma, run.spaceId)) !== null;
         const builtins = [
           ...selectBuiltinToolsForRun({
             graphicalToolsAllowed,
@@ -1603,6 +1619,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
             trigger: run.trigger,
             semanticMemoryEnabled,
             cloudAgentEnabled: cloudAgentsEnabled(cloudAgent, run.spaceId),
+            researchEnabled,
             messagingChannelRun,
           }),
           // Cross-owner agent connections only exist for chat-linked bots.
@@ -1821,6 +1838,9 @@ export function createRunExecutor(deps: ExecutorDeps) {
             return {
               error: "Invalid cloud agent arguments. Raw environment variables are not supported.",
             };
+          }
+          if (name.startsWith("research_") && !validResearchArgs(name, args)) {
+            return { error: "Invalid research arguments. The brief is bounded to 8 KiB." };
           }
           let effectRequest: unknown = args;
           if (connectorCall.route && deps.connector?.resolveCall) {
@@ -2631,6 +2651,20 @@ export function createRunExecutor(deps: ExecutorDeps) {
             return finish(
               await executeCloudAgentTool(
                 { ...deps, cloudAgent },
+                { ...context, operationId: effectKey, botId: bot.id },
+                run,
+                name,
+                args,
+              ),
+            );
+          }
+          if (name.startsWith("research_")) {
+            if (!research || !deps.artifacts) {
+              return finish({ error: "Research is not configured." });
+            }
+            return finish(
+              await executeResearchTool(
+                { ...deps, artifacts: deps.artifacts, research },
                 { ...context, operationId: effectKey, botId: bot.id },
                 run,
                 name,
@@ -4414,23 +4448,27 @@ export function selectBuiltinToolsForRun(options: {
   trigger: string;
   semanticMemoryEnabled: boolean;
   cloudAgentEnabled?: boolean;
+  researchEnabled?: boolean;
   messagingChannelRun: boolean;
 }) {
-  return selectCloudAgentTools(
-    selectMemoryTools(
-      filterBuiltinToolsForRun(
-        filterBuiltinToolsForThread(
-          filterPageBrowserTools(
-            filterImageReturningComputerTools(builtinAgentTools, options.graphicalToolsAllowed),
-            options.pageBrowserAllowed ?? options.graphicalToolsAllowed,
+  return selectResearchTools(
+    selectCloudAgentTools(
+      selectMemoryTools(
+        filterBuiltinToolsForRun(
+          filterBuiltinToolsForThread(
+            filterPageBrowserTools(
+              filterImageReturningComputerTools(builtinAgentTools, options.graphicalToolsAllowed),
+              options.pageBrowserAllowed ?? options.graphicalToolsAllowed,
+            ),
+            options.groupId,
           ),
-          options.groupId,
+          options.trigger,
         ),
-        options.trigger,
+        options.semanticMemoryEnabled,
       ),
-      options.semanticMemoryEnabled,
+      Boolean(options.cloudAgentEnabled),
     ),
-    Boolean(options.cloudAgentEnabled),
+    Boolean(options.researchEnabled),
   ).filter(
     (tool) =>
       !options.messagingChannelRun ||

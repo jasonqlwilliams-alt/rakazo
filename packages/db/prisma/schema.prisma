@@ -186,6 +186,7 @@ model Space {
   actionApprovalRules         ActionApprovalRule[]
   actionAutoReviewPreferences ActionAutoReviewPreference[]
   memoryConfig                SpaceMemoryConfig?
+  researchSettings            SpaceResearchSettings?
   secrets                     Secret[]
   chatGroups                  ChatGroup[]
   botSecrets BotSecret[]
@@ -702,6 +703,42 @@ model CloudAgent {
   @@map("cloud_agents")
 }
 
+/// One durable research job: lifecycle state and receipt only, never findings text.
+/// No cascades, like CloudAgent: the poller observes lost scope and cancels itself.
+/// The migration adds a partial unique index on computerId for queued/running rows,
+/// so one computer runs one research job at a time.
+model ResearchJob {
+  id               String    @id @default(uuid())
+  operationKey     String    @unique
+  spaceId          String
+  userId           String
+  botId            String
+  threadId         String
+  messageId        String?
+  computerId       String
+  title            String
+  request          Json
+  status           String    @default("queued")
+  errorCode        String?
+  receipt          Json?
+  artifactIds      String[]  @default([])
+  launchDispatched Boolean   @default(false)
+  cancelRequested  Boolean   @default(false)
+  startedAt        DateTime?
+  deadlineAt       DateTime?
+  wakeRunId        String?
+  version          Int       @default(0)
+  leaseToken       String?
+  leaseExpiresAt   DateTime?
+  nextPollAt       DateTime? @default(now())
+  errorCount       Int       @default(0)
+  createdAt        DateTime  @default(now())
+
+  @@index([nextPollAt])
+  @@index([spaceId, userId, id])
+  @@map("research_jobs")
+}
+
 model ExternalEffect {
   id             String   @id @default(cuid())
   spaceId        String
@@ -1059,6 +1096,20 @@ model SpaceMemoryConfig {
   updatedAt          DateTime @updatedAt
 
   @@map("space_memory_configs")
+}
+
+/// Research on the bot computer, enabled per Space. `settings` is the research
+/// adapter's own configuration (model, executable, mode); there is no provider column.
+model SpaceResearchSettings {
+  id        String   @id @default(cuid())
+  spaceId   String   @unique
+  space     Space    @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  userId    String
+  settings  Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("space_research_settings")
 }
 
 model Secret {
