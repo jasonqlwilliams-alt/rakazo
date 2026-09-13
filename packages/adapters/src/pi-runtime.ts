@@ -1033,7 +1033,7 @@ async function executeSubagent(host: ToolHost, executionId: string, args: Record
       ),
     getApiKey: async () => selectedModel.apiKey,
     transformContext: async (messages) =>
-      pruneComputerScreenshotContext(messages, host.request.model.maxImagesPerPrompt),
+      pruneComputerScreenshotContext(messages, requestModel.maxImagesPerPrompt),
     initialState: {
       systemPrompt: [
         `You are a Rakazo subagent named "${name}".`,
