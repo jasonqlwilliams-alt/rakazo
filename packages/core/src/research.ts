@@ -1,5 +1,5 @@
-import type { MessageBlock, ResearchErrorCode, ResearchStatus } from "@rakazo/contracts";
-import { ResearchErrorCodeSchema, ResearchStatusSchema } from "@rakazo/contracts";
+import type { ResearchErrorCode, ResearchStatus } from "@rakazo/contracts";
+import { MessageBlock, ResearchErrorCodeSchema, ResearchStatusSchema } from "@rakazo/contracts";
 
 export function researchBlockFromPayload(
   payload: Record<string, unknown>,
@@ -15,4 +15,20 @@ export function researchBlockFromPayload(
     status,
     ...(errorCode ? { errorCode } : {}),
   };
+}
+
+export function researchFileBlocksFromPayload(
+  payload: Record<string, unknown>,
+): Extract<MessageBlock, { kind: "file" }>[] {
+  if (!Array.isArray(payload.files)) return [];
+  const files: Extract<MessageBlock, { kind: "file" }>[] = [];
+  const seen = new Set<string>();
+  for (const item of payload.files) {
+    const parsed = MessageBlock.safeParse(item);
+    if (!parsed.success || parsed.data.kind !== "file") continue;
+    if (seen.has(parsed.data.artifactId)) continue;
+    seen.add(parsed.data.artifactId);
+    files.push(parsed.data);
+  }
+  return files;
 }

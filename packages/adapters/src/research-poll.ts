@@ -469,7 +469,11 @@ async function finishPoll(
           threadId: job.threadId,
           botId: job.botId,
           type: "thread.research",
-          payload: { messageId: message.id, ...nextBlock },
+          payload: {
+            messageId: message.id,
+            ...nextBlock,
+            ...(addedFiles.length > 0 ? { files: addedFiles } : {}),
+          },
         });
         seq = event.seq;
       }

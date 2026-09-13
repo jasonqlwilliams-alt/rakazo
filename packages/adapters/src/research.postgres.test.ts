@@ -281,6 +281,19 @@ describePostgres("research job lifecycle and recovery (PostgreSQL + research emu
     expect(
       blocks.filter((block) => block.kind === "file").map((block) => block.artifactId),
     ).toEqual(expect.arrayContaining(job.artifactIds));
+    const completedEvent = await prisma.event.findFirst({
+      where: { threadId: h.thread.id, type: "thread.research" },
+      orderBy: { seq: "desc" },
+    });
+    expect(completedEvent?.payload).toMatchObject({
+      messageId: expect.any(String),
+      status: "completed",
+    });
+    expect(
+      ((completedEvent?.payload as { files?: { name: string }[] }).files ?? []).map(
+        (file) => file.name,
+      ),
+    ).toEqual(["findings.json", "report.md"]);
     expect(blocksToAgentHistoryText(blocks)).toContain("[research: Pricing survey - completed]");
     // Status returns the findings from the stored artifact with its receipt.
     expect(await h.tool("status", { researchId: id })).toMatchObject({

@@ -2003,6 +2003,57 @@ describe("mobile thread event reduction", () => {
     });
   });
 
+  it("appends findings files from a completed thread.research event", () => {
+    const initial = snapshot([
+      mobileMessage("msg-research", [
+        {
+          kind: "research",
+          researchId: "rj_1",
+          title: "Pricing survey",
+          status: "running",
+        },
+      ]),
+    ]);
+    const findings = {
+      kind: "file" as const,
+      artifactId: "art-findings",
+      mimeType: "application/json",
+      name: "findings.json",
+      size: 128,
+    };
+    const report = {
+      kind: "file" as const,
+      artifactId: "art-report",
+      mimeType: "text/markdown",
+      name: "report.md",
+      size: 256,
+    };
+
+    const next = applyMobileThreadEvent(initial, {
+      type: "thread.research",
+      seq: 10,
+      payload: {
+        messageId: "msg-research",
+        kind: "research",
+        researchId: "rj_1",
+        title: "Pricing survey",
+        status: "completed",
+        files: [findings, report],
+      },
+    });
+
+    expect(next?.messages[0]?.blocks).toEqual([
+      {
+        kind: "research",
+        researchId: "rj_1",
+        title: "Pricing survey",
+        status: "completed",
+      },
+      findings,
+      report,
+    ]);
+  });
+
   it("leaves the snapshot unchanged for unrelated events", () => {
     const initial = snapshot();
     expect(applyMobileThreadEvent(initial, { type: "run.started" })).toBe(initial);

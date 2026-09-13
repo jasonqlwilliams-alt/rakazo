@@ -129,6 +129,38 @@ describe("research card in the thread", () => {
     expect(html).toContain("failed");
     expect(html).toContain("unavailable");
   });
+
+  it("renders findings.json and report.md chips with a completed card", () => {
+    const html = render(
+      message("bot", [
+        {
+          kind: "research",
+          researchId: "rj_1",
+          title: "Pricing survey",
+          status: "completed",
+        },
+        {
+          kind: "file",
+          artifactId: "art-findings",
+          mimeType: "application/json",
+          name: "findings.json",
+          size: 128,
+        },
+        {
+          kind: "file",
+          artifactId: "art-report",
+          mimeType: "text/markdown",
+          name: "report.md",
+          size: 256,
+        },
+      ]),
+    );
+    expect(html).toContain("research-card");
+    expect(html).toContain("Pricing survey");
+    expect(html).toContain("completed");
+    expect(html).toContain("findings.json");
+    expect(html).toContain("report.md");
+  });
 });
 
 describe("the spawn opener in a child bot's thread", () => {

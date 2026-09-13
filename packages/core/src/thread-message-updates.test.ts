@@ -76,4 +76,44 @@ describe("shared message updates", () => {
     expect(result[0]?.blocks[1]).toBe(messages[0]?.blocks[1]);
     expect(result[2]).toBe(messages[2]);
   });
+
+  it("appends research file blocks once and ignores junk or duplicates", () => {
+    const research = {
+      kind: "research" as const,
+      researchId: "job",
+      title: "Pricing survey",
+      status: "running" as const,
+    };
+    const findings = {
+      kind: "file" as const,
+      artifactId: "art-findings",
+      mimeType: "application/json",
+      name: "findings.json",
+      size: 128,
+    };
+    const report = {
+      kind: "file" as const,
+      artifactId: "art-report",
+      mimeType: "text/markdown",
+      name: "report.md",
+      size: 256,
+    };
+    const messages = [{ id: "card", blocks: [research] }];
+    const completed = {
+      messageId: "card",
+      researchId: "job",
+      title: "Pricing survey",
+      status: "completed",
+      files: [findings, report, { kind: "text", text: "nope" }, findings],
+    };
+    const first = updateResearchMessages(messages, completed);
+    expect(first[0]?.blocks).toEqual([
+      { ...research, status: "completed" },
+      findings,
+      report,
+    ]);
+    const second = updateResearchMessages(first, completed);
+    expect(second[0]?.blocks).toEqual(first[0]?.blocks);
+    expect(messages[0]?.blocks).toEqual([research]);
+  });
 });

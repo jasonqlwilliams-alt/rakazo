@@ -2582,7 +2582,10 @@ const MessageBubble = memo(function MessageBubble({
         : null;
     const running = special.status === "running" || special.status === "queued";
     const failed = special.status === "failed";
-    return (
+    const files = message.blocks.filter(
+      (block): block is Extract<MessageBlock, { kind: "file" }> => block.kind === "file",
+    );
+    const card = (
       <View
         testID="research-card"
         accessibilityRole="text"
@@ -2603,7 +2606,13 @@ const MessageBubble = memo(function MessageBubble({
           </Text>
           <Text
             style={{
-              color: failed ? tokens.destructive : running ? tokens.warning : tokens.success,
+              color: failed
+                ? tokens.destructive
+                : special.status === "completed"
+                  ? tokens.success
+                  : running
+                    ? tokens.warning
+                    : tokens.mutedForeground,
               fontSize: 13,
             }}
           >
@@ -2615,6 +2624,57 @@ const MessageBubble = memo(function MessageBubble({
             {reason}
           </Text>
         ) : null}
+      </View>
+    );
+    if (files.length === 0) return card;
+    return (
+      <View style={{ gap: 8, width: "100%" }}>
+        {card}
+        {files.map((file, index) => (
+          <Pressable
+            {...actionProps}
+            key={`${file.artifactId}-${index}`}
+            accessibilityRole="button"
+            accessibilityLabel={file.name}
+            onPress={() =>
+              file.mimeType === "text/markdown"
+                ? onPreviewMarkdown({
+                    artifactId: file.artifactId,
+                    name: file.name ?? t("Markdown file"),
+                    mimeType: file.mimeType,
+                  })
+                : void openMobileArtifact(
+                    artifactTarget,
+                    file.artifactId,
+                    file.name ?? t("File"),
+                    file.mimeType ?? "text/plain",
+                  ).catch((err) =>
+                    Alert.alert(
+                      t("Could not open file"),
+                      err instanceof Error ? err.message : t("Try again."),
+                    ),
+                  )
+            }
+            style={{
+              width: "90%",
+              borderRadius: 18,
+              borderWidth: 1,
+              borderColor: tokens.border,
+              backgroundColor: tokens.card,
+              paddingHorizontal: 16,
+              paddingVertical: 14,
+            }}
+          >
+            <Text style={{ color: tokens.foreground, fontSize: 15 }}>
+              📎 {file.name ?? t("File")}
+            </Text>
+            {file.size ? (
+              <Text style={{ color: tokens.mutedForeground, marginTop: 4, fontSize: 13 }}>
+                {file.mimeType ?? "file"} · {file.size} bytes
+              </Text>
+            ) : null}
+          </Pressable>
+        ))}
       </View>
     );
   }
