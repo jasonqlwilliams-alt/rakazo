@@ -22,6 +22,7 @@ import {
   type ThreadHistory,
   takeLiveMessage,
   updateCloudAgentMessages,
+  updateResearchMessages,
   upsertMessageById,
 } from "@rakazo/core";
 import * as SecureStore from "expo-secure-store";
@@ -825,6 +826,10 @@ export function blockText(message: MobileMessage) {
       }
       if (block.kind === "cloud_agent")
         return `${block.title}: ${block.status}${block.prUrl ? ` ${block.prUrl}` : ""}`;
+      if (block.kind === "research")
+        return `${block.title}: ${block.status}${
+          block.status === "failed" && block.errorCode ? ` ${block.errorCode}` : ""
+        }`;
       if (block.kind === "subagent") {
         return `${block.name ?? "subagent"}: ${block.result || block.progress || block.task || ""}`;
       }
@@ -1070,6 +1075,13 @@ export function applyMobileThreadEvent(
       ...prev,
       cursor: event.seq ?? prev.cursor,
       messages: updateCloudAgentMessages(prev.messages, event.payload ?? {}),
+    };
+  }
+  if (event.type === "thread.research") {
+    return {
+      ...prev,
+      cursor: event.seq ?? prev.cursor,
+      messages: updateResearchMessages(prev.messages, event.payload ?? {}),
     };
   }
   if (event.type === "thread.message.created" || event.type === "thread.message.updated") {

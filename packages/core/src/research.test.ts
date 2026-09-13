@@ -41,4 +41,15 @@ describe("shared research projection", () => {
       title: "",
     });
   });
+
+  it("carries a failure reason when the payload has one", () => {
+    expect(
+      researchBlockFromPayload({
+        researchId: "job",
+        title: "Pricing survey",
+        status: "failed",
+        errorCode: "unavailable",
+      }),
+    ).toMatchObject({ status: "failed", errorCode: "unavailable" });
+  });
 });

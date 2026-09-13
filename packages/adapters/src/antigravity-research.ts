@@ -12,7 +12,11 @@ import type {
   SandboxProvider,
 } from "@rakazo/adapter-kit";
 import type { ResearchErrorCode, ResearchFindings } from "@rakazo/contracts";
-import { ResearchErrorCodeSchema, ResearchFindingsSchema } from "@rakazo/contracts";
+import {
+  ResearchErrorCodeSchema,
+  ResearchFindingsSchema,
+  SpaceResearchSettingsSchema,
+} from "@rakazo/contracts";
 import * as z from "zod";
 import {
   cancelComputerRunWorkArgv,
@@ -76,29 +80,8 @@ export function antigravityWorkPath(
   return `${RESEARCH_WORK_DIR}/${name}`;
 }
 
-const flagValue = z
-  .string()
-  .trim()
-  .min(1)
-  .max(200)
-  .refine((value) => !value.startsWith("-") && !/[\p{Cc}]/u.test(value), "Not a flag value");
-
 /** Space-level Antigravity settings. Model, project and executable never come from a bot request. */
-export const antigravityResearchSettingsSchema = z
-  .object({
-    executable: z
-      .string()
-      .trim()
-      .min(1)
-      .max(1_024)
-      .refine((value) => !value.startsWith("-") && !/[\p{Cc}]/u.test(value), "Not a command")
-      .default("agy"),
-    model: flagValue,
-    project: flagValue.optional(),
-    /** Execution mode passed as-is; the default follows the only live-run precedent so far. */
-    mode: z.enum(["accept-edits", "plan"]).default("accept-edits"),
-  })
-  .strict();
+export const antigravityResearchSettingsSchema = SpaceResearchSettingsSchema;
 export type AntigravityResearchSettings = z.infer<typeof antigravityResearchSettingsSchema>;
 export type AntigravityResearchSettingsInput = z.input<typeof antigravityResearchSettingsSchema>;
 

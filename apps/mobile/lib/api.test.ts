@@ -1968,6 +1968,41 @@ describe("mobile thread event reduction", () => {
     });
   });
 
+  it("updates a research card from thread.research", () => {
+    const initial = snapshot([
+      mobileMessage("msg-research", [
+        {
+          kind: "research",
+          researchId: "rj_1",
+          title: "Pricing survey",
+          status: "running",
+        },
+      ]),
+    ]);
+
+    const next = applyMobileThreadEvent(initial, {
+      type: "thread.research",
+      seq: 9,
+      payload: {
+        messageId: "msg-research",
+        kind: "research",
+        researchId: "rj_1",
+        title: "Pricing survey",
+        status: "failed",
+        errorCode: "unavailable",
+      },
+    });
+
+    expect(next?.cursor).toBe(9);
+    expect(next?.messages[0]?.blocks[0]).toEqual({
+      kind: "research",
+      researchId: "rj_1",
+      title: "Pricing survey",
+      status: "failed",
+      errorCode: "unavailable",
+    });
+  });
+
   it("leaves the snapshot unchanged for unrelated events", () => {
     const initial = snapshot();
     expect(applyMobileThreadEvent(initial, { type: "run.started" })).toBe(initial);

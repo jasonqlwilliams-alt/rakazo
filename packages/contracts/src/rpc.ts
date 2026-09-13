@@ -79,6 +79,7 @@ import {
   IntegrationSetupStateSchema,
 } from "./integration-settings.js";
 import { MessageReactionSchema } from "./reactions.js";
+import { SpaceResearchSettingsSchema, SpaceResearchSettingsViewSchema } from "./research.js";
 import { RunsListOutputSchema } from "./runs.js";
 import { SearchQueryOutputSchema } from "./search.js";
 
@@ -402,6 +403,11 @@ export const appContract = {
       .input(z.object({ defaultMemoryScope: MemoryScopeSchema }))
       .output(SpaceMemoryConfigSchema),
     disconnectProvider: oc.output(z.object({ ok: z.literal(true) })),
+  },
+  research: {
+    get: oc.output(SpaceResearchSettingsViewSchema.nullable()),
+    save: oc.input(SpaceResearchSettingsSchema).output(SpaceResearchSettingsViewSchema),
+    disable: oc.output(z.object({ ok: z.literal(true) })),
   },
   routines: {
     list: oc.input(botId).output(z.array(RoutineSchema)),

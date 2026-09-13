@@ -97,40 +97,4 @@ forwards runtime `tool` events as `agent.tool.called`. Web and mobile share
 clears. A non-activity `{text}` replace on a pending-tool tail resolves the
 tail first.
 
-# Large sweeps through Antigravity
-
-When a Space has stored research settings and the bot has a computer, the model
-gets `research_start`, `research_status`, and `research_cancel`. Start needs the
-same approval as `cloud_agent_launch`. Status is read-only and returns at most
-48 KiB of findings, or a summary and file path when larger. Cancel does not need
-approval. One computer runs one research job at a time. The worker polls the job,
-attaches findings, and wakes the bot once. Research is unconfigured when there is
-no computer. The start brief is bounded to 8192 UTF-8 bytes.
-
-The built-in `antigravity-research` skill is a separate catalog recipe that
-invokes the optional Antigravity CLI through `skill_read`, shell, and file tools
-on that computer. It is not the durable job. Model selection of a skill remains
-model-driven, not a deterministic task classifier. Explicitly invoke the skill
-when that CLI recipe must be requested directly.
-
-For the skill, install/configure Antigravity independently on that computer and
-set `RAKAZO_ANTIGRAVITY_CLI` there to its executable path; the default is `agy`.
-This is a skill-consumed computer setting, not a worker host-command setting.
-Configure an existing project and an explicit non-Grok Antigravity model for the
-bot. On Windows, reuse existing projects under
-`C:\Users\<operator>\antigravity\projects\`. The CLI and project must be accessible
-within the bot's existing permissions; a worker-host installation alone does not
-make them available inside a sandbox.
-
-The skill reads the project's contracts and hooks, limits the dispatch brief to
-8192 UTF-8 bytes, invokes CLI print mode with a five-minute timeout, and verifies
-pack/receipt files before reporting completion. It does not create projects,
-add mounts or source roots, bypass permission prompts, or apply research results.
-If setup is unavailable, it reports the exact blocker rather than performing the
-bulk retrieval in the bot's model context. Web, Electron, and mobile all use this
-same backend skill and computer boundary.
-
-For a dry run, use `--mode plan`, request no source retrieval or writes, and
-capture the JSON CLI response. Returned pack/receipt paths are only planned paths
-until files have been created and verified. After a timeout or ambiguous status,
-inspect the original run before dispatching again.
+Long research on the bot computer is a separate path. See [Research](research.md).

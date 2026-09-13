@@ -94,16 +94,21 @@ describe("skill tools", () => {
     prisma = makePrisma();
   });
 
-  it("makes Antigravity available through the shared catalog and skill_read", async () => {
+  it("makes deep-research available through the shared catalog and skill_read", async () => {
     const catalog = await listAgentSkillRecords(prisma as never, owner);
-    const skill = catalog.find((record) => record.name === "antigravity-research");
+    const skill = catalog.find((record) => record.name === "deep-research");
     expect(skill).toMatchObject({ source: "builtin", readOnly: true });
     const byName = await skillReadFromTool(prisma as never, owner, {
-      name: "antigravity-research",
+      name: "deep-research",
     });
     const byId = await skillReadFromTool(prisma as never, owner, { skillId: skill!.id });
     expect(byName).toEqual(byId);
     expect(byName).toMatchObject({ name: skill!.name, content: skill!.content });
+    expect(String(byName.content)).toContain("research_start");
+    expect(String(byName.content)).toContain("research_status");
+    expect(String(byName.content).toLowerCase()).not.toMatch(/\bagy\b/);
+    expect(String(byName.content)).not.toMatch(/RAKAZO_|process\.env|\$[A-Z_]{2,}/);
+    expect(String(byName.content)).not.toMatch(/--print(?:=|\s)|--print-timeout|bash -|setsid/);
     expect(
       await skillUpdateFromTool(prisma as never, owner, {
         skillId: skill!.id,

@@ -9,6 +9,7 @@ import {
   ResearchFindingsSchema,
   RunActivityRowSchema,
   RunSchema,
+  SpaceResearchSettingsSchema,
 } from "./index.js";
 
 const findings = {
@@ -113,9 +114,24 @@ describe("research contracts", () => {
       status: "queued",
     };
     expect(MessageBlock.parse(block)).toEqual(block);
+    expect(
+      MessageBlock.parse({ ...block, status: "failed", errorCode: "unavailable" }),
+    ).toMatchObject({ errorCode: "unavailable" });
     expect(MessageBlock.safeParse({ ...block, status: "launching" }).success).toBe(false);
     expect(ProductEventType.options).toContain("thread.research");
     expect(RunActivityRowSchema.shape.trigger.options).toContain("research");
     expect(RunSchema.shape.trigger.options).toContain("research");
+  });
+
+  it("defaults executable and mode on space research settings", () => {
+    expect(SpaceResearchSettingsSchema.parse({ model: "gemini-3-flash" })).toEqual({
+      executable: "agy",
+      model: "gemini-3-flash",
+      mode: "accept-edits",
+    });
+    expect(SpaceResearchSettingsSchema.safeParse({ model: "--print" }).success).toBe(false);
+    expect(SpaceResearchSettingsSchema.safeParse({ executable: "-agy", model: "x" }).success).toBe(
+      false,
+    );
   });
 });

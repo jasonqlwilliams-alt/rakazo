@@ -111,6 +111,26 @@ describe("live quota replay after a pending write_file", () => {
   });
 });
 
+describe("research card in the thread", () => {
+  it("renders the title, status, and a failure reason", () => {
+    const html = render(
+      message("bot", [
+        {
+          kind: "research",
+          researchId: "rj_1",
+          title: "Pricing survey",
+          status: "failed",
+          errorCode: "unavailable",
+        },
+      ]),
+    );
+    expect(html).toContain("research-card");
+    expect(html).toContain("Pricing survey");
+    expect(html).toContain("failed");
+    expect(html).toContain("unavailable");
+  });
+});
+
 describe("the spawn opener in a child bot's thread", () => {
   it("renders a meta block as a centered setup line, never as the user's bubble", () => {
     const html = render(message("system", [{ kind: "meta", text: SPAWN_PROMPT }]));

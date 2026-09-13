@@ -18,6 +18,7 @@ import type {
   SearchHit,
   Space,
   SpaceMemoryConfig,
+  SpaceResearchSettingsView,
   TaughtSkill,
   ThreadMessage,
   ThreadSnapshot,
@@ -133,6 +134,7 @@ import {
 } from "../components/ComputersUnavailableHint";
 import { ComputerUpdateProgress } from "../components/ComputerUpdateProgress";
 import { MessageHoverMetadata } from "../components/MessageHoverMetadata";
+import { ResearchCard } from "../components/ResearchCard";
 import { SkillDraftCard } from "../components/teach/SkillDraftCard";
 import { TeachCaptureOverlay } from "../components/teach/TeachCaptureOverlay";
 import { TeachComputerOverlayControl } from "../components/teach/TeachComputerOverlay";
@@ -434,6 +436,10 @@ export function ShellPage() {
     SpaceMemoryConfig | null | undefined
   >(undefined);
   const memoryProviderConfigRevision = useRef(0);
+  const [researchConfig, setResearchConfig] = useState<
+    SpaceResearchSettingsView | null | undefined
+  >(undefined);
+  const researchConfigRevision = useRef(0);
   const [callOpen, setCallOpen] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState<VoiceStatus | null>(null);
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
@@ -970,6 +976,19 @@ export function ShellPage() {
       .catch(() => {
         if (!cancelled && memoryProviderConfigRevision.current === providerConfigRevision) {
           setMemoryProviderConfig(null);
+        }
+      });
+    const researchRevision = researchConfigRevision.current;
+    void rpc.research
+      .get()
+      .then((next) => {
+        if (!cancelled && researchConfigRevision.current === researchRevision) {
+          setResearchConfig(next);
+        }
+      })
+      .catch(() => {
+        if (!cancelled && researchConfigRevision.current === researchRevision) {
+          setResearchConfig(null);
         }
       });
     const appliedAtStart = botsRefreshApplied.current;
@@ -3949,6 +3968,11 @@ export function ShellPage() {
               memoryProviderConfigRevision.current += 1;
               setMemoryProviderConfig(config);
             }}
+            researchConfig={researchConfig}
+            onResearchConfigChange={(config) => {
+              researchConfigRevision.current += 1;
+              setResearchConfig(config);
+            }}
             onVoiceStatusMaybeChanged={async () => {
               try {
                 setVoiceStatus(
@@ -5748,6 +5772,7 @@ export const MessageView = memo(function MessageView({
           );
         }
         if (block.kind === "cloud_agent") return <CloudAgentCard key={i} block={block} />;
+        if (block.kind === "research") return <ResearchCard key={i} block={block} />;
         if (block.kind === "skill_draft") {
           return (
             <div key={i} className="flex justify-start">
