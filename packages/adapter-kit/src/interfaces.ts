@@ -438,7 +438,8 @@ export interface CloudAgentProvider {
 
 /**
  * Provider-neutral contract for long-running research on the bot computer.
- * Only the offline emulator implements it; executor and tool wiring are deferred.
+ * The offline emulator and the Antigravity library implement it; executor and
+ * tool wiring are deferred.
  * Definitive outcomes are observations. Throw only when the outcome is unknown,
  * so the caller observes again instead of starting a second job.
  */
