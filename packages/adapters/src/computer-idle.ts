@@ -14,7 +14,7 @@ import { checkpointComputerWorkspace } from "./computer-workspace.js";
 
 export const DEFAULT_SANDBOX_IDLE_MS = 10 * 60 * 1000;
 const BACKGROUND_WORK_MARKER_PREFIX = "/tmp/rakazo-background-";
-const BACKGROUND_WORK_IDLE_SENTINEL = "rakazo-background-idle";
+export const BACKGROUND_WORK_IDLE_SENTINEL = "rakazo-background-idle";
 
 export const BACKGROUND_WORK_LAUNCH = [
   `marker="${BACKGROUND_WORK_MARKER_PREFIX}$1-$2-$3"`,
@@ -23,6 +23,103 @@ export const BACKGROUND_WORK_LAUNCH = [
   "set +o noclobber",
   'exec bash -lc "$4"',
 ].join("\n");
+
+/** Subfolder of a research job folder that the launched process runs in and may write to. */
+export const RESEARCH_WORK_DIR = "work";
+
+/** Run-id slot a research job's marker uses, so cancelling the originating run leaves it alone. */
+export function researchWorkRunId(jobId: string): string {
+  return `research.${jobId}`;
+}
+
+/**
+ * Detached sibling of BACKGROUND_WORK_LAUNCH for a research job: it holds the
+ * same marker on fd 9 so idle suspension and the cancel script see the work,
+ * but execs argv directly (no shell string) in its own session with stdio on
+ * job files, and returns as soon as the process is running.
+ *
+ * Positional args: computerId runId nonce workdir hardTimeoutSeconds -- argv...
+ * The workdir is the harness-owned job folder: the wrapper alone writes
+ * events.ndjson (stdout), stderr.log (stderr) and, when the process ends,
+ * exit.code there. The process itself runs one level down in work/, the only
+ * place it writes. An executable that cannot be found ends the job before the
+ * marker exists with exit code 127 in those files; a computer without setsid or
+ * a timeout that accepts --kill-after ends it with 126.
+ */
+export const RESEARCH_WORK_LAUNCH = [
+  `marker="${BACKGROUND_WORK_MARKER_PREFIX}$1-$2-$3"`,
+  'workdir="$4"',
+  'limit="$5"',
+  "shift 5",
+  '[ "$1" = "--" ] || exit 2',
+  "shift",
+  '[ "$#" -ge 1 ] || exit 2',
+  `case "$limit" in ''|*[!0-9]*) exit 2 ;; esac`,
+  `mkdir -p -- "$workdir/${RESEARCH_WORK_DIR}" && cd -- "$workdir" || exit 1`,
+  'if ! command -v -- "$1" >/dev/null 2>&1; then',
+  `  printf 'error: research executable not found: %s\\n' "$1" >stderr.log`,
+  "  printf '127\\n' >exit.code",
+  "  exit 127",
+  "fi",
+  "if ! command -v setsid >/dev/null 2>&1 || ! timeout --kill-after=1s 1s true >/dev/null 2>&1; then",
+  `  printf 'error: research launch needs setsid and a timeout that accepts --kill-after\\n' >stderr.log`,
+  "  printf '126\\n' >exit.code",
+  "  exit 126",
+  "fi",
+  "set -o noclobber",
+  'exec 9>"$marker" || exit 1',
+  "set +o noclobber",
+  "rm -f -- exit.code exit.code.tmp",
+  ": >events.ndjson",
+  ": >stderr.log",
+  // The wrapper inherits fd 9, so the marker stays held until the process ends.
+  `setsid bash -c 'limit="$1"; shift; (cd ${RESEARCH_WORK_DIR} && exec timeout --kill-after=30s "$limit" "$@") </dev/null >events.ndjson 2>stderr.log; code=$?; printf "%s\\n" "$code" >exit.code.tmp && mv -f exit.code.tmp exit.code' rakazo-research-run "\${limit}s" "$@" </dev/null >/dev/null 2>&1 &`,
+  "exit 0",
+].join("\n");
+
+export function researchWorkLaunchArgv(launch: {
+  computerId: string;
+  jobId: string;
+  nonce: string;
+  workdir: string;
+  hardTimeoutSeconds: number;
+  command: string[];
+}): string[] {
+  return [
+    "bash",
+    "-c",
+    RESEARCH_WORK_LAUNCH,
+    "rakazo-background-launch",
+    launch.computerId,
+    researchWorkRunId(launch.jobId),
+    launch.nonce,
+    launch.workdir,
+    String(launch.hardTimeoutSeconds),
+    "--",
+    ...launch.command,
+  ];
+}
+
+/** Probe one research job's marker only, with the same script the idle check runs. */
+export function researchWorkProbeArgv(computerId: string, jobId: string): string[] {
+  return [
+    "bash",
+    "-c",
+    BACKGROUND_WORK_PROBE,
+    "rakazo-background-probe",
+    `${computerId}-${researchWorkRunId(jobId)}`,
+  ];
+}
+
+/** Only the probe's explicit idle result means idle; unsupported or failed probes stay unknown. */
+export function interpretBackgroundWorkProbe(
+  exitCode: number | undefined,
+  stdout: string,
+): "active" | "idle" | "unknown" {
+  if (exitCode === 0) return "active";
+  if (exitCode === 1 && stdout.trim() === BACKGROUND_WORK_IDLE_SENTINEL) return "idle";
+  return "unknown";
+}
 
 /** Terminate background shell wrappers for one cancelled run. Browser teardown stays screen-scoped. */
 export const CANCEL_COMPUTER_RUN_WORK = [
@@ -403,6 +500,5 @@ async function hasActiveBackgroundWork(
   } catch {
     return true;
   }
-  // Only the probe's explicit idle result permits suspension; unsupported or failed probes retry.
-  return exitCode !== 1 || stdout.trim() !== BACKGROUND_WORK_IDLE_SENTINEL;
+  return interpretBackgroundWorkProbe(exitCode, stdout) !== "idle";
 }

@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","model":"fixture-model","conversation_id":"fixture-conversation-completed"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Reading the fixture source."}]}}
+{"type":"tool_use","name":"read_url_content","input":{"url":"https://research.test/sources/1"}}
+{"type":"tool_result","name":"read_url_content","output":"The fixture page states the confirmed fact."}
+{"type":"result","subtype":"success","is_error":false,"result":"{\"summary\":\"The emulator found one confirmed fact and one inference.\",\"claims\":[{\"text\":\"The fixture page states the confirmed fact.\",\"label\":\"confirmed\",\"sourceIds\":[\"s1\"]},{\"text\":\"The fixture suggests a follow-up is useful.\",\"label\":\"inference\",\"sourceIds\":[]}],\"sources\":[{\"id\":\"s1\",\"kind\":\"url\",\"locator\":\"https://research.test/sources/1\",\"title\":\"Fixture source\",\"retrievedAt\":\"2026-01-01T00:00:00.000Z\"}],\"gaps\":[\"The fixture does not cover a second source.\"],\"applyNotes\":[\"Nothing to apply in the emulator.\"]}","conversation_id":"fixture-conversation-completed"}

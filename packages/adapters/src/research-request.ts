@@ -27,6 +27,11 @@ export const researchStartRequestSchema = z
       .max(200)
       .regex(/^[A-Za-z0-9_.:-]+$/),
     workdir: z.string().max(1_024).refine(isResearchWorkspacePath, "Use a workspace-relative path"),
+    computerId: z
+      .string()
+      .min(1)
+      .max(200)
+      .regex(/^[A-Za-z0-9_.:-]+$/),
     brief: z
       .object({
         title: briefText.max(200),

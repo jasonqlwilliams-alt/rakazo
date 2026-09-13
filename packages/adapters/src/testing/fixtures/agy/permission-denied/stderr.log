@@ -1,0 +1,2 @@
+permission denied: read_url_content https://research.test/sources/1 (auto-denied in headless mode)
+permission denied: run_command curl (auto-denied in headless mode)

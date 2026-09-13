@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","model":"fixture-model","conversation_id":"fixture-conversation-schema"}
+{"type":"result","subtype":"success","is_error":false,"result":"{\"summary\":\"A confirmed claim cites a source that is not listed.\",\"claims\":[{\"text\":\"The fixture states the fact.\",\"label\":\"confirmed\",\"sourceIds\":[\"s9\"]}],\"sources\":[],\"gaps\":[],\"applyNotes\":[]}","conversation_id":"fixture-conversation-schema"}
