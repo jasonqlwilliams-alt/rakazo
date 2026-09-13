@@ -298,7 +298,9 @@ describe("one model request quota retry", () => {
       if (stop === "abort") controller.abort();
       else if (stop === "return") await events.return!();
       else
-        await expect(events.throw!(new Error("consumer failed"))).rejects.toThrow("consumer failed");
+        await expect(events.throw!(new Error("consumer failed"))).rejects.toThrow(
+          "consumer failed",
+        );
 
       expect((await stream.result()).stopReason).toBe("aborted");
       expect(f.streamSimple.mock.calls[0]?.[2]?.signal?.aborted).toBe(true);

@@ -293,7 +293,9 @@ describe.skipIf(!databaseAvailable)("offline Pi product journey", () => {
           expect(
             await handles.prisma.message.count({ where: { runId: sent.runId, role: "bot" } }),
           ).toBe(0);
-          expect(await handles.prisma.externalEffect.count({ where: { runId: sent.runId } })).toBe(0);
+          expect(await handles.prisma.externalEffect.count({ where: { runId: sent.runId } })).toBe(
+            0,
+          );
         });
       } finally {
         vi.unstubAllEnvs();
