@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import {
   Agent,
   type AgentMessage,
@@ -41,7 +42,7 @@ import {
   registerOpenAiCompatibleCatalog,
   registerOpenAiCompatibleRuntime,
 } from "./pi-openai-compatible-provider.js";
-import { streamWithQuotaRetry } from "./pi-quota-retry.js";
+import { QUOTA_REPLAY, streamWithQuotaRetry } from "./pi-quota-retry.js";
 import {
   PiJsonlSessionRecorder,
   type PiSessionHandle,
@@ -280,11 +281,22 @@ export class PiAgentRuntime implements AgentRuntime {
         signal.addEventListener("abort", onAbort);
 
         let streamed = "";
+        let requestTextStart = 0;
         let toolCalls = 0;
         let toolActivityShowing = false;
         let silentToolContinuations = 0;
         let toolWorkPendingFinal = false;
         agent.subscribe(async (event) => {
+          if (event.type === "message_start" && event.message.role === "assistant") {
+            requestTextStart = streamed.length;
+          }
+          if (startsQuotaReplay(event)) {
+            const chars = streamed.length - requestTextStart;
+            streamed = streamed.slice(0, requestTextStart);
+            // The replay's tool calls run, and can publish narration, only after the
+            // consumer has dropped the discarded text.
+            await queue.pushAndWait({ type: "retract", chars }, signal);
+          }
           if (event.type === "message_end") {
             await piSession?.appendMessage(event.message);
           }
@@ -1040,8 +1052,13 @@ async function executeSubagent(host: ToolHost, executionId: string, args: Record
   host.nestedAgents.add(nested);
 
   let streamed = "";
+  let requestTextStart = 0;
   let lastPush = 0;
   nested.subscribe((event) => {
+    if (event.type === "message_start" && event.message.role === "assistant") {
+      requestTextStart = streamed.length;
+    }
+    if (startsQuotaReplay(event)) streamed = streamed.slice(0, requestTextStart);
     if (event.type === "tool_execution_start") {
       if (!consumeToolCall(host)) return;
       const toolName = "toolName" in event && event.toolName ? String(event.toolName) : "a tool";
@@ -1144,6 +1161,17 @@ async function executeSubagent(host: ToolHost, executionId: string, args: Record
     host.nestedAgents.delete(nested);
     host.subagentGate.release();
   }
+}
+
+/** A quota replay discarded the text streamed so far for this model request. */
+function startsQuotaReplay(event: AgentEvent): boolean {
+  const marked =
+    event.type === "message_update"
+      ? event.assistantMessageEvent
+      : event.type === "message_end"
+        ? event.message
+        : undefined;
+  return Boolean(marked && QUOTA_REPLAY in marked);
 }
 
 /** Reuse the tool's own documented `path` shape so the model sees one description. */
@@ -1523,6 +1551,8 @@ function sanitizeProviderError(provider: string, message: string): string {
 
 interface EventQueue {
   push(event: AgentRuntimeEvent): void;
+  /** Resolves once the consumer has handled the event, stopped reading, or the run aborted. */
+  pushAndWait(event: AgentRuntimeEvent, signal: AbortSignal): Promise<void>;
   fail(error: Error): void;
   close(): void;
   iterate(): AsyncIterable<AgentRuntimeEvent>;
@@ -1585,14 +1615,34 @@ function createGate(max: number) {
 }
 
 function createQueue(): EventQueue {
-  const items: AgentRuntimeEvent[] = [];
+  const items: Array<{ event: AgentRuntimeEvent; handled?: () => void }> = [];
+  const waiting = new Set<() => void>();
   let wake: (() => void) | undefined;
   let closed = false;
+  let released = false;
   let failure: Error | undefined;
+  const push = (event: AgentRuntimeEvent) => {
+    items.push({ event });
+    wake?.();
+  };
   return {
-    push(event) {
-      items.push(event);
-      wake?.();
+    push,
+    pushAndWait(event, signal) {
+      if (released || signal.aborted) {
+        push(event);
+        return Promise.resolve();
+      }
+      return new Promise<void>((resolve) => {
+        const handled = () => {
+          waiting.delete(handled);
+          signal.removeEventListener("abort", handled);
+          resolve();
+        };
+        waiting.add(handled);
+        signal.addEventListener("abort", handled, { once: true });
+        items.push({ event, handled });
+        wake?.();
+      });
     },
     fail(error) {
       failure = error;
@@ -1604,16 +1654,25 @@ function createQueue(): EventQueue {
       wake?.();
     },
     async *iterate() {
-      while (true) {
-        if (items.length) {
-          yield items.shift()!;
-          continue;
+      try {
+        while (true) {
+          const item = items.shift();
+          if (item) {
+            // A consumer asks for the next event only after it has handled this one.
+            yield item.event;
+            item.handled?.();
+            continue;
+          }
+          if (failure) throw failure;
+          if (closed) return;
+          await new Promise<void>((resolve) => {
+            wake = resolve;
+          });
         }
-        if (failure) throw failure;
-        if (closed) return;
-        await new Promise<void>((resolve) => {
-          wake = resolve;
-        });
+      } finally {
+        // A consumer that stopped reading must not strand a waiting producer.
+        released = true;
+        for (const handled of waiting) handled();
       }
     },
   };

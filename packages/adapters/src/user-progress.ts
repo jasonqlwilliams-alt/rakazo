@@ -1,5 +1,5 @@
 import type { MessageBlock } from "@rakazo/contracts";
-import { isToolActivityBlock } from "@rakazo/core";
+import { createStreamingRedactor, isToolActivityBlock } from "@rakazo/core";
 
 /** Keep mid-turn progress beats short; prefer a few high-signal updates. */
 export const USER_PROGRESS_MESSAGE_MAX_LENGTH = 500;
@@ -54,6 +54,46 @@ export function extractNarrationText(
   }
   if (currentText) parts.push(currentText);
   return { text: parts.join(""), remaining };
+}
+
+/**
+ * Remove the last `chars` of streamed text from the in-progress turn after a
+ * replayed model request discarded them. Step blocks stay where they are.
+ * `visible` is the redacted text the live view should now show; the returned
+ * redactor holds any tail that could still start a secret. Returns undefined
+ * when less unpublished text is there than the runtime discarded.
+ */
+export function retractStreamedText(
+  turn: { segments: readonly MessageBlock[]; currentText: string; assembled: string },
+  chars: number,
+  secrets: string[],
+) {
+  if (chars > turn.assembled.length) return undefined;
+  const segments = [...turn.segments];
+  let currentText = turn.currentText;
+  let remaining = chars;
+  if (remaining <= currentText.length) {
+    currentText = currentText.slice(0, currentText.length - remaining);
+    remaining = 0;
+  } else {
+    remaining -= currentText.length;
+    currentText = "";
+  }
+  for (let index = segments.length - 1; index >= 0 && remaining > 0; index--) {
+    const block = segments[index]!;
+    if (block.kind !== "text") continue;
+    if (block.text.length > remaining) {
+      segments[index] = { ...block, text: block.text.slice(0, block.text.length - remaining) };
+      remaining = 0;
+    } else {
+      remaining -= block.text.length;
+      segments.splice(index, 1);
+    }
+  }
+  if (remaining > 0) return undefined;
+  const assembled = turn.assembled.slice(0, turn.assembled.length - chars);
+  const redactor = createStreamingRedactor(secrets);
+  return { segments, currentText, assembled, redactor, visible: redactor.push(assembled) };
 }
 
 /**

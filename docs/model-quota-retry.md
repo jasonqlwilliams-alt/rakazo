@@ -53,13 +53,25 @@ stream. It does not retry `agent.prompt`, a tool call, or a whole run. Previousl
 completed tool results remain in the request context and existing effect IDs are
 unchanged. Pi executes tool calls only after a successful model completion.
 
-Retries are pre-content-only by design. Once a stream has emitted text, reasoning,
-or tool-call events, Rakazo leaves that attempt unretried. A quota stop at that
-point uses the same failure reporting path as exhausted retries, with the message
-`Mid-response quota stop was not retried. Try again later.` This notice appears
-only on failure to explain why no retry followed the quota stop. Rakazo does not
-resume the stream or replay partial output or tool calls; previously completed
-effects remain intact.
+A quota stop partway through a response replays the same request under the same
+retry count. None of the discarded attempt's tool calls ran, and thinking is not
+displayed. Partial text can appear live, but it is removed before replayed text
+replaces it and is never published as a completed bot message. Rakazo never asks
+a provider to continue a partial response.
+
+The Pi runtime trims discarded text from both parent and nested results. For a
+parent request, it emits a `retract` event; the executor removes that text from
+the unpublished turn and restores the retained, redacted live text. Replayed
+tools wait for the executor to apply this update, so they cannot publish the
+discarded narration. If the executor cannot account for all the discarded text
+in the unpublished turn, the run fails with
+`Mid-response quota stop was not retried. Try again later.` rather than guessing.
+Nested replays trim their own output without retracting the parent's text.
+
+Quota notices and clears follow Pi's handling of every event the wrapper already
+forwarded. This prevents delayed text from overwriting a later quota notice
+while the executor is still applying a retraction. These waits release when the
+run aborts or Pi closes the stream iterator.
 
 [OpenRouter documents mid-stream errors](https://openrouter.ai/docs/api_reference/errors-and-debugging#mid-stream-errors),
 including rate-limit failures after streaming begins. These arrive in the stream
@@ -72,8 +84,8 @@ multiply the configured retry count.
 
 Tests use synthetic streams with fake timers and the real Pi/OpenAI-compatible
 transport against a loopback HTTP fixture. They cover a successful retry, longer
-headers, non-quota failure, cancellation, exhausted retries, the failure receipt
-without replay after partial text, reasoning, or tool-call output, and a failed
+headers, non-quota failure, cancellation, exhausted retries, replays after partial
+text, reasoning, or tool-call output without repeated text or effects, and a failed
 continuation after a tool write that must execute exactly once.
 
 # Large sweeps through Antigravity

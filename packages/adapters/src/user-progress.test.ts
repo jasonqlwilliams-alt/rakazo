@@ -1,5 +1,5 @@
 import type { MessageBlock } from "@rakazo/contracts";
-import { isToolActivityBlock } from "@rakazo/core";
+import { appendTextSegment, appendToolCallSegment, isToolActivityBlock } from "@rakazo/core";
 import { describe, expect, it } from "vitest";
 import {
   botMessageOutcomeFromMidTurn,
@@ -8,6 +8,7 @@ import {
   finalBlocksAfterMidTurnProgress,
   isProgressMessageTruncated,
   isUserProgressClientNonce,
+  retractStreamedText,
   USER_PROGRESS_MESSAGE_MAX_LENGTH,
   userProgressClientNonce,
 } from "./user-progress.js";
@@ -100,5 +101,74 @@ describe("userProgressClientNonce", () => {
     expect(userProgressClientNonce("run-1", 0)).not.toBe(nonce);
     expect(isUserProgressClientNonce(null)).toBe(false);
     expect(isUserProgressClientNonce("other")).toBe(false);
+  });
+});
+
+describe("retractStreamedText", () => {
+  const chip = appendToolCallSegment([], "message_user");
+
+  it("trims the current text and leaves earlier segments alone", () => {
+    const segments = appendToolCallSegment([], "write_file");
+    const turn = { segments, currentText: "Saving now. ", assembled: "Saving now. " };
+    expect(retractStreamedText(turn, 5, [])).toMatchObject({
+      segments,
+      currentText: "Saving ",
+      assembled: "Saving ",
+      visible: "Saving ",
+    });
+    expect(retractStreamedText(turn, 0, [])).toMatchObject({
+      currentText: "Saving now. ",
+      visible: "Saving now. ",
+    });
+  });
+
+  it("reaches back past step chips a sentence boundary flushed after the discarded text", () => {
+    // message_user left "Earlier." unpublished; the discarded attempt streamed "Done."
+    // (which flushed the pending chip) and then " More".
+    const turn = {
+      segments: appendToolCallSegment(appendTextSegment([], "Earlier. Done."), "message_user"),
+      currentText: " More",
+      assembled: "Earlier. Done. More",
+    };
+    expect(retractStreamedText(turn, "Done. More".length, [])).toMatchObject({
+      segments: [{ kind: "text", text: "Earlier. " }, ...chip],
+      currentText: "",
+      assembled: "Earlier. ",
+      visible: "Earlier. ",
+    });
+  });
+
+  it("drops a text segment the retraction empties", () => {
+    const turn = {
+      segments: appendToolCallSegment(appendTextSegment([], "Done."), "message_user"),
+      currentText: "",
+      assembled: "Done.",
+    };
+    expect(retractStreamedText(turn, 5, [])).toMatchObject({ segments: chip, assembled: "" });
+  });
+
+  it("refuses to guess when less unpublished text is there", () => {
+    const segments = appendToolCallSegment(appendTextSegment([], "Done."), "message_user");
+    expect(
+      retractStreamedText({ segments, currentText: " More", assembled: "Done. More" }, 11, []),
+    ).toBeUndefined();
+    expect(
+      retractStreamedText({ segments: [], currentText: "Done. More", assembled: "More" }, 5, []),
+    ).toBeUndefined();
+  });
+
+  it("holds back a kept tail that could still start a secret", () => {
+    const secret = "SECRETVALUE";
+    const text = `Here is the key: ${secret}`;
+    const kept = retractStreamedText(
+      { segments: [], currentText: text, assembled: text },
+      "VALUE".length,
+      [secret],
+    )!;
+    expect(kept.assembled).toBe("Here is the key: SECRET");
+    expect(kept.visible).not.toContain("SECRET");
+    expect(kept.visible + kept.redactor.push("VALUE") + kept.redactor.finish()).toBe(
+      "Here is the key: [redacted]",
+    );
   });
 });

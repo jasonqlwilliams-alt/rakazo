@@ -298,6 +298,7 @@ import {
   finalBlocksAfterMidTurnProgress,
   isProgressMessageTruncated,
   isUserProgressClientNonce,
+  retractStreamedText,
   userProgressClientNonce,
 } from "./user-progress.js";
 import { createWebProvider } from "./web-provider-factory.js";
@@ -3767,6 +3768,34 @@ export function createRunExecutor(deps: ExecutorDeps) {
               if (!scripted && pendingProgress && now - lastProgressAt >= 250) {
                 await flushProgress();
               }
+            } else if (event.type === "retract") {
+              // A replayed model request discarded text it had streamed. Nothing is
+              // published inside one request, so all of it must still be unpublished.
+              const kept = retractStreamedText(
+                { segments: messageSegments, currentText: currentTextSegment, assembled },
+                event.chars,
+                runSecrets,
+              );
+              if (!kept)
+                throw new Error("Mid-response quota stop was not retried. Try again later.");
+              messageSegments = kept.segments;
+              currentTextSegment = kept.currentText;
+              assembled = kept.assembled;
+              progressRedactor = kept.redactor;
+              pendingProgress = "";
+              // Quota notices replace the live text, so restore what the replay continues.
+              if (!scripted) {
+                await deps.events.append({
+                  spaceId: run.spaceId,
+                  threadId: thread.id,
+                  botId: bot.id,
+                  type: "thread.progress",
+                  runId,
+                  payload: { text: kept.visible, streaming: true },
+                });
+              }
+              hasStreamedText = Boolean(kept.visible);
+              lastProgressAt = Date.now();
             } else if (event.type === "progress") {
               toolCallStreak = { key: undefined, count: 0 };
               // Flush batched text deltas first so an activity line cannot land

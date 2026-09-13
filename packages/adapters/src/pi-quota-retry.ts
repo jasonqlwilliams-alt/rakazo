@@ -114,7 +114,69 @@ async function waitForRetry(ms: number, signal?: AbortSignal) {
   }
 }
 
-/** Retry one model request before content is visible; never replay an agent turn. */
+/**
+ * Marks the first event Pi receives from a replayed attempt: on the forwarded
+ * event, or on the message of a replay whose first event is done. Text already
+ * streamed for this request belongs to a discarded attempt.
+ */
+export const QUOTA_REPLAY = Symbol("rakazo.quotaReplay");
+
+class QuotaRetryEventStream extends AssistantMessageEventStream {
+  private forwardedEvents = 0;
+  private handledEvents = 0;
+  private onHandled?: () => void;
+
+  constructor(private readonly consumerClosed: AbortController) {
+    super();
+  }
+
+  override push(event: AssistantMessageEvent) {
+    this.forwardedEvents++;
+    super.push(event);
+  }
+
+  override [Symbol.asyncIterator](): AsyncIterator<AssistantMessageEvent> {
+    const events = this.readEvents();
+    return {
+      next: () => events.next(),
+      return: () => {
+        this.consumerClosed.abort();
+        return events.return();
+      },
+      throw: (error) => {
+        this.consumerClosed.abort();
+        return events.throw(error);
+      },
+    };
+  }
+
+  private async *readEvents() {
+    const source = { [Symbol.asyncIterator]: () => super[Symbol.asyncIterator]() };
+    for await (const event of source) {
+      yield event;
+      this.handledEvents++;
+      this.onHandled?.();
+    }
+  }
+
+  async waitForHandled(signal: AbortSignal) {
+    const target = this.forwardedEvents;
+    if (this.handledEvents >= target || signal.aborted) return;
+    await new Promise<void>((resolve) => {
+      const finish = () => {
+        this.onHandled = undefined;
+        signal.removeEventListener("abort", finish);
+        resolve();
+      };
+      this.onHandled = () => {
+        if (this.handledEvents >= target) finish();
+      };
+      signal.addEventListener("abort", finish, { once: true });
+    });
+  }
+}
+
+/** Replay one model request after a quota stop; never replay an agent turn. */
 export function streamWithQuotaRetry(
   models: Pick<Models, "streamSimple">,
   model: Model<Api>,
@@ -122,9 +184,12 @@ export function streamWithQuotaRetry(
   options: SimpleStreamOptions | undefined,
   progress: (text: string) => void,
 ): AssistantMessageEventStream {
-  const output = new AssistantMessageEventStream();
+  const consumerClosed = new AbortController();
+  const output = new QuotaRetryEventStream(consumerClosed);
   const config = quotaRetryConfig();
-  const signal = options?.signal;
+  const signal = options?.signal
+    ? AbortSignal.any([options.signal, consumerClosed.signal])
+    : consumerClosed.signal;
   const emptyMessage = (error: unknown): AssistantMessage => ({
     role: "assistant",
     content: [],
@@ -145,16 +210,20 @@ export function streamWithQuotaRetry(
   });
   void (async () => {
     let retrying = false;
+    // Pi adds a partial assistant message for each start event, so a replayed
+    // attempt continues the start that was already forwarded.
+    let startForwarded = false;
     try {
       for (let retries = 0; ; retries++) {
         signal?.throwIfAborted();
         let response: ProviderResponse | undefined;
         let started: Extract<AssistantMessageEvent, { type: "start" }> | undefined;
-        let emitted = false;
         let failure: AssistantMessage | undefined;
         let thrown: unknown;
+        let replayMarked = false;
         const attemptOptions: SimpleStreamOptions = {
           ...options,
+          signal,
           maxRetries: 0,
           onResponse: async (value, selected) => {
             response = value;
@@ -188,14 +257,24 @@ export function streamWithQuotaRetry(
               failure = event.error;
               break;
             }
-            // Once any content escaped, retrying could duplicate user-visible
-            // output or tool calls. Fail normally instead.
             if (retrying) {
+              await output.waitForHandled(signal);
+              signal.throwIfAborted();
               progress("");
               retrying = false;
             }
-            if (!emitted && started) output.push(started);
-            emitted = true;
+            if (!startForwarded && started) {
+              output.push(started);
+              startForwarded = true;
+            }
+            // Pi runs tool calls only after done, so a replay cannot repeat an
+            // effect. Streamed text can repeat: tag the replay so consumers drop it.
+            if (retries > 0 && !replayMarked) {
+              Object.defineProperty(event.type === "done" ? event.message : event, QUOTA_REPLAY, {
+                value: true,
+              });
+              replayMarked = true;
+            }
             output.push(event);
             if (event.type === "done") return;
           }
@@ -214,7 +293,7 @@ export function streamWithQuotaRetry(
           });
           return;
         }
-        if (emitted || retries >= config.maxRetries) {
+        if (retries >= config.maxRetries) {
           output.push({
             type: "error",
             reason: "error",
@@ -222,14 +301,14 @@ export function streamWithQuotaRetry(
               ...failure,
               stopReason: "error",
               content: [],
-              errorMessage: emitted
-                ? "Mid-response quota stop was not retried. Try again later."
-                : `Quota retry failed after ${retries} retries. Try again later.`,
+              errorMessage: `Quota retry failed after ${retries} retries. Try again later.`,
             },
           });
           return;
         }
         const delay = Math.max(config.delayMs, quota.retryAfterMs);
+        await output.waitForHandled(signal);
+        signal.throwIfAborted();
         retrying = true;
         progress(
           `Quota, retrying in ${Math.ceil(delay / 1000)}s (${retries + 1}/${config.maxRetries}).`,
@@ -243,7 +322,10 @@ export function streamWithQuotaRetry(
         error: emptyMessage(error),
       });
     } finally {
-      if (retrying) progress("");
+      if (retrying) {
+        await output.waitForHandled(signal);
+        progress("");
+      }
       output.end();
     }
   })();

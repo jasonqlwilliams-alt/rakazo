@@ -436,6 +436,12 @@ export interface ScriptedTurn {
 
 export type AgentRuntimeEvent =
   | { type: "text"; text: string }
+  /**
+   * Drop the last `chars` UTF-16 code units (JavaScript string length) of streamed
+   * text discarded by a replayed model request. Apply this before requesting the
+   * next event; stop iteration if the text cannot be retracted from the unpublished turn.
+   */
+  | { type: "retract"; chars: number }
   | {
       type: "progress";
       text: string;

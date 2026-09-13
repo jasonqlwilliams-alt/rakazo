@@ -75,25 +75,271 @@ describe("real Pi against an offline model HTTP endpoint", () => {
     server.assertComplete();
   });
 
-  it("surfaces the mid-response receipt through real SSE without replay", async () => {
+  it("replays a request whose half-streamed tool call hit a quota stop and runs the tool once", async () => {
+    vi.stubEnv("RAKAZO_QUOTA_RETRY_MS", "1");
+    let writes = 0;
+    let failedRequest: ModelEmulatorRequest | undefined;
     const server = await startModelEmulator({
       steps: [
         {
-          expect() {},
-          response: { type: "stream-error", text: "Partial answer", message: "429 rate limit" },
+          expect(request) {
+            failedRequest = request;
+          },
+          response: {
+            type: "stream-error",
+            text: "",
+            message: "429 rate limit",
+            partialToolCall: { id: "cut-off", name: "write_file", arguments: '{"path":"no' },
+          },
+        },
+        {
+          expect(request) {
+            expect(request).toEqual(failedRequest);
+          },
+          response: {
+            type: "tool",
+            id: "replayed",
+            name: "write_file",
+            arguments: { path: "notes.txt", content: "hello" },
+          },
+        },
+        {
+          expect(request) {
+            expect(request.messages.filter((message) => message.role === "assistant")).toHaveLength(
+              1,
+            );
+            expect(latestToolResult(request)?.tool_call_id).toBe("replayed");
+          },
+          response: { type: "text", text: "Saved." },
         },
       ],
     });
     cleanups.push(() => server.close());
-    const events: AgentRuntimeEvent[] = [];
-    await expect(
-      collect(new PiAgentRuntime().run(runRequest(server.model)), events),
-    ).rejects.toThrow("Mid-response quota stop was not retried. Try again later.");
-    expect(events.filter((event) => event.type === "text")).toEqual([
-      { type: "text", text: "Partial answer" },
-    ]);
-    expect(events.filter((event) => event.type === "progress")).toEqual([]);
+    const executions: string[] = [];
+    const events = await collect(
+      new PiAgentRuntime().run(
+        runRequest(server.model, {
+          executeTool: async (_name, _args, executionId) => {
+            writes++;
+            executions.push(executionId);
+            return { saved: true };
+          },
+        }),
+      ),
+    );
     server.assertComplete();
+    expect(writes).toBe(1);
+    expect(executions).toEqual(["replayed"]);
+    expect(events.filter((event) => event.type === "tool")).toHaveLength(1);
+    expect(events.at(-1)).toEqual({ type: "done", text: "Saved." });
+  });
+
+  it("replays a request after streamed text hit a quota stop without repeating the text", async () => {
+    vi.stubEnv("RAKAZO_QUOTA_RETRY_MS", "1");
+    let failedRequest: ModelEmulatorRequest | undefined;
+    const server = await startModelEmulator({
+      steps: [
+        {
+          expect(request) {
+            failedRequest = request;
+          },
+          response: { type: "stream-error", text: "Saving now. ", message: "429 rate limit" },
+        },
+        {
+          expect(request) {
+            expect(request).toEqual(failedRequest);
+          },
+          response: { type: "text", text: "Saving it now. Saved." },
+        },
+      ],
+    });
+    cleanups.push(() => server.close());
+    const events = await collect(new PiAgentRuntime().run(runRequest(server.model)));
+    server.assertComplete();
+    expect(
+      events.filter(
+        (event) => event.type === "text" || event.type === "retract" || event.type === "done",
+      ),
+    ).toEqual([
+      { type: "text", text: "Saving now. " },
+      { type: "retract", chars: "Saving now. ".length },
+      { type: "text", text: "Saving it now. Saved." },
+      { type: "done", text: "Saving it now. Saved." },
+    ]);
+    // The retraction lands after the quota notice and before any replayed text.
+    const retract = events.findIndex((event) => event.type === "retract");
+    expect(events.slice(0, retract)).toContainEqual({
+      type: "progress",
+      text: "Quota, retrying in 1s (1/3).",
+    });
+  });
+
+  it("runs no replayed tool call until the consumer has applied the retraction", async () => {
+    vi.stubEnv("RAKAZO_QUOTA_RETRY_MS", "1");
+    const server = await startModelEmulator({
+      steps: [
+        {
+          expect() {},
+          response: { type: "stream-error", text: "Saving now. ", message: "429 rate limit" },
+        },
+        {
+          expect() {},
+          response: {
+            type: "tool",
+            id: "update",
+            name: "message_user",
+            arguments: { text: "Saved it." },
+          },
+        },
+        { expect() {}, response: { type: "text", text: "Done." } },
+      ],
+    });
+    cleanups.push(() => server.close());
+    const messageUser: ConnectorTool = {
+      name: "message_user",
+      description: "Post a short progress update",
+      inputSchema: {
+        type: "object",
+        properties: { text: { type: "string" } },
+        required: ["text"],
+      },
+    };
+    // Stand in for the executor: its unpublished text, and a publish from message_user.
+    let unpublished = "";
+    const published: string[] = [];
+    let toolRan!: () => void;
+    const toolRunning = new Promise<void>((resolve) => {
+      toolRan = resolve;
+    });
+    const events = new PiAgentRuntime().run(
+      runRequest(server.model, {
+        tools: [messageUser],
+        executeTool: async () => {
+          toolRan();
+          published.push(unpublished);
+          unpublished = "";
+          return { ok: true };
+        },
+      }),
+    );
+    for await (const event of events) {
+      if (event.type === "text") unpublished += event.text;
+      if (event.type === "retract") {
+        // The executor is mid-await (a lease read or event append) when the replay arrives.
+        await Promise.race([toolRunning, new Promise((resolve) => setTimeout(resolve, 300))]);
+        unpublished = unpublished.slice(0, unpublished.length - event.chars);
+      }
+    }
+    server.assertComplete();
+    expect(published).toEqual([""]);
+  });
+
+  it("settles the run when its consumer stops reading at a retraction", async () => {
+    vi.stubEnv("RAKAZO_QUOTA_RETRY_MS", "1");
+    const server = await startModelEmulator({
+      steps: [
+        {
+          expect() {},
+          response: { type: "stream-error", text: "Saving now. ", message: "429 rate limit" },
+        },
+        {
+          expect() {},
+          response: { type: "stream-error", text: "Retrying. ", message: "429 rate limit" },
+        },
+      ],
+    });
+    cleanups.push(() => server.close());
+    const seen: string[] = [];
+    for await (const event of new PiAgentRuntime().run(runRequest(server.model))) {
+      seen.push(event.type);
+      if (event.type === "retract") break;
+    }
+    expect(seen.at(-1)).toBe("retract");
+    server.assertComplete();
+  });
+
+  it("orders consecutive quota notices after replayed text during a slow retraction", async () => {
+    vi.stubEnv("RAKAZO_QUOTA_RETRY_MS", "1");
+    const server = await startModelEmulator({
+      steps: [
+        {
+          expect() {},
+          response: { type: "stream-error", text: "First attempt. ", message: "429 rate limit" },
+        },
+        {
+          expect() {},
+          response: { type: "stream-error", text: "Second attempt. ", message: "429 rate limit" },
+        },
+        { expect() {}, response: { type: "text", text: "Saved." } },
+      ],
+    });
+    cleanups.push(() => server.close());
+    const events: AgentRuntimeEvent[] = [];
+    for await (const event of new PiAgentRuntime().run(runRequest(server.model))) {
+      events.push(event);
+      if (event.type === "retract" && event.chars === "First attempt. ".length) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+    }
+    server.assertComplete();
+    expect(events.filter((event) => event.type !== "usage")).toEqual([
+      { type: "text", text: "First attempt. " },
+      { type: "progress", text: "Quota, retrying in 1s (1/3)." },
+      { type: "progress", text: "" },
+      { type: "retract", chars: "First attempt. ".length },
+      { type: "text", text: "Second attempt. " },
+      { type: "progress", text: "Quota, retrying in 1s (2/3)." },
+      { type: "progress", text: "" },
+      { type: "retract", chars: "Second attempt. ".length },
+      { type: "text", text: "Saved." },
+      { type: "done", text: "Saved." },
+    ]);
+  });
+
+  it("drops a nested model call's discarded text from the subagent result", async () => {
+    vi.stubEnv("RAKAZO_QUOTA_RETRY_MS", "1");
+    const server = await startModelEmulator({
+      steps: [
+        {
+          expect() {},
+          response: {
+            type: "tool",
+            id: "delegate",
+            name: "run_subagent",
+            arguments: { name: "Research", task: "Summarize the fixture." },
+          },
+        },
+        {
+          expect() {},
+          response: { type: "stream-error", text: "Research is ", message: "429 rate limit" },
+        },
+        { expect() {}, response: { type: "text", text: "Research complete." } },
+        {
+          expect(request) {
+            expect(latestToolResult(request)?.content).toBe("Research complete.");
+          },
+          response: { type: "text", text: "Summary ready." },
+        },
+      ],
+    });
+    cleanups.push(() => server.close());
+    const events = await collect(
+      new PiAgentRuntime().run(
+        runRequest(server.model, {
+          tools: builtinAgentTools.filter((tool) => tool.name === "run_subagent"),
+        }),
+      ),
+    );
+    server.assertComplete();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "subagent",
+        status: "completed",
+        result: "Research complete.",
+      }),
+    );
+    expect(events.filter((event) => event.type === "retract")).toEqual([]);
+    expect(events.at(-1)).toEqual({ type: "done", text: "Summary ready." });
   });
 
   it("retries a nested model call and reports its quota wait as subagent progress", async () => {
