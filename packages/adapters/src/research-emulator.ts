@@ -43,7 +43,7 @@ export const EMULATOR_RESEARCH_FINDINGS: ResearchFindings = {
   applyNotes: ["Nothing to apply in the emulator."],
 };
 
-/** Offline research provider with durable job identity and explicit outcome controls. */
+/** Offline research provider with in-memory job identity and explicit outcome controls. */
 export class EmulatorResearchProvider implements ResearchProvider {
   readonly jobs: Map<string, EmulatorResearchJob>;
   private readonly autoCompleteAfterObservations: number | null;

@@ -4,7 +4,7 @@ import { isResearchWorkspacePath } from "@rakazo/contracts";
 import { stableJsonValue } from "@rakazo/core/node/approval-effect-key";
 import * as z from "zod";
 
-/** The brief travels as one prompt argument; a real provider run proved this bound. */
+/** Bound the serialized brief in UTF-8 bytes before it becomes a provider prompt. */
 export const RESEARCH_BRIEF_MAX_BYTES = 8_192;
 export const RESEARCH_BUDGET_MIN_MS = 60_000;
 export const RESEARCH_BUDGET_MAX_MS = 60 * 60_000;

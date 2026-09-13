@@ -437,8 +437,8 @@ export interface CloudAgentProvider {
 }
 
 /**
- * Provider-neutral long-running research on the bot computer. Core runs with
- * none configured; research tools are injected only when a provider is present.
+ * Provider-neutral contract for long-running research on the bot computer.
+ * Only the offline emulator implements it; executor and tool wiring are deferred.
  * Definitive outcomes are observations. Throw only when the outcome is unknown,
  * so the caller observes again instead of starting a second job.
  */

@@ -74,8 +74,9 @@ export function isResearchWorkspacePath(value: string): boolean {
 }
 
 /**
- * Provider-neutral research result. Every consumer parses through this schema,
- * so a provider cannot publish a claim that cites nothing or a source nobody can open.
+ * Parse provider findings here before publishing: confirmed claims must cite a
+ * listed source, while labeled inference may be uncited. Locator validation checks
+ * syntax only; it does not verify reachability, file existence, or source content.
  */
 export const ResearchFindingsSchema = z
   .object({
@@ -129,7 +130,7 @@ export const ResearchFindingsSchema = z
   });
 export type ResearchFindings = z.infer<typeof ResearchFindingsSchema>;
 
-/** Compact card for one research job in the requesting bot's thread. */
+/** Compact thread payload reserved for future research rendering. */
 export const ResearchBlockSchema = z.object({
   kind: z.literal("research"),
   researchId: z.string(),
