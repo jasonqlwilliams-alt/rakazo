@@ -74,7 +74,7 @@ Nested replays trim their own output without retracting the parent's text.
 Quota notices and clears follow Pi's handling of every event the wrapper already
 forwarded. This prevents delayed text from overwriting a later quota notice
 while the executor is still applying a retraction. These waits release when the
-run aborts or Pi closes the request.
+run aborts or Pi stops reading that request's events.
 
 [OpenRouter documents mid-stream errors](https://openrouter.ai/docs/api_reference/errors-and-debugging#mid-stream-errors),
 including rate-limit failures after streaming begins. These arrive in the stream
