@@ -57,6 +57,49 @@ describe("reduceLiveMessageBlocks", () => {
       { kind: "steps", steps: [{ label: "Shell", count: 1 }] },
     ]);
   });
+
+  it("replaces a mid-stream partial with the quota notice, then replayed text", () => {
+    const partial = reduceLiveMessageBlocks([], {
+      type: "progress",
+      payload: { delta: "Partial answer", streaming: true },
+    });
+    expect(partial).toEqual([{ kind: "progress", text: "Partial answer" }]);
+
+    const withDelta = reduceLiveMessageBlocks(partial, {
+      type: "progress",
+      payload: { delta: ".", streaming: true },
+    });
+    expect(withDelta).toEqual([{ kind: "progress", text: "Partial answer." }]);
+
+    const notice = reduceLiveMessageBlocks(withDelta, {
+      type: "progress",
+      payload: { text: "Quota, retrying in 60s (1/3)." },
+    });
+    expect(notice).toEqual([{ kind: "progress", text: "Quota, retrying in 60s (1/3)." }]);
+
+    const cleared = reduceLiveMessageBlocks(notice, {
+      type: "progress",
+      payload: { text: "" },
+    });
+    expect(cleared).toEqual([]);
+
+    const replaced = reduceLiveMessageBlocks(cleared, {
+      type: "progress",
+      payload: { text: "Full answer.", streaming: true },
+    });
+    expect(replaced).toEqual([{ kind: "progress", text: "Full answer." }]);
+
+    const firstDelta = reduceLiveMessageBlocks(cleared, {
+      type: "progress",
+      payload: { delta: "Full", streaming: true },
+    });
+    expect(
+      reduceLiveMessageBlocks(firstDelta, {
+        type: "progress",
+        payload: { delta: " answer.", streaming: true },
+      }),
+    ).toEqual([{ kind: "progress", text: "Full answer." }]);
+  });
 });
 
 describe("runFailureError", () => {
