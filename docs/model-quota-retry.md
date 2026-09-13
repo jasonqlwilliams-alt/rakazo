@@ -54,13 +54,24 @@ completed tool results remain in the request context and existing effect IDs are
 unchanged. Pi executes tool calls only after a successful model completion.
 
 A quota stop partway through a response replays the same request under the same
-retry count. None of its tool calls ran, and thinking is never shown, so only
-streamed text can repeat. The runtime emits a `retract` event for that text
-before the replayed response streams; the executor removes it from the turn and
-restores the live text the quota notice replaced. If that text is no longer
-unpublished, the run fails with `Mid-response quota stop was not retried. Try again later.`
-rather than guessing. Rakazo never asks a provider to continue a partial
-response; previously completed effects remain intact.
+retry count. None of the discarded attempt's tool calls ran, and thinking is not
+displayed. Partial text can appear live, but it is removed before replayed text
+replaces it and is never published as a completed bot message. Rakazo never asks
+a provider to continue a partial response.
+
+The Pi runtime trims discarded text from both parent and nested results. For a
+parent request, it emits a `retract` event; the executor removes that text from
+the unpublished turn and restores the retained, redacted live text. Replayed
+tools wait for the executor to apply this update, so they cannot publish the
+discarded narration. If the executor cannot account for all the discarded text
+in the unpublished turn, the run fails with
+`Mid-response quota stop was not retried. Try again later.` rather than guessing.
+Nested replays trim their own output without retracting the parent's text.
+
+Quota notices and clears follow Pi's handling of every event the wrapper already
+forwarded. This prevents delayed text from overwriting a later quota notice
+while the executor is still applying a retraction. These waits release when the
+run aborts or Pi closes the stream iterator.
 
 [OpenRouter documents mid-stream errors](https://openrouter.ai/docs/api_reference/errors-and-debugging#mid-stream-errors),
 including rate-limit failures after streaming begins. These arrive in the stream
