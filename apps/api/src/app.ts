@@ -50,6 +50,7 @@ import {
   PiOAuthLogins,
   PipedreamConnector,
   PostgresRealtimeFanout,
+  parseMessagingCsvIds,
   pipedreamConfigFromEnv,
   piSessionsRoot,
   pushTokenPath,
@@ -62,6 +63,7 @@ import {
   ScriptedAgentRuntime,
   SmtpEmailProvider,
   SpaceMemoryProviderResolver,
+  teamChatProviderId,
   toTeamChatInbound,
 } from "@rakazo/adapters";
 import { blockedAuthPaths, createAuth } from "@rakazo/auth";
@@ -668,14 +670,18 @@ export async function createApp(
               deploymentModel: env.defaultModel,
               deploymentModelKey: env.deploymentModelKey,
             });
+      const providerId = teamChatProviderId(messagingPlatforms) ?? "slack";
       const bridge = new TeamChatBridge({
         prisma,
         events,
         jobs,
         send: createMessagingTeamChatSender(messaging),
-        providerId: "slack",
+        providerId,
         botId: env.teamChatBotId,
         judge,
+        ...(providerId === "discord"
+          ? { allowedConversationKeys: parseMessagingCsvIds(env.discordRespondToChannelIds) }
+          : {}),
       });
       teamChatBridgeInstance = bridge;
       try {
@@ -747,12 +753,13 @@ export async function createApp(
     });
     mountMessagingWebhookRoutes(app, { messaging });
     // Start polling-mode adapters (e.g. Telegram with no public webhook URL
-    // registered) immediately rather than waiting for the first webhook
-    // POST or outbound send to lazily trigger it. This is the process that
-    // owns the inbound sink registered just above, so it must be the one
-    // holding the live connection — a second poller elsewhere (e.g. the
-    // worker) would only fight this one for Telegram's single getUpdates
-    // slot without ever seeing the messages itself.
+    // registered) and the Discord Gateway immediately rather than waiting
+    // for the first webhook POST or outbound send to lazily trigger them.
+    // This is the process that owns the inbound sink registered just above,
+    // so it must be the one holding the live connection — a second poller
+    // elsewhere (e.g. the worker) would only fight this one for Telegram's
+    // single getUpdates slot or Discord's Gateway without ever seeing the
+    // messages itself.
     // Bounded retries cover transient Telegram startup failures; polling-only
     // bots otherwise stay dark until an unrelated outbound send re-inits.
     messagingInitTask = (async () => {
@@ -794,6 +801,7 @@ export async function createApp(
       composio: Boolean(stack.composio),
       pipedream: Boolean(pipedream),
       messaging: Boolean(messaging),
+      providers: messaging?.platforms().map((platform) => platform.provider) ?? [],
       email: email?.describe().id ?? null,
       jobs: jobKind,
       realtime: realtime.describe().id,

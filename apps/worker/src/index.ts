@@ -110,8 +110,9 @@ async function main() {
     : undefined;
   // pollInboundMessages stays false (the default) here: this process
   // only ever sends outbound (messaging.deliver jobs). It must never poll
-  // Telegram — that would steal the single getUpdates slot away from the
-  // API process, which is the one with the inbound sink actually wired up.
+  // Telegram or open a Discord Gateway — that would steal the single inbound
+  // slot away from the API process, which is the one with the inbound sink
+  // actually wired up.
   const messagingPlatforms = messagingPlatformsFromEnv(messagingEnvFromProcess(process.env));
   const messaging = isMessagingSurfaceEnabled(messagingPlatforms, {
     deploymentModelKey,

@@ -290,7 +290,7 @@ support. Existing token limits still apply; effort is not a separate reasoning-t
 
 Do not commit `.env`. Never put `COMPOSIO_API_KEY`, OpenRouter keys, or provider tokens in git, logs, or chat.
 
-Optional messaging platforms (iMessage, Slack, WhatsApp, Telegram, Feishu/Lark) mount when their env credentials are set — see `.env.example`. Point a Feishu/Lark bot event subscription at `/api/v1/messaging/webhook/lark` (webhook/HTTP inbound only; do not enable long connection). Groups stay iMessage-only.
+Optional messaging platforms (iMessage, Slack, Discord, WhatsApp, Telegram, Feishu/Lark) mount when their env credentials are set — see `.env.example`. Discord inbound is a Gateway WebSocket started by the API process only (the worker must not open one); a partial `DISCORD_*` set fails at startup. Point a Feishu/Lark bot event subscription at `/api/v1/messaging/webhook/lark` (webhook/HTTP inbound only; do not enable long connection). Groups stay iMessage-only.
 
 ## Choosing a computer provider
 

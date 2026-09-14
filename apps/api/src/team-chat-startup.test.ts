@@ -32,6 +32,9 @@ describe("team chat startup helpers", () => {
   it("prefers TeamChat for configured workspace surfaces even before the bridge is ready", () => {
     expect(prefersTeamChatSurface(message(), "bot-1")).toBe(true);
     expect(
+      prefersTeamChatSurface(message({ provider: "discord", workspaceId: undefined }), "bot-1"),
+    ).toBe(true);
+    expect(
       prefersTeamChatSurface(message({ provider: "sendblue", workspaceId: undefined }), "bot-1"),
     ).toBe(false);
     expect(prefersTeamChatSurface(message(), undefined)).toBe(false);

@@ -168,17 +168,18 @@ export class ChatSdkMessagingSurface implements MessagingSurface {
    * Proactively start the underlying Chat SDK instance. Webhook handling
    * and outbound sends already trigger this lazily (see ensureInitialized
    * below), but a polling-mode adapter (Telegram in "auto" mode with no
-   * public webhook URL registered) needs its pull loop running before the
-   * first inbound message can ever arrive, so long-running hosts call this
-   * explicitly at startup instead of waiting on the first send.
+   * public webhook URL registered) and Discord Gateway need their inbound
+   * connection running before the first inbound message can ever arrive, so
+   * long-running hosts call this explicitly at startup instead of waiting on
+   * the first send.
    */
   async initialize(): Promise<void> {
     await this.ensureInitialized();
   }
 
   /**
-   * Stop Telegram getUpdates before exit. Chat.shutdown() only calls
-   * adapter.disconnect(), which Telegram does not implement.
+   * Stop Telegram getUpdates and Discord Gateway before exit. Chat.shutdown()
+   * only calls adapter.disconnect(), which those inbound transports do not use.
    */
   async shutdown(): Promise<void> {
     const pending = this.initialized;

@@ -204,4 +204,17 @@ describe("loadEnv", () => {
     ).toBe(false);
     expect(loadEnv({ ...base, NODE_ENV: "development" }).nodeEnv).toBe("development");
   });
+
+  it("maps Discord messaging keys when the pair is complete", () => {
+    const env = loadEnv({
+      ...base,
+      DISCORD_BOT_TOKEN: " discord-bot-token ",
+      DISCORD_APPLICATION_ID: " discord-app-id ",
+      DISCORD_RESPOND_TO_CHANNEL_IDS: " channel-1 ",
+    });
+    expect(env.discordBotToken).toBe("discord-bot-token");
+    expect(env.discordApplicationId).toBe("discord-app-id");
+    expect(env.discordRespondToChannelIds).toBe("channel-1");
+    expect(loadEnv(base).discordBotToken).toBeUndefined();
+  });
 });

@@ -46,6 +46,15 @@ function isRoutingOwnershipReason(reason: string | null | undefined): boolean {
   return reason === ROUTING_OWNERSHIP_REASON || reason === ROUTING_OWNERSHIP_REARMED_REASON;
 }
 
+function conversationKeyIsAllowed(conversationKey: string, allowed: string[]): boolean {
+  return allowed.some(
+    (id) =>
+      conversationKey === id ||
+      conversationKey.startsWith(`${id}:`) ||
+      conversationKey.endsWith(`:${id}`),
+  );
+}
+
 interface TeamChatBridgeDeps {
   prisma: PrismaClient;
   events: Pick<ThreadEvents, "sendUserMessage">;
@@ -53,6 +62,8 @@ interface TeamChatBridgeDeps {
   send: (request: TeamChatSendRequest) => Promise<TeamChatSendResult>;
   providerId: string;
   botId: string;
+  /** When set, inbound whose conversation key is outside this list is ignored. */
+  allowedConversationKeys?: string[];
   judge?: TeamChatEngagementJudge;
   reconcileIntervalMs?: number;
   ambientDebounceMs?: number;
@@ -138,6 +149,13 @@ export class TeamChatBridge {
     return this.deps.providerId;
   }
 
+  private shouldIgnoreInbound(message: TeamChatInboundMessage): boolean {
+    if (message.senderIsBot) return true;
+    const allowed = this.deps.allowedConversationKeys;
+    if (!allowed?.length) return false;
+    return !conversationKeyIsAllowed(message.conversationKey, allowed);
+  }
+
   /** Mark a deferred row as having an in-process routine wake until clearRoutineWake. */
   markRoutineWakeInFlight(externalMessageId: string): void {
     this.inFlightRoutineWakes.add(externalMessageId);
@@ -207,6 +225,16 @@ export class TeamChatBridge {
   ): Promise<TeamChatInboundTarget | DeferredTeamChatInboundTarget> {
     const target = this.target;
     if (!target) throw new Error("Team chat bridge is not started");
+    if (this.shouldIgnoreInbound(message)) {
+      return {
+        spaceId: target.spaceId,
+        userId: target.userId,
+        botId: target.id,
+        threadId: "",
+        deferred: false,
+        externalMessageId: "",
+      };
+    }
     const conversation = await this.deps.prisma.externalConversation.upsert({
       where: {
         provider_workspaceId_externalKey: {

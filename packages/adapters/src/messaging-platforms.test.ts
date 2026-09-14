@@ -1,13 +1,16 @@
 import { Domain } from "chat-adapter-lark";
 import { describe, expect, it, vi } from "vitest";
 import {
+  enrichDiscordTeamRoom,
   enrichSlackTeamRoom,
   isMessagingEnabled,
   isMessagingSurfaceEnabled,
   type MessagingEnvironmentValues,
   messagingEnvFromProcess,
   messagingPlatformsFromEnv,
+  parseMessagingCsvIds,
   parseSendblueStatus,
+  teamChatProviderId,
 } from "./messaging-platforms.js";
 
 // Fake credentials: adapters are constructed offline, never called.
@@ -18,6 +21,8 @@ const fullEnv: MessagingEnvironmentValues = {
   sendbluePhoneNumber: "+15550009999",
   slackBotToken: "xoxb-fake",
   slackSigningSecret: "slack-signing",
+  discordBotToken: "discord-bot-token",
+  discordApplicationId: "discord-app-id",
   whatsappAccessToken: "wa-token",
   whatsappPhoneNumberId: "wa-phone-id",
   whatsappAppSecret: "wa-app-secret",
@@ -36,7 +41,14 @@ function providers(env: MessagingEnvironmentValues): string[] {
 describe("messagingPlatformsFromEnv", () => {
   it("mounts nothing without credentials and everything with full credentials", () => {
     expect(providers({})).toEqual([]);
-    expect(providers(fullEnv)).toEqual(["sendblue", "slack", "whatsapp", "telegram", "lark"]);
+    expect(providers(fullEnv)).toEqual([
+      "sendblue",
+      "slack",
+      "discord",
+      "whatsapp",
+      "telegram",
+      "lark",
+    ]);
   });
 
   it("requires all four sendblue values", () => {
@@ -163,6 +175,7 @@ describe("messagingPlatformsFromEnv", () => {
     );
     expect(capabilities.sendblue).toEqual({ direct: true, groups: true, typing: true });
     expect(capabilities.slack).toEqual({ direct: true, groups: true, typing: false });
+    expect(capabilities.discord).toEqual({ direct: true, groups: true, typing: false });
     expect(capabilities.whatsapp).toEqual({ direct: true, groups: false, typing: false });
     expect(capabilities.telegram).toEqual({ direct: true, groups: false, typing: false });
     expect(capabilities.lark).toEqual({ direct: true, groups: false, typing: false });
@@ -334,5 +347,129 @@ describe("enrichSlackTeamRoom", () => {
       base,
     );
     expect(enrichment.kind).toBe("mention");
+  });
+});
+
+describe("discord platform", () => {
+  const discordEnv = {
+    discordBotToken: "discord-bot-token",
+    discordApplicationId: "discord-app-id",
+  };
+
+  it("refuses a partial DISCORD_* set and stays off when none are set", () => {
+    expect(messagingEnvFromProcess({})).not.toMatchObject({
+      discordBotToken: expect.anything(),
+    });
+    expect(providers({})).toEqual([]);
+    expect(() => messagingEnvFromProcess({ DISCORD_BOT_TOKEN: " discord-bot-token " })).toThrow(
+      /partially configured/,
+    );
+    expect(() => messagingEnvFromProcess({ DISCORD_APPLICATION_ID: "discord-app-id" })).toThrow(
+      /partially configured/,
+    );
+    expect(() => messagingEnvFromProcess({ DISCORD_RESPOND_TO_CHANNEL_IDS: "channel-1" })).toThrow(
+      /partially configured/,
+    );
+    expect(() => messagingPlatformsFromEnv({ discordBotToken: "discord-bot-token" })).toThrow(
+      /partially configured/,
+    );
+  });
+
+  it("maps DISCORD_* process env and mounts only with token plus application id", () => {
+    expect(
+      messagingEnvFromProcess({
+        DISCORD_BOT_TOKEN: " discord-bot-token ",
+        DISCORD_APPLICATION_ID: " discord-app-id ",
+        DISCORD_PUBLIC_KEY: " public-key ",
+        DISCORD_RESPOND_TO_CHANNEL_IDS: " channel-1 , channel-2 ",
+        DISCORD_MENTION_ROLE_IDS: " role-1 ",
+      }),
+    ).toMatchObject({
+      discordBotToken: "discord-bot-token",
+      discordApplicationId: "discord-app-id",
+      discordPublicKey: "public-key",
+      discordRespondToChannelIds: "channel-1 , channel-2",
+      discordMentionRoleIds: "role-1",
+    });
+    expect(providers(discordEnv)).toEqual(["discord"]);
+    expect(teamChatProviderId(messagingPlatformsFromEnv(discordEnv))).toBe("discord");
+    expect(teamChatProviderId(messagingPlatformsFromEnv(fullEnv))).toBe("slack");
+    expect(parseMessagingCsvIds(" channel-1 , channel-2 ")).toEqual(["channel-1", "channel-2"]);
+  });
+
+  it("starts the Gateway only when the API process asks to poll inbound", async () => {
+    const api = messagingPlatformsFromEnv(discordEnv, { pollInboundMessages: true })[0]!;
+    const worker = messagingPlatformsFromEnv(discordEnv)[0]!;
+    type DiscordGatewayAdapter = {
+      startGatewayListener: (...args: unknown[]) => Promise<Response>;
+      stopPolling?: () => Promise<void>;
+    };
+    const startApi = vi
+      .spyOn(api.adapter as unknown as DiscordGatewayAdapter, "startGatewayListener")
+      .mockResolvedValue(new Response("ok", { status: 200 }));
+    const startWorker = vi.spyOn(
+      worker.adapter as unknown as DiscordGatewayAdapter,
+      "startGatewayListener",
+    );
+
+    await worker.adapter.initialize({} as never);
+    expect(startWorker).not.toHaveBeenCalled();
+    expect((worker.adapter as unknown as DiscordGatewayAdapter).stopPolling).toBeUndefined();
+
+    await api.adapter.initialize({} as never);
+    await vi.waitFor(() => expect(startApi).toHaveBeenCalled());
+    expect(startApi.mock.calls[0]?.[2]).toBeInstanceOf(AbortSignal);
+    await (api.adapter as unknown as DiscordGatewayAdapter).stopPolling?.();
+  });
+});
+
+describe("enrichDiscordTeamRoom", () => {
+  const base = {
+    type: "message" as const,
+    provider: "discord",
+    handle: "msg-1",
+    threadId: "discord:guild-1:channel-1:thread-9",
+    isDirect: false,
+    from: "user-1",
+    fromLabel: "Ada",
+    channelName: "fleet",
+    participants: ["user-1"],
+    content: "<@bot-1> ship it",
+    mediaUrl: null,
+  };
+
+  it("maps guild, channel, thread, and bot-author fields", () => {
+    const enrichment = enrichDiscordTeamRoom(
+      {
+        guild_id: "guild-1",
+        channel_id: "thread-9",
+        content: "<@bot-1> ship it",
+        is_mention: true,
+        author: { id: "user-1", username: "ada", bot: false },
+        thread: { id: "thread-9", parent_id: "channel-1" },
+      },
+      base,
+      { respondToChannelIds: ["channel-1"] },
+    );
+    expect(enrichment).toMatchObject({
+      workspaceId: "guild-1",
+      conversationKey: "channel-1",
+      replyThreadId: "thread-9",
+      kind: "mention",
+      content: "ship it",
+    });
+    expect(enrichment.senderIsBot).toBeUndefined();
+  });
+
+  it("marks another bot as senderIsBot", () => {
+    const enrichment = enrichDiscordTeamRoom(
+      {
+        guild_id: "guild-1",
+        channel_id: "channel-1",
+        author: { id: "other-bot", username: "courier", bot: true },
+      },
+      { ...base, threadId: "discord:guild-1:channel-1", content: "ack" },
+    );
+    expect(enrichment.senderIsBot).toBe(true);
   });
 });

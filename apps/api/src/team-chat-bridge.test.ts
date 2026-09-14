@@ -1954,4 +1954,89 @@ describe("team chat bridge", () => {
       }),
     );
   });
+
+  it("does not start an agent turn for a bot-authored Discord message", async () => {
+    const upsert = vi.fn();
+    const sendUserMessage = vi.fn();
+    const enqueue = vi.fn();
+    const bridge = new TeamChatBridge({
+      prisma: {
+        externalConversation: { upsert },
+        externalMessage: { upsert, update: vi.fn(), updateMany: vi.fn() },
+      } as unknown as PrismaClient,
+      events: { sendUserMessage },
+      jobs: { enqueue },
+      send: vi.fn(),
+      providerId: "discord",
+      botId: "bot-1",
+    });
+    (
+      bridge as unknown as {
+        target: { id: string; spaceId: string; userId: string; name: string };
+      }
+    ).target = { id: "bot-1", spaceId: "space-1", userId: "owner-1", name: "Desk" };
+
+    await expect(
+      bridge.receive({
+        eventId: "msg-bot",
+        workspaceId: "guild-1",
+        kind: "mention",
+        conversationKey: "channel-1",
+        conversationId: "discord:guild-1:channel-1",
+        replyThreadId: null,
+        senderId: "other-bot",
+        senderName: "Courier",
+        senderIsBot: true,
+        content: "ack",
+      }),
+    ).resolves.toEqual({
+      spaceId: "space-1",
+      userId: "owner-1",
+      botId: "bot-1",
+      threadId: "",
+      deferred: false,
+      externalMessageId: "",
+    });
+    expect(upsert).not.toHaveBeenCalled();
+    expect(sendUserMessage).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it("ignores a Discord message outside the channel allowlist", async () => {
+    const upsert = vi.fn();
+    const sendUserMessage = vi.fn();
+    const enqueue = vi.fn();
+    const bridge = new TeamChatBridge({
+      prisma: {
+        externalConversation: { upsert },
+        externalMessage: { upsert, update: vi.fn(), updateMany: vi.fn() },
+      } as unknown as PrismaClient,
+      events: { sendUserMessage },
+      jobs: { enqueue },
+      send: vi.fn(),
+      providerId: "discord",
+      botId: "bot-1",
+      allowedConversationKeys: ["channel-1"],
+    });
+    (
+      bridge as unknown as {
+        target: { id: string; spaceId: string; userId: string; name: string };
+      }
+    ).target = { id: "bot-1", spaceId: "space-1", userId: "owner-1", name: "Desk" };
+
+    await bridge.receive({
+      eventId: "msg-other",
+      workspaceId: "guild-1",
+      kind: "mention",
+      conversationKey: "channel-other",
+      conversationId: "discord:guild-1:channel-other",
+      replyThreadId: null,
+      senderId: "user-1",
+      senderName: "Ada",
+      content: "hello",
+    });
+    expect(upsert).not.toHaveBeenCalled();
+    expect(sendUserMessage).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
+  });
 });
