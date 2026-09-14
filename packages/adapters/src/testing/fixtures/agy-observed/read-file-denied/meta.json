@@ -1,0 +1,24 @@
+{
+  "case": "read-file-denied",
+  "agyVersion": "1.2.2",
+  "model": "gemini-3.8-flash-low",
+  "mode": "accept-edits",
+  "outputFormat": "stream-json",
+  "printTimeout": "90s",
+  "jsonSchema": "findings",
+  "exitCode": 0,
+  "cwd": "worktree-.tmp-agy-capture",
+  "observed": true,
+  "argv": [
+    "agy",
+    "--print=<brief>",
+    "--output-format=stream-json",
+    "--json-schema=findings.schema.json",
+    "--model=gemini-3.8-flash-low",
+    "--effort=low",
+    "--mode=accept-edits",
+    "--sandbox",
+    "--print-timeout=90s",
+    "--log-file=agy.log"
+  ]
+}

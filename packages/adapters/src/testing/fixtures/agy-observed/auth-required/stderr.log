@@ -1,0 +1,8 @@
+Authentication required. Please visit the URL to log in:
+  https://accounts.example.invalid/device
+
+Waiting for authentication (timeout 60s)...
+Or, paste the authorization code here and press Enter:
+
+Error: authentication interrupted.
+error: authentication failed or timed out

@@ -48,3 +48,4 @@ playwright-report-www
 
 # Recorded CLI output replayed by the research emulator
 !packages/adapters/src/testing/fixtures/agy/*/stderr.log
+!packages/adapters/src/testing/fixtures/agy-observed/*/stderr.log

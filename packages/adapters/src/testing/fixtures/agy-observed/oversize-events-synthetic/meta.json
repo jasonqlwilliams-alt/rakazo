@@ -1,0 +1,6 @@
+{
+  "case": "oversize-events-synthetic",
+  "agyVersion": "1.2.2",
+  "observed": false,
+  "reason": "Not observed as a file: an events stream over 8 MiB does not belong in the repository. The emulator generates this case in memory."
+}

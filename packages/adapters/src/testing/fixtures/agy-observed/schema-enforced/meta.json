@@ -1,0 +1,24 @@
+{
+  "case": "schema-enforced",
+  "agyVersion": "1.2.2",
+  "model": "gemini-3.8-flash-low",
+  "mode": "plan",
+  "outputFormat": "stream-json",
+  "printTimeout": "90s",
+  "jsonSchema": "violation",
+  "exitCode": 0,
+  "cwd": "worktree-.tmp-agy-capture",
+  "observed": true,
+  "argv": [
+    "agy",
+    "--print=<brief>",
+    "--output-format=stream-json",
+    "--json-schema=findings.schema.json",
+    "--model=gemini-3.8-flash-low",
+    "--effort=low",
+    "--mode=plan",
+    "--sandbox",
+    "--print-timeout=90s",
+    "--log-file=agy.log"
+  ]
+}
