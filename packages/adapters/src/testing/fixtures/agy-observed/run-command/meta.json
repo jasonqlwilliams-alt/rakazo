@@ -1,0 +1,23 @@
+{
+  "case": "run-command",
+  "agyVersion": "1.2.2",
+  "model": "gemini-3.8-flash-low",
+  "mode": "accept-edits",
+  "outputFormat": "stream-json",
+  "printTimeout": "60s",
+  "jsonSchema": "none",
+  "exitCode": 0,
+  "cwd": "worktree-.tmp-agy-capture",
+  "observed": true,
+  "argv": [
+    "agy",
+    "--print=<brief>",
+    "--output-format=stream-json",
+    "--model=gemini-3.8-flash-low",
+    "--effort=low",
+    "--mode=accept-edits",
+    "--sandbox",
+    "--print-timeout=60s",
+    "--log-file=agy.log"
+  ]
+}

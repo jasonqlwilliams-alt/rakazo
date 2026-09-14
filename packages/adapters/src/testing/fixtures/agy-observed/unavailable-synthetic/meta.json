@@ -1,0 +1,6 @@
+{
+  "case": "unavailable-synthetic",
+  "agyVersion": "1.2.2",
+  "observed": false,
+  "reason": "Not an agy message. The harness writes this when the configured executable is missing (exit 127). No live agy run produces it."
+}

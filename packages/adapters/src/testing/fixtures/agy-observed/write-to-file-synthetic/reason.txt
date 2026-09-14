@@ -1,0 +1,1 @@
+Not observed: the model did not call write_to_file in the small print runs. The /etc path in the permission-denied brief was never written. Headless write permission remains unprobed.

@@ -1,0 +1,15 @@
+{
+  "case": "auth-required",
+  "agyVersion": "1.2.2",
+  "observed": true,
+  "exitCode": 1,
+  "home": "empty",
+  "argv": [
+    "agy",
+    "--print=Do not use tools. Reply ok.",
+    "--output-format=json",
+    "--print-timeout=20s",
+    "--sandbox",
+    "--disable-slash-commands"
+  ]
+}

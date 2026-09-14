@@ -1,0 +1,6 @@
+{
+  "case": "provider-error-synthetic",
+  "agyVersion": "1.2.2",
+  "observed": false,
+  "reason": "Not observed: none of the small print runs printed a generic fatal error: line distinct from auth, usage, quota, or timeout."
+}

@@ -1,0 +1,6 @@
+{
+  "case": "write-to-file-synthetic",
+  "agyVersion": "1.2.2",
+  "observed": false,
+  "reason": "Not observed: the model did not call write_to_file in the small print runs."
+}

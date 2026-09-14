@@ -1,0 +1,6 @@
+{
+  "case": "crash-no-exit-code-synthetic",
+  "agyVersion": "1.2.2",
+  "observed": false,
+  "reason": "Not observed: a mid-print SIGKILL would still create a conversation on the account and the missing exit.code is a harness-wrapper condition, not an agy message."
+}
