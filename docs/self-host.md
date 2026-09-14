@@ -87,15 +87,15 @@ each folder (or single file) on the **supervisor** in Compose, then name it in
 widen it. `infra/compose/docker-compose.binds.example.yml` is a complete overlay with `.env`
 placeholders for every value.
 
-Each entry is `<supervisor mount>:<target>[:<ro|rw>]@<homeKey>[,<homeKey>...]`, separated by `;`
-or newlines:
+Each entry is `<supervisor mount>:<target>:<ro|rw>@<homeKey>[,<homeKey>...]`, one per line:
 
-- The source is the path Compose mounted on the supervisor, under `/host/`.
+- The source is exactly the path of one Compose mount on the supervisor, under `/host/`.
 - The target is where the computer sees it, under `/continuum/`. A target may not repeat or nest
-  another target on the same computer. Bots reach these paths with `shell` and `open_path`; the
-  file tools stay confined to the home.
-- The mode defaults to `ro`. Mount the folder read-only on the supervisor as well; the supervisor
-  only forwards the daemon-side path, so its own mode does not limit the computer's.
+  another target on the same computer. Bots reach these paths with `shell` only; `open_path` and
+  the file tools stay confined to the home.
+- The mode is required. Use `ro` unless a bot must write there. Mount the folder read-only on the
+  supervisor as well; the supervisor only forwards the daemon-side path, so its own mode does not
+  limit the computer's.
 - The scope lists the computers that receive the bind: a Team computer's home key is
   `team-<spaceId>`, a dedicated computer's is its bot id. Computers not listed are unchanged.
 
@@ -108,22 +108,29 @@ services:
     environment:
       SANDBOX_COMPUTER_BINDS: |
         /host/daily:/continuum/daily:rw@${TEAM_HOME_KEY:?}
-        /host/packet-router/docs/HOWTO.md:/continuum/packet-router/docs/HOWTO.md@${TEAM_HOME_KEY},${DEDICATED_HOME_KEY:?}
+        /host/packet-router/docs/HOWTO.md:/continuum/packet-router/docs/HOWTO.md:ro@${TEAM_HOME_KEY},${DEDICATED_HOME_KEY:?}
 ```
 
 Compose translates the host side for the daemon, so write it as your shell names it:
 `C:\Vault\Daily` from a Windows shell, `/mnt/c/Vault/Daily` from WSL, `/srv/vault/Daily` on
 Linux. The supervisor reads the daemon-side path from its own mounts (on Docker Desktop for Windows
 that is `/run/desktop/mnt/host/c/...`) and hands that to the computer, the way it already forwards
-the data directory. A source that is not mounted, missing, or an empty directory (what a wrong
-Docker Desktop path form produces) fails the computer's boot with an error naming the path, so a
-bot cannot "write" into a hollow mount.
+the data directory, so binds need the supervisor to run in a container. When a computer is created
+or recreated, a source that is not mounted, missing, or an empty directory (what a wrong Docker
+Desktop path form produces) fails with an error naming the path, so a bot cannot "write" into a
+hollow mount. Put a marker file such as `.keep` in a new folder before you bind it. A running
+computer keeps its binds if a folder empties later.
 
 Binds are fixed when a container is created. A computer whose bind set differs from the
 configuration is recreated on its next boot; its home is untouched, and the supervisor itself must
 be recreated to pick up a changed mount or variable. Mount the minimum: a dedicated subfolder for
 bot output rather than a folder that also holds secrets, never a whole drive, and read-only unless
 a bot must write there. Every bot on a Team computer shares each of its binds.
+
+A single-file bind holds the file that existed when the computer was created. An editor or tool
+that saves by writing a new file and renaming it over the old one can leave the computer on the
+old content. After you bind a file, update it on the host the way it is normally written and check
+that the computer sees the change.
 
 ## Docker Compose (single machine)
 

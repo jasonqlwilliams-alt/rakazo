@@ -240,25 +240,25 @@ function containedPath(value: string, prefix: string, what: string, entry: strin
 }
 
 /**
- * Parse `SANDBOX_COMPUTER_BINDS`: entries separated by `;` or newlines, each
- * `<supervisor mount path>:<target under /continuum/>[:<ro|rw>]@<homeKey>[,<homeKey>...]`.
- * The mode defaults to read-only. Targets may not repeat or nest within one computer,
- * because a nested bind shadows part of the other.
+ * Parse `SANDBOX_COMPUTER_BINDS`: one entry per line, each
+ * `<supervisor mount path>:<target under /continuum/>:<ro|rw>@<homeKey>[,<homeKey>...]`.
+ * Targets may not repeat or nest within one computer, because a nested bind shadows
+ * part of the other.
  */
 export function parseComputerBinds(value = process.env.SANDBOX_COMPUTER_BINDS): ComputerBindRule[] {
   const rules: ComputerBindRule[] = [];
   const targetsByHome = new Map<string, string[]>();
-  for (const raw of (value ?? "").split(/[;\n]/)) {
+  for (const raw of (value ?? "").split("\n")) {
     const entry = raw.trim();
     if (!entry) continue;
     const at = entry.lastIndexOf("@");
     const parts = at < 0 ? [] : entry.slice(0, at).split(":");
-    if (parts.length < 2 || parts.length > 3) {
+    if (parts.length !== 3) {
       throw new Error(
-        `SANDBOX_COMPUTER_BINDS entries look like "<source>:<target>[:<ro|rw>]@<homeKey>[,...]", received "${entry}"`,
+        `SANDBOX_COMPUTER_BINDS entries look like "<source>:<target>:<ro|rw>@<homeKey>[,...]", received "${entry}"`,
       );
     }
-    const [rawSource, rawTarget, rawMode = "ro"] = parts as [string, string, string?];
+    const [rawSource, rawTarget, rawMode] = parts as [string, string, string];
     const source = containedPath(rawSource, COMPUTER_BIND_SOURCE_PREFIX, "source", entry);
     const target = containedPath(rawTarget, COMPUTER_BIND_TARGET_PREFIX, "target", entry);
     const mode = rawMode.trim();
@@ -292,29 +292,28 @@ export function parseComputerBinds(value = process.env.SANDBOX_COMPUTER_BINDS): 
 }
 
 /**
- * Translate each bind source into the path the Docker daemon binds. Inside Compose that
- * is the supervisor's own mount of the source (the same translation computerHomeStorage
- * applies to the data directory); a host-run supervisor shares the daemon's filesystem.
+ * Translate each bind source into the path the Docker daemon binds: the source of the
+ * supervisor's own Compose mount at exactly that path (the same translation
+ * computerHomeStorage applies to the data directory). A supervisor outside a container
+ * has no such mounts, so it cannot hand out binds at all.
  */
 export function resolveComputerBinds(
   rules: ComputerBind[],
   info: Docker.ContainerInspectInfo | undefined,
 ): ComputerBind[] {
+  if (rules.length && !info) {
+    throw new Error(
+      "SANDBOX_COMPUTER_BINDS needs the supervisor to run in a container that mounts each source",
+    );
+  }
   return rules.map(({ source, target, readOnly }) => {
-    if (!info) return { source, target, readOnly };
-    const mount = info.Mounts.filter(
-      (entry) =>
-        entry.Type === "bind" &&
-        (entry.Destination === source || source.startsWith(`${entry.Destination}/`)),
-    ).sort((a, b) => b.Destination.length - a.Destination.length)[0];
+    const mount = info?.Mounts.find(
+      (entry) => entry.Type === "bind" && entry.Destination === source,
+    );
     if (!mount?.Source) {
       throw new Error(`computer bind source ${source} is not mounted on the supervisor`);
     }
-    return {
-      source: path.posix.join(mount.Source, path.posix.relative(mount.Destination, source)),
-      target,
-      readOnly,
-    };
+    return { source: mount.Source, target, readOnly };
   });
 }
 

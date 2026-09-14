@@ -12,7 +12,8 @@
 #
 # Each folder is mounted read-only on the supervisor under /host/<name>. The supervisor only
 # ever forwards the daemon-side path of that mount to a computer; the computer's own access
-# mode comes from the SANDBOX_COMPUTER_BINDS entry, read-only unless the entry says :rw.
+# mode is the :ro or :rw in its SANDBOX_COMPUTER_BINDS entry. Put a marker file such as .keep
+# in a new folder: an empty folder is refused when a computer is created.
 #
 # Compose translates the host side for the Docker daemon, so write it the way your shell
 # names it: `C:\Vault\Daily` from a Windows shell, `/mnt/c/Vault/Daily` from WSL,
@@ -36,7 +37,7 @@ services:
       - ${BIND_PROJECT_CONTEXT:?host file for /continuum/project-context/PROJECT_CONTEXT.md}:/host/project-context/PROJECT_CONTEXT.md:ro
       - ${BIND_PROJECT_HANDOFF:?host file for /continuum/project-context/HANDOFF.md}:/host/project-context/HANDOFF.md:ro
     environment:
-      # One entry per line: <supervisor mount>:<target under /continuum/>[:<ro|rw>]@<homeKey>[,<homeKey>...]
+      # One entry per line: <supervisor mount>:<target under /continuum/>:<ro|rw>@<homeKey>[,<homeKey>...]
       # A Team computer's home key is team-<spaceId>; a dedicated computer's is its botId.
       # Here the Team computer gets the whole set and one dedicated computer shares the
       # packet-router folders; scope each entry to the computers that need it.
@@ -46,12 +47,12 @@ services:
         /host/packet-router/inbox:/continuum/packet-router/inbox:rw@${TEAM_HOME_KEY},${DEDICATED_HOME_KEY}
         /host/voice-talks:/continuum/voice-talks:rw@${TEAM_HOME_KEY}
         /host/ai-coach/findings:/continuum/ai-coach/findings:rw@${TEAM_HOME_KEY}
-        /host/packet-router/templates:/continuum/packet-router/templates@${TEAM_HOME_KEY},${DEDICATED_HOME_KEY}
-        /host/packet-router/registry:/continuum/packet-router/registry@${TEAM_HOME_KEY},${DEDICATED_HOME_KEY}
-        /host/packet-router/docs/HOWTO.md:/continuum/packet-router/docs/HOWTO.md@${TEAM_HOME_KEY},${DEDICATED_HOME_KEY}
-        /host/packet-router/docs/DISCOVERY.md:/continuum/packet-router/docs/DISCOVERY.md@${TEAM_HOME_KEY},${DEDICATED_HOME_KEY}
-        /host/capture-staging:/continuum/capture-staging@${TEAM_HOME_KEY}
-        /host/system:/continuum/system@${TEAM_HOME_KEY}
-        /host/indexes:/continuum/indexes@${TEAM_HOME_KEY}
-        /host/project-context/PROJECT_CONTEXT.md:/continuum/project-context/PROJECT_CONTEXT.md@${TEAM_HOME_KEY}
-        /host/project-context/HANDOFF.md:/continuum/project-context/HANDOFF.md@${TEAM_HOME_KEY}
+        /host/packet-router/templates:/continuum/packet-router/templates:ro@${TEAM_HOME_KEY},${DEDICATED_HOME_KEY}
+        /host/packet-router/registry:/continuum/packet-router/registry:ro@${TEAM_HOME_KEY},${DEDICATED_HOME_KEY}
+        /host/packet-router/docs/HOWTO.md:/continuum/packet-router/docs/HOWTO.md:ro@${TEAM_HOME_KEY},${DEDICATED_HOME_KEY}
+        /host/packet-router/docs/DISCOVERY.md:/continuum/packet-router/docs/DISCOVERY.md:ro@${TEAM_HOME_KEY},${DEDICATED_HOME_KEY}
+        /host/capture-staging:/continuum/capture-staging:ro@${TEAM_HOME_KEY}
+        /host/system:/continuum/system:ro@${TEAM_HOME_KEY}
+        /host/indexes:/continuum/indexes:ro@${TEAM_HOME_KEY}
+        /host/project-context/PROJECT_CONTEXT.md:/continuum/project-context/PROJECT_CONTEXT.md:ro@${TEAM_HOME_KEY}
+        /host/project-context/HANDOFF.md:/continuum/project-context/HANDOFF.md:ro@${TEAM_HOME_KEY}

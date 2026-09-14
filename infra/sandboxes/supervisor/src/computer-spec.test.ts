@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type Docker from "dockerode";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { parse } from "yaml";
 import {
   assertVolumeSubpathSupport,
   COMPUTER_IMAGE,
@@ -819,9 +820,9 @@ describe("computer host folder binds", () => {
     homePath: "/data/homes/team-space",
   };
 
-  it("parses scoped entries, defaults to read-only and accepts newline separators", () => {
+  it("parses one scoped entry per line", () => {
     const rules = parseComputerBinds(
-      "/host/daily:/continuum/daily:rw@team-space; /host/templates:/continuum/packet-router/templates@team-space,bot-1\n/host/docs/HOWTO.md:/continuum/packet-router/docs/HOWTO.md:ro@bot-1;",
+      "/host/daily:/continuum/daily:rw@team-space\n  /host/templates:/continuum/packet-router/templates:ro@team-space, bot-1\r\n\n/host/docs/HOWTO.md:/continuum/packet-router/docs/HOWTO.md:ro@bot-1\n",
     );
     expect(rules).toEqual([
       {
@@ -848,26 +849,30 @@ describe("computer host folder binds", () => {
   });
 
   it("normalizes trailing slashes and duplicate separators", () => {
-    expect(parseComputerBinds("/host//daily/:/continuum/daily/@team")).toEqual([
+    expect(parseComputerBinds("/host//daily/:/continuum/daily/:ro@team")).toEqual([
       { source: "/host/daily", target: "/continuum/daily", readOnly: true, homeKeys: ["team"] },
     ]);
   });
 
   it("rejects targets outside /continuum/ and sources outside /host/", () => {
     for (const target of ["/home/rakazo/daily", "/continuum", "/continuum/", "/continuum/../etc"])
-      expect(() => parseComputerBinds(`/host/daily:${target}@team`)).toThrow(/target/);
+      expect(() => parseComputerBinds(`/host/daily:${target}:ro@team`)).toThrow(/target/);
     for (const source of ["/mnt/c/daily", "/host", "/host/../data", "host/daily", "C:\\daily"])
-      expect(() => parseComputerBinds(`${source}:/continuum/daily@team`)).toThrow(
+      expect(() => parseComputerBinds(`${source}:/continuum/daily:ro@team`)).toThrow(
         /source|look like/,
       );
   });
 
-  it("rejects unknown modes, missing scope and malformed entries", () => {
+  it("rejects missing or unknown modes, missing scope and malformed entries", () => {
     expect(() => parseComputerBinds("/host/daily:/continuum/daily:rwx@team")).toThrow(/mode/);
     expect(() => parseComputerBinds("/host/daily:/continuum/daily:@team")).toThrow(/mode/);
+    expect(() => parseComputerBinds("/host/daily:/continuum/daily@team")).toThrow(/look like/);
     expect(() => parseComputerBinds("/host/daily:/continuum/daily")).toThrow(/look like/);
-    expect(() => parseComputerBinds("/host/daily:/continuum/daily@")).toThrow(/home key/);
-    expect(() => parseComputerBinds("/host/daily:/continuum/daily@team,")).toThrow(/home key/);
+    expect(() => parseComputerBinds("/host/daily:/continuum/daily:ro@")).toThrow(/home key/);
+    expect(() => parseComputerBinds("/host/daily:/continuum/daily:ro@team,")).toThrow(/home key/);
+    expect(() =>
+      parseComputerBinds("/host/a:/continuum/a:ro@team;/host/b:/continuum/b:ro@team"),
+    ).toThrow(/look like/);
     expect(() => parseComputerBinds("/host/daily@team")).toThrow(/look like/);
     expect(() => parseComputerBinds("/host/daily:/continuum/daily:rw:extra@team")).toThrow(
       /look like/,
@@ -876,68 +881,64 @@ describe("computer host folder binds", () => {
 
   it("rejects a target that repeats or nests another target on the same computer", () => {
     expect(() =>
-      parseComputerBinds("/host/a:/continuum/daily@team;/host/b:/continuum/daily@team"),
+      parseComputerBinds("/host/a:/continuum/daily:ro@team\n/host/b:/continuum/daily:rw@team"),
     ).toThrow(/repeats or nests/);
     expect(() =>
       parseComputerBinds(
-        "/host/a:/continuum/packet-router@team;/host/b:/continuum/packet-router/inbox@team",
+        "/host/a:/continuum/packet-router:ro@team\n/host/b:/continuum/packet-router/inbox:rw@team",
       ),
     ).toThrow(/repeats or nests/);
     // Sibling targets and the same target on different computers are fine.
     expect(
       parseComputerBinds(
-        "/host/a:/continuum/packet-router/inbox@team;/host/b:/continuum/packet-router/templates@team;/host/c:/continuum/packet-router/inbox@bot-1",
+        "/host/a:/continuum/packet-router/inbox:rw@team\n/host/b:/continuum/packet-router/templates:ro@team\n/host/c:/continuum/packet-router/inbox:rw@bot-1",
       ),
     ).toHaveLength(3);
   });
 
-  it("translates sources through the supervisor's own mounts, including subpaths", () => {
+  it("translates each source through the supervisor mount at exactly that path", () => {
     const rules = parseComputerBinds(
-      "/host/daily:/continuum/daily:rw@team;/host/continuum/_PacketRouter/inbox:/continuum/packet-router/inbox:rw@team",
+      "/host/daily:/continuum/daily:rw@team\n/host/router/HOWTO.md:/continuum/packet-router/docs/HOWTO.md:ro@team",
     );
     const info = {
       Mounts: [
+        { Type: "bind", Source: "/run/desktop/mnt/host/c/Vault/Daily", Destination: "/host/daily" },
         {
           Type: "bind",
-          Source: "/run/desktop/mnt/host/c/Continuum/Daily",
-          Destination: "/host/daily",
-        },
-        {
-          Type: "bind",
-          Source: "/run/desktop/mnt/host/c/Continuum",
-          Destination: "/host/continuum",
+          Source: "/run/desktop/mnt/host/c/Vault/router/HOWTO.md",
+          Destination: "/host/router/HOWTO.md",
         },
         { Type: "bind", Source: "/srv/data", Destination: "/data" },
       ],
     } as Docker.ContainerInspectInfo;
     expect(resolveComputerBinds(rules, info)).toEqual([
       {
-        source: "/run/desktop/mnt/host/c/Continuum/Daily",
+        source: "/run/desktop/mnt/host/c/Vault/Daily",
         target: "/continuum/daily",
         readOnly: false,
       },
       {
-        source: "/run/desktop/mnt/host/c/Continuum/_PacketRouter/inbox",
-        target: "/continuum/packet-router/inbox",
-        readOnly: false,
+        source: "/run/desktop/mnt/host/c/Vault/router/HOWTO.md",
+        target: "/continuum/packet-router/docs/HOWTO.md",
+        readOnly: true,
       },
     ]);
   });
 
-  it("keeps host-run sources as-is and refuses a source the supervisor does not mount", () => {
-    const rules = parseComputerBinds("/host/daily:/continuum/daily@team");
-    expect(resolveComputerBinds(rules, undefined)).toEqual([
-      { source: "/host/daily", target: "/continuum/daily", readOnly: true },
-    ]);
+  it("refuses binds without supervisor mounts and a source no mount matches exactly", () => {
+    const rules = parseComputerBinds("/host/vault/inbox:/continuum/inbox:rw@team");
+    expect(resolveComputerBinds([], undefined)).toEqual([]);
+    expect(() => resolveComputerBinds(rules, undefined)).toThrow(/run in a container/);
     for (const mounts of [
       [],
-      [{ Type: "bind", Source: "/srv/daily-extra", Destination: "/host/daily-extra" }],
+      [{ Type: "bind", Source: "/srv/vault", Destination: "/host/vault" }],
+      [{ Type: "bind", Source: "/srv/inbox-extra", Destination: "/host/vault/inbox-extra" }],
       [
         {
           Type: "volume",
-          Name: "daily",
-          Source: "/var/lib/docker/volumes/daily/_data",
-          Destination: "/host/daily",
+          Name: "inbox",
+          Source: "/var/lib/docker/volumes/inbox/_data",
+          Destination: "/host/vault/inbox",
         },
       ],
     ]) {
@@ -983,26 +984,34 @@ describe("computer host folder binds", () => {
   });
 
   it("ships an example overlay whose entries parse and whose sources are read-only supervisor mounts", () => {
-    const overlay = readFileSync(
-      path.resolve(import.meta.dirname, "../../../compose/docker-compose.binds.example.yml"),
-      "utf8",
+    const overlay = parse(
+      readFileSync(
+        path.resolve(import.meta.dirname, "../../../compose/docker-compose.binds.example.yml"),
+        "utf8",
+      ),
+    ) as {
+      services: {
+        supervisor: { volumes: string[]; environment: { SANDBOX_COMPUTER_BINDS: string } };
+      };
+    };
+    // Compose interpolates placeholders into parsed values; substitute them the way an .env
+    // file would so the committed example is checked against the real parser.
+    const interpolate = (value: string) =>
+      value.replace(/\$\{([A-Z_]+)(?::\?[^}]*)?\}/g, (_, name: string) =>
+        name.endsWith("_HOME_KEY") ? name.toLowerCase() : `/srv/${name.toLowerCase()}`,
+      );
+    const { volumes, environment } = overlay.services.supervisor;
+    const mounts = volumes.map((volume) => interpolate(volume).split(":"));
+    expect(mounts.length).toBeGreaterThan(0);
+    for (const mount of mounts) {
+      expect(mount).toHaveLength(3);
+      expect(mount[1]).toMatch(/^\/host\//);
+      expect(mount[2]).toBe("ro");
+    }
+    const rules = parseComputerBinds(interpolate(environment.SANDBOX_COMPUTER_BINDS));
+    expect(new Set(rules.map((rule) => rule.source))).toEqual(
+      new Set(mounts.map((mount) => mount[1])),
     );
-    // Compose interpolation placeholders stand in for operator values; substitute them the way
-    // an .env file would so the committed example is checked against the real parser.
-    const interpolated = overlay.replace(/\$\{([A-Z_]+)(?::\?[^}]*)?\}/g, (_, name) =>
-      name.endsWith("_HOME_KEY") ? name.toLowerCase() : `/srv/${name.toLowerCase()}`,
-    );
-    const volumes = [...interpolated.matchAll(/^\s+- \/srv\/[^:]+:(\/host\/\S+?):ro$/gm)].map(
-      (match) => match[1],
-    );
-    const entries = [...interpolated.matchAll(/^\s{8}(\/host\/\S+@\S+)$/gm)].map(
-      (match) => match[1],
-    );
-    expect(volumes.length).toBeGreaterThan(0);
-    expect(interpolated).not.toMatch(/^\s+- \/srv\/[^:]+:\/host\/\S+?:rw$/m);
-    const rules = parseComputerBinds(entries.join("\n"));
-    expect(rules).toHaveLength(entries.length);
-    expect(new Set(rules.map((rule) => rule.source))).toEqual(new Set(volumes));
     expect(rules.filter((rule) => !rule.readOnly).map((rule) => rule.target)).toEqual([
       "/continuum/daily",
       "/continuum/creation",

@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
     createContainer: vi.fn(),
     createNetwork: vi.fn(),
   },
-  fs: { stat: vi.fn(), readdir: vi.fn() },
+  fs: { stat: vi.fn(), opendir: vi.fn() },
 }));
 vi.mock("dockerode", () => ({
   default: class {
@@ -29,16 +29,17 @@ vi.mock("node:fs/promises", async (importOriginal) => ({
   ...(await importOriginal<typeof NodeFsPromises>()),
   mkdir: vi.fn(),
   stat: mocks.fs.stat,
-  readdir: mocks.fs.readdir,
+  opendir: mocks.fs.opendir,
 }));
 
 const DATA_DIR = "/data";
-const DAILY_SOURCE = "/run/desktop/mnt/host/c/Continuum/Daily";
-const HOWTO_SOURCE = "/run/desktop/mnt/host/c/Continuum/_PacketRouter/HOWTO.md";
+const DAILY_SOURCE = "/run/desktop/mnt/host/c/Vault/Daily";
+const HOWTO_SOURCE = "/run/desktop/mnt/host/c/Vault/router/HOWTO.md";
 const DAILY_BIND = `${DAILY_SOURCE}:/continuum/daily:rw`;
 const HOWTO_BIND = `${HOWTO_SOURCE}:/continuum/packet-router/docs/HOWTO.md:ro`;
-const BINDS =
-  "/host/daily:/continuum/daily:rw@team-space;/host/HOWTO.md:/continuum/packet-router/docs/HOWTO.md@team-space,bot-1";
+const BINDS = `/host/daily:/continuum/daily:rw@team-space
+/host/HOWTO.md:/continuum/packet-router/docs/HOWTO.md:ro@team-space,bot-1
+`;
 
 /** The supervisor's own container, with Compose mounts for the data directory and two host paths. */
 const supervisor = { inspect: vi.fn() };
@@ -48,12 +49,15 @@ const supervisorMounts = [
   { Type: "bind", Source: HOWTO_SOURCE, Destination: "/host/HOWTO.md" },
 ];
 
-/** A populated folder for the daily source and a regular file for the HOWTO source. */
-function hostFoldersPresent() {
+/** The daily source is a folder holding `entries`; the HOWTO source is a regular file. */
+function hostFoldersPresent(entries = ["2026-09-14.md"]) {
   mocks.fs.stat.mockImplementation(async (target: string) => ({
     isDirectory: () => target === "/host/daily",
   }));
-  mocks.fs.readdir.mockResolvedValue(["2026-09-14.md"]);
+  mocks.fs.opendir.mockImplementation(async () => {
+    const pending = entries.map((name) => ({ name }));
+    return { read: async () => pending.shift() ?? null, close: vi.fn(async () => undefined) };
+  });
 }
 
 function existingComputer(binds: string[] | undefined, botId = "team-space") {
@@ -175,14 +179,35 @@ describe("host folder binds on bot computers", () => {
   });
 
   it("refuses an empty source folder, the signature of a wrong Docker Desktop path", async () => {
-    mocks.fs.stat.mockResolvedValue({ isDirectory: () => true });
-    mocks.fs.readdir.mockResolvedValue([]);
+    hostFoldersPresent([]);
     const response = await provision();
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({
       error: "computer bind source /host/daily is empty on the supervisor",
     });
     expect(mocks.docker.createContainer).not.toHaveBeenCalled();
+  });
+
+  it("refuses an empty source folder before recreating a computer, leaving the old one in place", async () => {
+    hostFoldersPresent([]);
+    const { existing } = existingComputer([DAILY_BIND]);
+    const response = await provision();
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      error: "computer bind source /host/daily is empty on the supervisor",
+    });
+    expect(existing.remove).not.toHaveBeenCalled();
+    expect(mocks.docker.createContainer).not.toHaveBeenCalled();
+  });
+
+  it("resumes a computer that already carries the binds even after a bound folder drains", async () => {
+    hostFoldersPresent([]);
+    const { existing } = existingComputer([DAILY_BIND, HOWTO_BIND]);
+    const response = await provision();
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ id: "existing", resumed: true });
+    expect(existing.start).toHaveBeenCalledOnce();
+    expect(mocks.fs.opendir).not.toHaveBeenCalled();
   });
 
   it("refuses a source Compose did not mount on the supervisor", async () => {
@@ -196,6 +221,19 @@ describe("host folder binds on bot computers", () => {
     expect(await response.json()).toEqual({
       error: "computer bind source /host/daily is not mounted on the supervisor",
     });
+    expect(mocks.docker.createContainer).not.toHaveBeenCalled();
+  });
+
+  it("refuses binds on a supervisor that does not run in a container", async () => {
+    hostFoldersPresent();
+    supervisor.inspect.mockRejectedValue(new Error("no such container"));
+    const response = await provision();
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      error:
+        "SANDBOX_COMPUTER_BINDS needs the supervisor to run in a container that mounts each source",
+    });
+    expect(mocks.fs.stat).not.toHaveBeenCalled();
     expect(mocks.docker.createContainer).not.toHaveBeenCalled();
   });
 
@@ -240,8 +278,11 @@ describe("host folder binds on bot computers", () => {
     expect(options.HostConfig.Binds).toEqual(["/srv/rakazo/data/homes/team-space:/home/rakazo"]);
   });
 
-  it("fails at startup on a malformed bind configuration", async () => {
-    vi.stubEnv("SANDBOX_COMPUTER_BINDS", "/mnt/c/daily:/continuum/daily@team-space");
-    await expect(import("./index.js")).rejects.toThrow(/SANDBOX_COMPUTER_BINDS source/);
+  it.each([
+    ["a source outside /host/", "/mnt/c/daily:/continuum/daily:ro@team-space", /source/],
+    ["an entry without a mode", "/host/daily:/continuum/daily@team-space", /look like/],
+  ])("fails at startup on %s", async (_case, binds, error) => {
+    vi.stubEnv("SANDBOX_COMPUTER_BINDS", binds);
+    await expect(import("./index.js")).rejects.toThrow(error);
   });
 });

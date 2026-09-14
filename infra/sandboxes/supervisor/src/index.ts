@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readdir, stat } from "node:fs/promises";
+import { mkdir, opendir, stat } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,6 +18,7 @@ import Docker from "dockerode";
 import { Hono, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
+import type { ComputerBind } from "./computer-spec.js";
 import {
   assertVolumeSubpathSupport,
   COMPUTER_GID,
@@ -183,7 +184,8 @@ app.post("/computers", async (c) => {
       if (storage.homeVolume) {
         assertVolumeSubpathSupport((await docker.version()).ApiVersion);
       }
-      const binds = await computerBindsFor(body.botId, runtimeInfo);
+      const bindRules = computerBindRules.filter((rule) => rule.homeKeys.includes(body.botId));
+      const binds = resolveComputerBinds(bindRules, runtimeInfo);
       const computerUser = runtimeInfo ? COMPUTER_USER : hostComputerUser(hostUid, hostGid);
       const existing = await findBotContainer(body.botId, body.spaceId);
       if (existing) {
@@ -239,6 +241,7 @@ app.post("/computers", async (c) => {
             ? COMPUTER_GID
             : hostGid;
         await assertComputerHomeWritable(serviceHomePath, effectiveUid, effectiveGid);
+        await assertComputerBindSources(bindRules);
         const name = containerNameFor(body.botId);
         const createdNetwork =
           screenNetworkMode === "internal" ? undefined : await ensureBotNetwork(body.botId);
@@ -1023,24 +1026,22 @@ function assertBotHomePath(homePath: string, botId: string) {
 }
 
 /**
- * The configured binds for one computer, translated to daemon paths. Each source is
- * probed on the supervisor first: Docker Desktop mounts a host path written in the
- * wrong form as an empty directory instead of failing, so a missing or empty source is
- * refused before a computer could boot with a hollow mount and "write" into scratch.
+ * Probe each bind source on the supervisor before a computer is created with it: Docker
+ * Desktop mounts a host path written in the wrong form as an empty directory instead of
+ * failing, so a missing or empty source is refused before a computer could boot with a
+ * hollow mount and "write" into scratch. A resumed computer already carries the same
+ * binds, so a queue folder that later drains does not block its runs.
  */
-async function computerBindsFor(
-  homeKey: string,
-  runtimeInfo: Docker.ContainerInspectInfo | undefined,
-) {
-  const rules = computerBindRules.filter((rule) => rule.homeKeys.includes(homeKey));
+async function assertComputerBindSources(rules: ComputerBind[]) {
   for (const rule of rules) {
     const stats = await stat(rule.source).catch(() => undefined);
     if (!stats) throw new Error(`computer bind source ${rule.source} is missing on the supervisor`);
-    if (stats.isDirectory() && (await readdir(rule.source)).length === 0) {
-      throw new Error(`computer bind source ${rule.source} is empty on the supervisor`);
+    if (stats.isDirectory()) {
+      const dir = await opendir(rule.source);
+      const first = await dir.read().finally(() => dir.close());
+      if (!first) throw new Error(`computer bind source ${rule.source} is empty on the supervisor`);
     }
   }
-  return resolveComputerBinds(rules, runtimeInfo);
 }
 
 function computerControlEndpoint(info: Docker.ContainerInspectInfo) {
