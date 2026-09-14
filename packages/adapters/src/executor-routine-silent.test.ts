@@ -1,4 +1,5 @@
 import type { AgentRunRequest, AgentRuntimeEvent } from "@rakazo/adapter-kit";
+import type { MessageBlock } from "@rakazo/contracts";
 import type { PrismaClient } from "@rakazo/db";
 import { describe, expect, it, vi } from "vitest";
 import type * as ComputerLifecycleModule from "./computer-lifecycle.js";
@@ -31,6 +32,7 @@ function fixture({
   };
   const notify = vi.fn(async () => undefined);
   const finalizeRun = vi.fn(async () => ({ continuationRunId: null }));
+  const publishMessage = vi.fn(async () => ({ message: { id: "message-1" }, eventSeq: 1 }));
   const runtimeRun = vi.fn(async function* (_request: AgentRunRequest) {
     yield* events;
   });
@@ -89,9 +91,7 @@ function fixture({
     actionApprovalRule: { findMany: vi.fn(async () => []) },
     actionAutoReviewPreference: { findUnique: vi.fn(async () => ({ enabled: false })) },
     externalEffect: { findMany: vi.fn(async () => []) },
-    $transaction: vi.fn(async () => {
-      throw new Error("unexpected mid-turn message");
-    }),
+    $transaction: publishMessage,
   } as unknown as PrismaClient;
   const executor = createRunExecutor({
     prisma,
@@ -99,7 +99,11 @@ function fixture({
     sandbox: { describe: () => ({ capabilities: { graphical: false } }) },
     memory: { read: async () => ({ documents: [] }) },
     memoryProviders: { resolve: async () => null },
-    events: { append: vi.fn(async () => undefined), finalizeRun },
+    events: {
+      append: vi.fn(async () => undefined),
+      notify: vi.fn(async () => undefined),
+      finalizeRun,
+    },
     jobs: { enqueue: vi.fn(async () => undefined) },
     notifications: { send: notify },
     secrets: [],
@@ -107,6 +111,7 @@ function fixture({
   return {
     runtimeRun,
     finalizeRun,
+    publishMessage,
     notify,
     async run() {
       run.status = "queued";
@@ -121,7 +126,9 @@ describe("routine silent finish", () => {
   it("posts nothing and sends no push when a routine run ends without text", async () => {
     const f = fixture({ trigger: "routine", events: [{ type: "done" }] });
     await f.run();
-    expect(f.runtimeRun.mock.calls[0]![0].allowSilentEmpty).toBe(true);
+    expect(f.runtimeRun.mock.calls[0]![0]).toEqual(
+      expect.objectContaining({ allowSilentEmpty: true, allowSilentToolFinish: true }),
+    );
     expect(f.finalizeRun).toHaveBeenCalledWith(
       expect.objectContaining({
         outcome: "completed",
@@ -129,7 +136,70 @@ describe("routine silent finish", () => {
         markUnread: false,
       }),
     );
+    expect(f.publishMessage).not.toHaveBeenCalled();
     expect(f.notify).not.toHaveBeenCalled();
+  });
+
+  it("does not post narration when a tool-using routine run ends without a final answer", async () => {
+    const f = fixture({
+      trigger: "routine",
+      events: [
+        { type: "text", text: "Checking the human-gated list." },
+        { type: "tool", name: "list_items", args: {}, executionId: "exec-1" },
+        { type: "done" },
+      ],
+    });
+    await f.run();
+    expect(f.finalizeRun).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: "completed", markUnread: false }),
+    );
+    const [{ blocks }] = f.finalizeRun.mock.calls[0] as unknown as [{ blocks: MessageBlock[] }];
+    expect(blocks.filter((block) => block.kind === "text")).toEqual([]);
+    expect(f.publishMessage).not.toHaveBeenCalled();
+    expect(f.notify).not.toHaveBeenCalled();
+  });
+
+  it("posts only the final answer when a routine run narrates before a tool", async () => {
+    const f = fixture({
+      trigger: "routine",
+      events: [
+        { type: "text", text: "Checking the human-gated list." },
+        { type: "tool", name: "list_items", args: {}, executionId: "exec-1" },
+        { type: "text", text: "Two items need you." },
+        { type: "done", text: "Checking the human-gated list.Two items need you." },
+      ],
+    });
+    await f.run();
+    expect(f.finalizeRun).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: "completed", markUnread: true }),
+    );
+    const [{ blocks }] = f.finalizeRun.mock.calls[0] as unknown as [{ blocks: MessageBlock[] }];
+    expect(blocks.filter((block) => block.kind === "text")).toEqual([
+      { kind: "text", text: "Two items need you." },
+    ]);
+    expect(f.publishMessage).not.toHaveBeenCalled();
+    expect(f.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "completion", body: "Two items need you." }),
+      expect.anything(),
+    );
+  });
+
+  it("still posts narration as its own message in a chat run", async () => {
+    const f = fixture({
+      trigger: "user",
+      events: [
+        { type: "text", text: "Checking the human-gated list." },
+        { type: "tool", name: "list_items", args: {}, executionId: "exec-1" },
+        { type: "text", text: "Two items need you." },
+        { type: "done", text: "Checking the human-gated list.Two items need you." },
+      ],
+    });
+    await f.run();
+    expect(f.publishMessage).toHaveBeenCalledTimes(1);
+    const [{ blocks }] = f.finalizeRun.mock.calls[0] as unknown as [{ blocks: MessageBlock[] }];
+    expect(blocks.filter((block) => block.kind === "text")).toEqual([
+      { kind: "text", text: "Two items need you." },
+    ]);
   });
 
   it("posts and notifies when a routine run produces text", async () => {
@@ -163,6 +233,7 @@ describe("routine silent finish", () => {
     const f = fixture({ trigger: "user", events: [{ type: "done" }] });
     await f.run();
     expect(f.runtimeRun.mock.calls[0]![0].allowSilentEmpty).toBeFalsy();
+    expect(f.runtimeRun.mock.calls[0]![0].allowSilentToolFinish).toBeFalsy();
     expect(f.finalizeRun).toHaveBeenCalledWith(
       expect.objectContaining({
         outcome: "completed",

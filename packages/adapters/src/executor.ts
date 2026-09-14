@@ -1433,8 +1433,8 @@ export function createRunExecutor(deps: ExecutorDeps) {
           peerMessage?.intent,
           peerMessage?.repliesToRequest,
         );
-        const allowSilentEmpty =
-          allowSilentPeerMessage || messagingChannelRun || run.trigger === "routine";
+        const routineRun = run.trigger === "routine";
+        const allowSilentEmpty = allowSilentPeerMessage || messagingChannelRun || routineRun;
         const emptyResponseText = peerMessage
           ? peerMessage.intent === "result" ||
             peerMessage.intent === "status" ||
@@ -1770,6 +1770,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
           assembled = "";
           hasStreamedText = false;
           pendingProgress = "";
+          if (routineRun) return;
           await publishMessage(
             deps,
             run,
@@ -3696,6 +3697,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
               resumeFromCheckpoint: takeoverResume?.checkpoint,
               script,
               allowSilentEmpty,
+              allowSilentToolFinish: routineRun,
               emptyResponseText,
               executeTool: scripted ? undefined : applyTool,
               resolveModel: scripted

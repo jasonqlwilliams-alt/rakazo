@@ -137,6 +137,11 @@ vi.mock("@earendil-works/pi-agent-core", () => ({
         if (!target) throw new Error("expected tool was not exposed");
         const rawArgs = fakeAgentState.invoke.args;
         const args = target.prepareArguments?.(rawArgs) ?? rawArgs;
+        const narration = "Checking the list.";
+        this.emit({
+          type: "message_update",
+          assistantMessageEvent: { type: "text_delta", delta: narration },
+        });
         this.emit({ type: "tool_execution_start", toolName: target.name, args });
         await target.execute("call-1", args);
         this.emit({
@@ -144,6 +149,7 @@ vi.mock("@earendil-works/pi-agent-core", () => ({
           message: {
             role: "assistant",
             content: [
+              { type: "text", text: narration },
               {
                 type: "toolCall",
                 id: "call-1",
@@ -154,11 +160,15 @@ vi.mock("@earendil-works/pi-agent-core", () => ({
           },
           toolResults: [{ toolCallId: "call-1", result: { ok: true } }],
         });
-        this.emit({
-          type: "turn_end",
-          message: { role: "assistant", content: [] },
-          toolResults: [],
-        });
+        for (let turn = 0; turn < 10; turn += 1) {
+          const followUps = fakeAgentState.followUpMessages.length;
+          this.emit({
+            type: "turn_end",
+            message: { role: "assistant", content: [] },
+            toolResults: [],
+          });
+          if (fakeAgentState.followUpMessages.length === followUps) break;
+        }
         return;
       }
 
@@ -717,7 +727,10 @@ describe("Pi connector tool dispatch", () => {
     });
   });
 
-  it("keeps a tool-bearing turn silent when allowSilentEmpty is set", async () => {
+  async function runSilentToolTurn(silence: {
+    allowSilentEmpty?: boolean;
+    allowSilentToolFinish?: boolean;
+  }) {
     fakeAgentState.mode = "silent-tool-empty";
     const runtime = new PiAgentRuntime();
     const events: unknown[] = [];
@@ -732,7 +745,7 @@ describe("Pi connector tool dispatch", () => {
         history: [],
         tools: [destinationTool],
         model: { provider: "test", id: "dispatch-test-model" },
-        allowSilentEmpty: true,
+        ...silence,
         executeTool: vi.fn(async () => ({ ok: true })),
       },
       {
@@ -745,13 +758,44 @@ describe("Pi connector tool dispatch", () => {
     )) {
       events.push(event);
     }
+    return events;
+  }
 
-    expect(fakeAgentState.followUpMessages).toEqual([]);
+  it("nudges a silent routine tool turn once and lets it finish without a message", async () => {
+    const events = await runSilentToolTurn({
+      allowSilentEmpty: true,
+      allowSilentToolFinish: true,
+    });
+
+    expect(fakeAgentState.followUpMessages).toEqual([
+      expect.objectContaining({
+        role: "user",
+        content: expect.stringContaining("If nothing is new, end without a message"),
+      }),
+    ]);
     expect(events).not.toContainEqual({
       type: "text",
       text: "I completed the tool step but could not produce a final response. Please ask me to continue.",
     });
     expect(events.at(-1)).toEqual({ type: "done" });
+  });
+
+  it("keeps full stall recovery for silence-allowed runs that are not routines", async () => {
+    const events = await runSilentToolTurn({ allowSilentEmpty: true });
+
+    expect(fakeAgentState.followUpMessages).toHaveLength(3);
+    for (const message of fakeAgentState.followUpMessages) {
+      expect(message).toEqual(
+        expect.objectContaining({
+          role: "user",
+          content: expect.stringContaining("Do not stop after a tool call"),
+        }),
+      );
+    }
+    expect(events.at(-1)).toEqual({
+      type: "done",
+      text: "I completed the tool step but could not produce a final response. Please ask me to continue.",
+    });
   });
 
   it("keeps FYI bot-message wakes silent when the model produces nothing", async () => {
