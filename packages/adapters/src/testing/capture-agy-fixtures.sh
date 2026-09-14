@@ -290,7 +290,7 @@ PY
       write_synthetic completed-synthetic "Not observed: sourced findings need read_url_content or a file read, and headless print mode auto-denies both without a settings allow-rule this slice may not add. The accept-edits attempt is read-file-denied."
       ;;
     schema-violation-synthetic)
-      write_synthetic schema-violation-synthetic "Not observed: agy retried the turn until structured_output matched the schema and exited 0 without printing a violation. That run is schema-enforced."
+      write_synthetic schema-violation-synthetic "Not observed: in both no-tool schema runs agy added a final structured-output turn after the free-text reply. In schema-enforced that turn matched the schema and agy exited 0 with no violation text. A final turn that does not match was not seen."
       ;;
     quota-exhausted-synthetic)
       write_synthetic quota-exhausted-synthetic "Not observed: exhausting the signed-in account quota would spend more than a few small runs. Keep using the synthetic classifier fixture until a real 429 is captured."

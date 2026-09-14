@@ -10,7 +10,7 @@ Synthetic `packages/adapters/src/testing/fixtures/agy/<case>/` files stay as the
 
 1. **Event shapes.** `--output-format=json` prints one envelope: `conversation_id`, `status` (`SUCCESS` or `ERROR`), `response`, `error`, `duration_seconds`, `num_turns`, `usage`. `--output-format=stream-json` is NDJSON of `{event, ...}` objects, not `{type, subtype}`. Observed events: `init` (model, cwd, tools, `permission_mode`, optional `json_schema`, optional `expanded_commands`), `step_update` (`step_index`, `state`, `step_type` `user_input`|`agent_response`|`tool`|`finish`, `text_delta`, `tool_name`, `tool_info`), and `result` nested under `result` with `status`, `response`, optional `structured_output`, `json_schema`, `usage`, optional `denied_actions`. The final result event is `{"event":"result","result":{...}}`. The library's current parser looks for `type: "result"`; it will not read this stream until a later product slice updates it. `--json` envelopes still match the dry-run `status`/`response` shape.
 
-2. **`--json-schema` in stream-json.** Help text is accurate: it applies to the final result. `init.json_schema` and `result.json_schema` echo the file. When the model first emitted a different object, a follow-up turn produced `structured_output` that satisfied the schema (`mustEqualZYX: "ZYX"`) and the process exited 0 with `status: SUCCESS` (`schema-enforced`). No stderr violation text was printed. Extra keys in the text (`toolAction`, `toolSummary`) were stripped from `structured_output`. A CLI schema-miss print is unobservable in print mode on 1.2.2; invalid findings remain a harness check (the `../agy/schema-violation` golden; here `schema-violation-synthetic`).
+2. **`--json-schema` in stream-json.** Help text is accurate: it applies to the final result. `init.json_schema` and `result.json_schema` echo the file. Both no-tool schema runs (`completed-plan-mode`, `schema-enforced`) have the same steps and `num_turns: 2`: a free-text `agent_response`, an injected `user_input`, a structured JSON `agent_response`, then `finish`. `structured_output` comes from that final structured turn, not the free text. In `schema-enforced` the free text did not match the schema, the final turn did (`mustEqualZYX: "ZYX"`), and the process exited 0 with `status: SUCCESS`. No stderr violation text was printed. Extra keys in the final turn (`toolAction`, `toolSummary`) were stripped from `structured_output`. A final turn that does not match the schema was not observed, so a CLI schema-miss print is unobservable in print mode on 1.2.2; invalid findings remain a harness check (the `../agy/schema-violation` golden; here `schema-violation-synthetic`).
 
 3. **Headless tool denials.** Default print auto-denies tools that need a prompt. Observed stderr, always the same shape: `jetski: no output produced — a tool required the "<perm>" permission that headless mode cannot prompt for, so it was auto-denied. Add an allow-rule under permissions.allow in settings.json (e.g. <perm>(<target>)). Alternatively, re-run with --dangerously-skip-permissions...` Result also lists `denied_actions: [{action, display_name}]`.
    - `search_web`: ran (~2s), not listed in `denied_actions`. Allowed by default.
@@ -47,12 +47,12 @@ Keep `accept-edits` (already the space-settings default). It is the only mode wh
 | `read-file-denied` | yes | accept-edits; `read_file` denied; empty `structured_output` |
 | `permission-denied` | yes | `search_web` ran; `read_url` denied |
 | `run-command` | yes | `command` denied |
-| `schema-enforced` | yes | schema enforced, not a printed violation |
+| `schema-enforced` | yes | final structured turn matched; no printed violation |
 | `timed-out-partial` | yes | exit 0, `[agy] print timeout after 5s...` |
 | `usage-exit-2` | yes | exit 2, unknown flag |
 | `auth-required` | yes | empty HOME |
 | `completed-synthetic` | no | sourced findings need a denied read |
-| `schema-violation-synthetic` | no | agy retried to a valid result |
+| `schema-violation-synthetic` | no | non-matching final turn not seen |
 | `quota-exhausted-synthetic` | no | would exhaust the account |
 | `crash-no-exit-code-synthetic` | no | wrapper condition, not an agy message |
 | `oversize-events-synthetic` | no | generated in memory by the emulator |

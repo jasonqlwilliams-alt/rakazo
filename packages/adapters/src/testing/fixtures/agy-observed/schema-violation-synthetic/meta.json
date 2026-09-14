@@ -2,5 +2,5 @@
   "case": "schema-violation-synthetic",
   "agyVersion": "1.2.2",
   "observed": false,
-  "reason": "Not observed: agy retried the turn until structured_output matched the schema and exited 0 without printing a violation. That run is schema-enforced."
+  "reason": "Not observed: in both no-tool schema runs agy added a final structured-output turn after the free-text reply. In schema-enforced that turn matched the schema and agy exited 0 with no violation text. A final turn that does not match was not seen."
 }
