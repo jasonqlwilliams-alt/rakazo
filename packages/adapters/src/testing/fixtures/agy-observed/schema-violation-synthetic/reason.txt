@@ -1,0 +1,1 @@
+Not observed: agy retried the turn until structured_output matched the schema and exited 0 without printing a violation. That run is schema-enforced.

@@ -1,0 +1,6 @@
+{
+  "case": "completed-synthetic",
+  "agyVersion": "1.2.2",
+  "observed": false,
+  "reason": "Not observed: sourced findings need read_url_content or a file read, and headless print mode auto-denies both without a settings allow-rule this slice may not add. The accept-edits attempt is read-file-denied."
+}

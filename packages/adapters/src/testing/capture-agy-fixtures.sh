@@ -25,7 +25,7 @@ OUT="$ROOT/packages/adapters/src/testing/fixtures/agy-observed"
 SCRATCH="$ROOT/.tmp/agy-capture"
 REDACT="$ROOT/packages/adapters/src/testing/redact-agy-fixture.mjs"
 VERSION=$("$AGY" --version | head -1 | tr -d '[:space:]')
-CASES=${*:-usage-exit-2 auth-required json-format completed-plan-mode completed permission-denied schema-violation timed-out-partial run-command quota-exhausted-synthetic crash-no-exit-code-synthetic oversize-events-synthetic provider-error-synthetic unavailable-synthetic write-to-file-synthetic}
+CASES=${*:-usage-exit-2 auth-required json-format completed-plan-mode read-file-denied permission-denied schema-enforced timed-out-partial run-command completed-synthetic schema-violation-synthetic quota-exhausted-synthetic crash-no-exit-code-synthetic oversize-events-synthetic}
 
 mkdir -p "$SCRATCH" "$OUT"
 printf '%s\n' "$VERSION" >"$OUT/agy.version"
@@ -87,6 +87,7 @@ JSON
 record_and_run() {
   local case_name=$1 mode=$2 format=$3 timeout=$4 schema_kind=$5
   local brief=$6
+  shift 6
   local dest="$OUT/$case_name"
   if [[ -f "$dest/exit.code" && "${FORCE:-}" != "1" ]]; then
     echo "skip $case_name (already captured; FORCE=1 to redo)"
@@ -105,14 +106,12 @@ record_and_run() {
   if [[ "$schema_kind" != "none" ]]; then
     cmd+=("--json-schema=findings.schema.json")
   fi
-  cmd+=("--model=$MODEL" "--effort=low" "--mode=$mode" "--sandbox" "--print-timeout=$timeout" "--log-file=agy.log")
+  cmd+=("--model=$MODEL" "--effort=low" "--mode=$mode" "--sandbox" "--print-timeout=$timeout" "--log-file=agy.log" "$@")
 
-  local env_home=${CAPTURE_HOME:-$HOME}
   echo "run $case_name format=$format mode=$mode timeout=$timeout schema=$schema_kind" >&2
   set +e
   (
-    cd "$work"
-    env HOME="$env_home" timeout --preserve-status 180s "${cmd[@]}" </dev/null
+    cd "$work" && timeout --preserve-status 180s "${cmd[@]}" </dev/null
   ) >"$work/events.raw" 2>"$work/stderr.raw"
   local code=$?
   set -e
@@ -121,9 +120,9 @@ record_and_run() {
   mkdir -p "$dest"
   node "$REDACT" "$case_name" "$work/events.raw" "$work/stderr.raw" "$dest/events.ndjson" "$dest/stderr.log"
   cp "$work/exit.code" "$dest/exit.code"
-  python3 - "$dest/meta.json" "$case_name" "$VERSION" "$MODEL" "$mode" "$format" "$timeout" "$schema_kind" "$code" <<'PY'
+  python3 - "$dest/meta.json" "$case_name" "$VERSION" "$MODEL" "$mode" "$format" "$timeout" "$schema_kind" "$code" "$@" <<'PY'
 import json, sys
-path, case, version, model, mode, fmt, timeout, schema, code = sys.argv[1:]
+path, case, version, model, mode, fmt, timeout, schema, code, *extra = sys.argv[1:]
 json.dump(
     {
         "case": case,
@@ -147,6 +146,7 @@ json.dump(
             "--sandbox",
             f"--print-timeout={timeout}",
             "--log-file=agy.log",
+            *extra,
         ],
     },
     open(path, "w"),
@@ -203,7 +203,9 @@ for case_name in $CASES; do
       rm -rf "$work"
       mkdir -p "$work"
       set +e
-      env HOME="$HOME" timeout --preserve-status 30s "$AGY" --not-a-real-flag </dev/null >"$work/events.raw" 2>"$work/stderr.raw"
+      (
+        cd "$work" && timeout --preserve-status 30s "$AGY" --not-a-real-flag </dev/null
+      ) >"$work/events.raw" 2>"$work/stderr.raw"
       code=$?
       set -e
       printf '%s\n' "$code" >"$work/exit.code"
@@ -237,7 +239,9 @@ PY
       rm -rf "$empty" "$work"
       mkdir -p "$empty" "$work"
       set +e
-      env HOME="$empty" timeout --preserve-status 25s "$AGY" --print="Do not use tools. Reply ok." --output-format=json --print-timeout=20s --sandbox --disable-slash-commands </dev/null >"$work/events.raw" 2>"$work/stderr.raw"
+      (
+        cd "$work" && env HOME="$empty" timeout --preserve-status 25s "$AGY" --print="Do not use tools. Reply ok." --output-format=json --print-timeout=20s --sandbox --disable-slash-commands </dev/null
+      ) >"$work/events.raw" 2>"$work/stderr.raw"
       code=$?
       set -e
       printf '%s\n' "$code" >"$work/exit.code"
@@ -262,25 +266,31 @@ json.dump(
 PY
       ;;
     json-format)
-      record_and_run json-format plan json 45s none "$BRIEF_JSON"
+      record_and_run json-format plan json 45s none "$BRIEF_JSON" --disable-slash-commands
       ;;
     completed-plan-mode)
       record_and_run completed-plan-mode plan stream-json 90s findings "$BRIEF_PLAN"
       ;;
-    completed)
-      record_and_run completed accept-edits stream-json 90s findings "$BRIEF_ACCEPT"
+    read-file-denied)
+      record_and_run read-file-denied accept-edits stream-json 90s findings "$BRIEF_ACCEPT"
       ;;
     permission-denied)
       record_and_run permission-denied accept-edits stream-json 90s findings "$BRIEF_DENY"
       ;;
-    schema-violation)
-      record_and_run schema-violation plan stream-json 90s violation "$BRIEF_VIOLATION"
+    schema-enforced)
+      record_and_run schema-enforced plan stream-json 90s violation "$BRIEF_VIOLATION"
       ;;
     timed-out-partial)
       record_and_run timed-out-partial plan stream-json 5s findings "$BRIEF_TIMEOUT"
       ;;
     run-command)
       record_and_run run-command accept-edits stream-json 60s none "$BRIEF_COMMAND"
+      ;;
+    completed-synthetic)
+      write_synthetic completed-synthetic "Not observed: sourced findings need read_url_content or a file read, and headless print mode auto-denies both without a settings allow-rule this slice may not add. The accept-edits attempt is read-file-denied."
+      ;;
+    schema-violation-synthetic)
+      write_synthetic schema-violation-synthetic "Not observed: agy retried the turn until structured_output matched the schema and exited 0 without printing a violation. That run is schema-enforced."
       ;;
     quota-exhausted-synthetic)
       write_synthetic quota-exhausted-synthetic "Not observed: exhausting the signed-in account quota would spend more than a few small runs. Keep using the synthetic classifier fixture until a real 429 is captured."
@@ -290,15 +300,6 @@ PY
       ;;
     oversize-events-synthetic)
       write_synthetic oversize-events-synthetic "Not observed as a file: an events stream over 8 MiB does not belong in the repository. The emulator generates this case in memory."
-      ;;
-    provider-error-synthetic)
-      write_synthetic provider-error-synthetic "Not observed: none of the small print runs printed a generic fatal error: line distinct from auth, usage, quota, or timeout."
-      ;;
-    unavailable-synthetic)
-      write_synthetic unavailable-synthetic "Not an agy message. The harness writes this when the configured executable is missing (exit 127). No live agy run produces it."
-      ;;
-    write-to-file-synthetic)
-      write_synthetic write-to-file-synthetic "Not observed: the model did not call write_to_file in the small print runs. The /etc path in the permission-denied brief was never written."
       ;;
     *)
       echo "unknown case: $case_name" >&2

@@ -1,0 +1,6 @@
+{
+  "case": "schema-violation-synthetic",
+  "agyVersion": "1.2.2",
+  "observed": false,
+  "reason": "Not observed: agy retried the turn until structured_output matched the schema and exited 0 without printing a violation. That run is schema-enforced."
+}
