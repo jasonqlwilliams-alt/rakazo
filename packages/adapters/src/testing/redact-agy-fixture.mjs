@@ -8,7 +8,9 @@ import { readFileSync, writeFileSync } from "node:fs";
 
 const caseName = process.argv[2];
 if (!caseName) {
-  console.error("usage: redact-agy-fixture.mjs <case-name> <events-in> <stderr-in> <events-out> <stderr-out>");
+  process.stderr.write(
+    "usage: redact-agy-fixture.mjs <case-name> <events-in> <stderr-in> <events-out> <stderr-out>\n",
+  );
   process.exit(2);
 }
 
@@ -26,8 +28,8 @@ const GEMINI = /\/[^\s"'\\]*\.gemini[^\s"'\\]*/gi;
 const OAUTH_URL = /https:\/\/accounts\.google\.com\/[^\s]+/gi;
 const GOOGLE_CLIENT = /[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com/gi;
 const BEARER = /\b(?:Bearer|token)\s+[A-Za-z0-9._\-+=/]+/gi;
-const GOOGLE = /\bya29\.[A-Za-z0-9._\-]+/g;
-const API_KEY = /\b(?:AIza|sk-|xox[baprs]-)[A-Za-z0-9._\-]+/g;
+const GOOGLE = /\bya29\.[A-Za-z0-9._-]+/g;
+const API_KEY = /\b(?:AIza|sk-|xox[baprs]-)[A-Za-z0-9._-]+/g;
 
 function redactString(value) {
   return value

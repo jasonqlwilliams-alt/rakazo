@@ -6,11 +6,12 @@ unless the run died before the wrapper could write it. `AgyComputerEmulator`
 replays a folder into a fake computer, and `antigravity-research.test.ts` pins
 the status and error code each one maps to.
 
-These folders are still the synthetic goldens the emulator tests pin (conversation
-ids and the completed findings document). Slice 2 captured real `agy` 1.2.2
-print-mode runs under `../agy-observed/` (see `FACTS.md` there). Real stream-json
-uses `{event:"init"|"step_update"|"result"}`, not `{type,subtype}`. Replace these
-goldens only when the parser and tests move to that shape.
+These folders are synthetic goldens: the emulator tests pin their conversation ids
+and the completed findings document. Real `agy` runs are captured under
+`../agy-observed/`, and `FACTS.md` there records the real stream shape. Replace
+these goldens only when the parser and tests move to that shape. Keep the folder
+names, and keep real conversation ids, emails, usernames, host paths and project
+names out. The `fixture-conversation-*` ids are placeholders and stay.
 
 `oversize-events` is generated in memory by the emulator because an eight
 megabyte file does not belong in the repository.
