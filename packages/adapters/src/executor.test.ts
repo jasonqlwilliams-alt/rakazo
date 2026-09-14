@@ -14,6 +14,7 @@ import {
   MAX_MODEL_TOOL_COUNT,
   missingTurnImagesInstruction,
   modelToolMaxBytes,
+  notifyRun,
   runNotificationsEnabled,
   selectBuiltinToolsForRun,
   selectModelTools,
@@ -23,6 +24,7 @@ import {
   toolCompletionFromResult,
   toolSchemaBytes,
 } from "./executor.js";
+import { CapturingNotificationProvider } from "./artifacts.js";
 import { serializeModelSecret } from "./pi-oauth.js";
 
 function tool(name: string, description = name): ConnectorTool {
@@ -520,6 +522,67 @@ describe("run notification preference", () => {
         userId: "user-1",
       }),
     ).resolves.toBe(true);
+  });
+});
+
+describe("notifyRun", () => {
+  const run = {
+    botId: "bot-1",
+    threadId: "thread-1",
+    spaceId: "workspace-1",
+    userId: "user-1",
+  };
+
+  function depsForNotificationPrefs(notifyOnFinish: boolean, groupId: string | null) {
+    const notifications = new CapturingNotificationProvider();
+    const findFirst = vi.fn(async () => ({
+      bot: { notifyOnFinish },
+      thread: { groupId },
+    }));
+    const prisma = { run: { findFirst } } as unknown as PrismaClient;
+    return { notifications, prisma, findFirst };
+  }
+
+  it("sends help and takeover when notifyOnFinish is false in a direct chat", async () => {
+    for (const kind of ["help", "takeover"] as const) {
+      const { notifications, prisma, findFirst } = depsForNotificationPrefs(false, null);
+      await notifyRun(
+        { prisma, notifications } as Parameters<typeof notifyRun>[0],
+        run,
+        { kind, title: "Ping", body: "Need you", botId: run.botId, threadId: run.threadId },
+      );
+      expect(notifications.sent).toEqual([
+        { kind, title: "Ping", body: "Need you", botId: run.botId, threadId: run.threadId },
+      ]);
+      expect(findFirst).not.toHaveBeenCalled();
+    }
+  });
+
+  it("skips completion and failure when notifyOnFinish is false in a direct chat", async () => {
+    for (const kind of ["completion", "failure"] as const) {
+      const { notifications, prisma, findFirst } = depsForNotificationPrefs(false, null);
+      await notifyRun(
+        { prisma, notifications } as Parameters<typeof notifyRun>[0],
+        run,
+        { kind, title: "Ping", body: "Done", botId: run.botId, threadId: run.threadId },
+      );
+      expect(notifications.sent).toEqual([]);
+      expect(findFirst).toHaveBeenCalledOnce();
+    }
+  });
+
+  it("still gates completion and failure on notifyOnFinish in group threads", async () => {
+    for (const kind of ["completion", "failure"] as const) {
+      const { notifications, prisma } = depsForNotificationPrefs(false, "group-1");
+      await notifyRun(
+        { prisma, notifications } as Parameters<typeof notifyRun>[0],
+        run,
+        { kind, title: "Ping", body: "Done", botId: run.botId, threadId: run.threadId },
+      );
+      expect(notifications.sent).toEqual([
+        { kind, title: "Ping", body: "Done", botId: run.botId, threadId: run.threadId },
+      ]);
+    }
   });
 });
 

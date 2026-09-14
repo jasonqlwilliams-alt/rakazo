@@ -57,8 +57,9 @@ control push delivery. Routine runs follow the run notification policy:
 Setting `notify: false` on a routine therefore does not keep a firing routine
 quiet. Setting `notifyOnFinish: false` on the bot suppresses completion and
 failure pushes in its own chat. Group runs and requests for help or takeover
-can still push. The decision is implemented by `runNotificationsEnabled` in
-[`executor.ts`](../packages/adapters/src/executor.ts).
+can still push. Completion and failure gating lives in `runNotificationsEnabled`;
+`notifyRun` bypasses that preference for `help` and `takeover` (see
+[`executor.ts`](../packages/adapters/src/executor.ts)).
 
 ## Event triggers
 
