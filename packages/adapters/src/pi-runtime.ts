@@ -346,6 +346,7 @@ export class PiAgentRuntime implements AgentRuntime {
                 silentToolContinuations = 0;
               } else if (
                 !host.pausePending &&
+                !request.allowSilentEmpty &&
                 silentToolContinuations < MAX_SILENT_TOOL_CONTINUATIONS
               ) {
                 silentToolContinuations += 1;
@@ -409,7 +410,7 @@ export class PiAgentRuntime implements AgentRuntime {
             queue.push({ type: "text", text: budgetMessage });
             streamed = budgetMessage;
           }
-        } else if (!host.pausePending && toolWorkPendingFinal) {
+        } else if (!host.pausePending && toolWorkPendingFinal && !request.allowSilentEmpty) {
           // Discard cumulative pre-tool narration from the terminal payload and make the
           // missing final response visible to the user instead of silently completing.
           streamed = TOOL_FINAL_RESPONSE_FALLBACK;
@@ -421,7 +422,7 @@ export class PiAgentRuntime implements AgentRuntime {
           if (fallback.trim()) {
             queue.push({ type: "text", text: fallback });
             streamed = fallback;
-          } else if (toolWorkPendingFinal) {
+          } else if (toolWorkPendingFinal && !request.allowSilentEmpty) {
             // A tool-bearing run must never finish with only a progress/narration message.
             streamed = TOOL_FINAL_RESPONSE_FALLBACK;
             queue.push({ type: "text", text: streamed });

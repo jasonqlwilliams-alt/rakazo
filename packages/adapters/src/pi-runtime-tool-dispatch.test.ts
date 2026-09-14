@@ -7,6 +7,7 @@ const fakeAgentState = vi.hoisted(() => ({
     | "empty"
     | "two-boundaries"
     | "silent-continuation"
+    | "silent-tool-empty"
     | "subagent-limit"
     | "parent-limit",
   emitFinalAfterFollowUp: true,
@@ -127,6 +128,37 @@ vi.mock("@earendil-works/pi-agent-core", () => ({
             toolResults: [],
           });
         }
+        return;
+      }
+
+      if (fakeAgentState.mode === "silent-tool-empty") {
+        const target =
+          this.tools.find((tool) => tool.name === fakeAgentState.invoke.name) ?? this.tools[0];
+        if (!target) throw new Error("expected tool was not exposed");
+        const rawArgs = fakeAgentState.invoke.args;
+        const args = target.prepareArguments?.(rawArgs) ?? rawArgs;
+        this.emit({ type: "tool_execution_start", toolName: target.name, args });
+        await target.execute("call-1", args);
+        this.emit({
+          type: "turn_end",
+          message: {
+            role: "assistant",
+            content: [
+              {
+                type: "toolCall",
+                id: "call-1",
+                name: target.name,
+                arguments: args,
+              },
+            ],
+          },
+          toolResults: [{ toolCallId: "call-1", result: { ok: true } }],
+        });
+        this.emit({
+          type: "turn_end",
+          message: { role: "assistant", content: [] },
+          toolResults: [],
+        });
         return;
       }
 
@@ -683,6 +715,43 @@ describe("Pi connector tool dispatch", () => {
       type: "done",
       text: "I completed the tool step but could not produce a final response. Please ask me to continue.",
     });
+  });
+
+  it("keeps a tool-bearing turn silent when allowSilentEmpty is set", async () => {
+    fakeAgentState.mode = "silent-tool-empty";
+    const runtime = new PiAgentRuntime();
+    const events: unknown[] = [];
+
+    for await (const event of runtime.run(
+      {
+        botId: "b",
+        threadId: "t",
+        runId: "silent-empty-tools",
+        prompt: "check the list and stay quiet if nothing changed",
+        instructions: "Use the destination tool, then stay silent when there is nothing to say.",
+        history: [],
+        tools: [destinationTool],
+        model: { provider: "test", id: "dispatch-test-model" },
+        allowSilentEmpty: true,
+        executeTool: vi.fn(async () => ({ ok: true })),
+      },
+      {
+        operationId: "silent-empty-tools",
+        traceId: "silent-empty-tools",
+        spaceId: "w",
+        userId: "u",
+        signal: new AbortController().signal,
+      },
+    )) {
+      events.push(event);
+    }
+
+    expect(fakeAgentState.followUpMessages).toEqual([]);
+    expect(events).not.toContainEqual({
+      type: "text",
+      text: "I completed the tool step but could not produce a final response. Please ask me to continue.",
+    });
+    expect(events.at(-1)).toEqual({ type: "done" });
   });
 
   it("keeps FYI bot-message wakes silent when the model produces nothing", async () => {

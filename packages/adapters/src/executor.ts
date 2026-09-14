@@ -1433,6 +1433,8 @@ export function createRunExecutor(deps: ExecutorDeps) {
           peerMessage?.intent,
           peerMessage?.repliesToRequest,
         );
+        const allowSilentEmpty =
+          allowSilentPeerMessage || messagingChannelRun || run.trigger === "routine";
         const emptyResponseText = peerMessage
           ? peerMessage.intent === "result" ||
             peerMessage.intent === "status" ||
@@ -3693,7 +3695,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
               },
               resumeFromCheckpoint: takeoverResume?.checkpoint,
               script,
-              allowSilentEmpty: allowSilentPeerMessage || messagingChannelRun,
+              allowSilentEmpty,
               emptyResponseText,
               executeTool: scripted ? undefined : applyTool,
               resolveModel: scripted
@@ -4171,8 +4173,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
             // runs still return via botMessageOutcomeFromMidTurn below (status when
             // only progress was posted, result when a final reply exists).
             messageSegments = completionMessageSegments(messageSegments, {
-              allowSilentEmpty:
-                allowSilentPeerMessage || messagingChannelRun || publishedMidTurnUserMessage,
+              allowSilentEmpty: allowSilentEmpty || publishedMidTurnUserMessage,
               emptyResponseText,
               suppressOutput: handedOff,
               skipEmptyFallback: publishedTerminalSubagent || publishedMidTurnUserMessage,

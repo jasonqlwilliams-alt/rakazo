@@ -49,6 +49,9 @@ not gated by `active`.
 `Routine.notify` is persisted and round-tripped through the API, but does not
 control push delivery. Routine runs follow the run notification policy:
 
+- A routine run that ends without a final message posts no bubble, does not
+  mark the chat unread, and does not send a completion push. A run that
+  produces text still posts, marks unread, and can send a completion push.
 - Completion and failure pushes in the bot's own chat are gated by
   `Bot.notifyOnFinish`; group threads enable them regardless of that flag.
 - `help` and `takeover` pushes (the agent needs an answer, or needs the user on
