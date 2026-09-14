@@ -1,0 +1,57 @@
+# Example overlay: hand a bot computer specific host folders and files beside its home.
+# See docs/self-host.md, "Host folders on bot computers", for the rules and the path forms.
+#
+# Every value below is a placeholder read from .env. Nothing here names a real path or id.
+# Copy this file next to your own compose files, keep only the folders you actually need,
+# and never mount a whole drive, a People folder, a secrets folder or an entity vault.
+#
+#   docker compose --env-file .env \
+#     -f infra/compose/docker-compose.yml \
+#     -f infra/compose/docker-compose.binds.example.yml \
+#     up -d supervisor
+#
+# Each folder is mounted read-only on the supervisor under /host/<name>. The supervisor only
+# ever forwards the daemon-side path of that mount to a computer; the computer's own access
+# mode comes from the SANDBOX_COMPUTER_BINDS entry, read-only unless the entry says :rw.
+#
+# Compose translates the host side for the Docker daemon, so write it the way your shell
+# names it: `C:\Vault\Daily` from a Windows shell, `/mnt/c/Vault/Daily` from WSL,
+# `/srv/vault/Daily` on Linux.
+
+services:
+  supervisor:
+    volumes:
+      - ${BIND_DAILY:?host folder for /continuum/daily}:/host/daily:ro
+      - ${BIND_CREATION:?host folder for /continuum/creation, a dedicated subfolder}:/host/creation:ro
+      - ${BIND_PACKET_INBOX:?host folder for /continuum/packet-router/inbox}:/host/packet-router/inbox:ro
+      - ${BIND_PACKET_TEMPLATES:?host folder for /continuum/packet-router/templates}:/host/packet-router/templates:ro
+      - ${BIND_PACKET_REGISTRY:?host folder for /continuum/packet-router/registry}:/host/packet-router/registry:ro
+      - ${BIND_PACKET_HOWTO:?host file for /continuum/packet-router/docs/HOWTO.md}:/host/packet-router/docs/HOWTO.md:ro
+      - ${BIND_PACKET_DISCOVERY:?host file for /continuum/packet-router/docs/DISCOVERY.md}:/host/packet-router/docs/DISCOVERY.md:ro
+      - ${BIND_VOICE_TALKS:?host folder for /continuum/voice-talks}:/host/voice-talks:ro
+      - ${BIND_AI_COACH_FINDINGS:?host folder for /continuum/ai-coach/findings}:/host/ai-coach/findings:ro
+      - ${BIND_CAPTURE_STAGING:?host folder for /continuum/capture-staging}:/host/capture-staging:ro
+      - ${BIND_SYSTEM:?host folder for /continuum/system}:/host/system:ro
+      - ${BIND_INDEXES:?host folder for /continuum/indexes}:/host/indexes:ro
+      - ${BIND_PROJECT_CONTEXT:?host file for /continuum/project-context/PROJECT_CONTEXT.md}:/host/project-context/PROJECT_CONTEXT.md:ro
+      - ${BIND_PROJECT_HANDOFF:?host file for /continuum/project-context/HANDOFF.md}:/host/project-context/HANDOFF.md:ro
+    environment:
+      # One entry per line: <supervisor mount>:<target under /continuum/>[:<ro|rw>]@<homeKey>[,<homeKey>...]
+      # A Team computer's home key is team-<spaceId>; a dedicated computer's is its botId.
+      # Here the Team computer gets the whole set and one dedicated computer shares the
+      # packet-router folders; scope each entry to the computers that need it.
+      SANDBOX_COMPUTER_BINDS: |
+        /host/daily:/continuum/daily:rw@${TEAM_HOME_KEY:?home key of the Team computer}
+        /host/creation:/continuum/creation:rw@${TEAM_HOME_KEY},${DEDICATED_HOME_KEY:?home key of a dedicated computer}
+        /host/packet-router/inbox:/continuum/packet-router/inbox:rw@${TEAM_HOME_KEY},${DEDICATED_HOME_KEY}
+        /host/voice-talks:/continuum/voice-talks:rw@${TEAM_HOME_KEY}
+        /host/ai-coach/findings:/continuum/ai-coach/findings:rw@${TEAM_HOME_KEY}
+        /host/packet-router/templates:/continuum/packet-router/templates@${TEAM_HOME_KEY},${DEDICATED_HOME_KEY}
+        /host/packet-router/registry:/continuum/packet-router/registry@${TEAM_HOME_KEY},${DEDICATED_HOME_KEY}
+        /host/packet-router/docs/HOWTO.md:/continuum/packet-router/docs/HOWTO.md@${TEAM_HOME_KEY},${DEDICATED_HOME_KEY}
+        /host/packet-router/docs/DISCOVERY.md:/continuum/packet-router/docs/DISCOVERY.md@${TEAM_HOME_KEY},${DEDICATED_HOME_KEY}
+        /host/capture-staging:/continuum/capture-staging@${TEAM_HOME_KEY}
+        /host/system:/continuum/system@${TEAM_HOME_KEY}
+        /host/indexes:/continuum/indexes@${TEAM_HOME_KEY}
+        /host/project-context/PROJECT_CONTEXT.md:/continuum/project-context/PROJECT_CONTEXT.md@${TEAM_HOME_KEY}
+        /host/project-context/HANDOFF.md:/continuum/project-context/HANDOFF.md@${TEAM_HOME_KEY}

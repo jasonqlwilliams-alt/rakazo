@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   assertVolumeSubpathSupport,
   COMPUTER_IMAGE,
+  computerBindsMatch,
   computerHomeStorage,
   computerNetworkNameFor,
   computerNetworkNamesForCleanup,
@@ -24,8 +25,10 @@ import {
   homeVolumeMatches,
   hostComputerUser,
   legacyNetworkOwnedSolelyBy,
+  parseComputerBinds,
   parseMemoryBytes,
   publishedLoopbackControlHostPort,
+  resolveComputerBinds,
   resolveComputerControlEndpoint,
   resolveScreenNetworkMode,
   resolveScreenPublishTarget,
@@ -804,5 +807,250 @@ describe("computer home storage", () => {
       expect(() => assertVolumeSubpathSupport(version)).toThrow(/Docker Engine 26/);
     for (const version of ["1.45", "1.46", "2.0"])
       expect(() => assertVolumeSubpathSupport(version)).not.toThrow();
+  });
+});
+
+describe("computer host folder binds", () => {
+  const createInput = {
+    name: "rakazo-bot-team",
+    image: "computer",
+    botId: "team-space",
+    spaceId: "space",
+    homePath: "/data/homes/team-space",
+  };
+
+  it("parses scoped entries, defaults to read-only and accepts newline separators", () => {
+    const rules = parseComputerBinds(
+      "/host/daily:/continuum/daily:rw@team-space; /host/templates:/continuum/packet-router/templates@team-space,bot-1\n/host/docs/HOWTO.md:/continuum/packet-router/docs/HOWTO.md:ro@bot-1;",
+    );
+    expect(rules).toEqual([
+      {
+        source: "/host/daily",
+        target: "/continuum/daily",
+        readOnly: false,
+        homeKeys: ["team-space"],
+      },
+      {
+        source: "/host/templates",
+        target: "/continuum/packet-router/templates",
+        readOnly: true,
+        homeKeys: ["team-space", "bot-1"],
+      },
+      {
+        source: "/host/docs/HOWTO.md",
+        target: "/continuum/packet-router/docs/HOWTO.md",
+        readOnly: true,
+        homeKeys: ["bot-1"],
+      },
+    ]);
+    expect(parseComputerBinds(undefined)).toEqual([]);
+    expect(parseComputerBinds("")).toEqual([]);
+  });
+
+  it("normalizes trailing slashes and duplicate separators", () => {
+    expect(parseComputerBinds("/host//daily/:/continuum/daily/@team")).toEqual([
+      { source: "/host/daily", target: "/continuum/daily", readOnly: true, homeKeys: ["team"] },
+    ]);
+  });
+
+  it("rejects targets outside /continuum/ and sources outside /host/", () => {
+    for (const target of ["/home/rakazo/daily", "/continuum", "/continuum/", "/continuum/../etc"])
+      expect(() => parseComputerBinds(`/host/daily:${target}@team`)).toThrow(/target/);
+    for (const source of ["/mnt/c/daily", "/host", "/host/../data", "host/daily", "C:\\daily"])
+      expect(() => parseComputerBinds(`${source}:/continuum/daily@team`)).toThrow(
+        /source|look like/,
+      );
+  });
+
+  it("rejects unknown modes, missing scope and malformed entries", () => {
+    expect(() => parseComputerBinds("/host/daily:/continuum/daily:rwx@team")).toThrow(/mode/);
+    expect(() => parseComputerBinds("/host/daily:/continuum/daily:@team")).toThrow(/mode/);
+    expect(() => parseComputerBinds("/host/daily:/continuum/daily")).toThrow(/look like/);
+    expect(() => parseComputerBinds("/host/daily:/continuum/daily@")).toThrow(/home key/);
+    expect(() => parseComputerBinds("/host/daily:/continuum/daily@team,")).toThrow(/home key/);
+    expect(() => parseComputerBinds("/host/daily@team")).toThrow(/look like/);
+    expect(() => parseComputerBinds("/host/daily:/continuum/daily:rw:extra@team")).toThrow(
+      /look like/,
+    );
+  });
+
+  it("rejects a target that repeats or nests another target on the same computer", () => {
+    expect(() =>
+      parseComputerBinds("/host/a:/continuum/daily@team;/host/b:/continuum/daily@team"),
+    ).toThrow(/repeats or nests/);
+    expect(() =>
+      parseComputerBinds(
+        "/host/a:/continuum/packet-router@team;/host/b:/continuum/packet-router/inbox@team",
+      ),
+    ).toThrow(/repeats or nests/);
+    // Sibling targets and the same target on different computers are fine.
+    expect(
+      parseComputerBinds(
+        "/host/a:/continuum/packet-router/inbox@team;/host/b:/continuum/packet-router/templates@team;/host/c:/continuum/packet-router/inbox@bot-1",
+      ),
+    ).toHaveLength(3);
+  });
+
+  it("translates sources through the supervisor's own mounts, including subpaths", () => {
+    const rules = parseComputerBinds(
+      "/host/daily:/continuum/daily:rw@team;/host/continuum/_PacketRouter/inbox:/continuum/packet-router/inbox:rw@team",
+    );
+    const info = {
+      Mounts: [
+        {
+          Type: "bind",
+          Source: "/run/desktop/mnt/host/c/Continuum/Daily",
+          Destination: "/host/daily",
+        },
+        {
+          Type: "bind",
+          Source: "/run/desktop/mnt/host/c/Continuum",
+          Destination: "/host/continuum",
+        },
+        { Type: "bind", Source: "/srv/data", Destination: "/data" },
+      ],
+    } as Docker.ContainerInspectInfo;
+    expect(resolveComputerBinds(rules, info)).toEqual([
+      {
+        source: "/run/desktop/mnt/host/c/Continuum/Daily",
+        target: "/continuum/daily",
+        readOnly: false,
+      },
+      {
+        source: "/run/desktop/mnt/host/c/Continuum/_PacketRouter/inbox",
+        target: "/continuum/packet-router/inbox",
+        readOnly: false,
+      },
+    ]);
+  });
+
+  it("keeps host-run sources as-is and refuses a source the supervisor does not mount", () => {
+    const rules = parseComputerBinds("/host/daily:/continuum/daily@team");
+    expect(resolveComputerBinds(rules, undefined)).toEqual([
+      { source: "/host/daily", target: "/continuum/daily", readOnly: true },
+    ]);
+    for (const mounts of [
+      [],
+      [{ Type: "bind", Source: "/srv/daily-extra", Destination: "/host/daily-extra" }],
+      [
+        {
+          Type: "volume",
+          Name: "daily",
+          Source: "/var/lib/docker/volumes/daily/_data",
+          Destination: "/host/daily",
+        },
+      ],
+    ]) {
+      expect(() =>
+        resolveComputerBinds(rules, { Mounts: mounts } as Docker.ContainerInspectInfo),
+      ).toThrow(/not mounted on the supervisor/);
+    }
+  });
+
+  it("appends binds after the home and leaves the default output unchanged", () => {
+    const withoutBinds = containerCreateOptions(createInput);
+    expect(withoutBinds.HostConfig.Binds).toEqual(["/data/homes/team-space:/home/rakazo"]);
+    expect(containerCreateOptions({ ...createInput, binds: [] })).toEqual(withoutBinds);
+    const options = containerCreateOptions({
+      ...createInput,
+      binds: [
+        { source: "/srv/daily", target: "/continuum/daily", readOnly: false },
+        {
+          source: "/srv/HOWTO.md",
+          target: "/continuum/packet-router/docs/HOWTO.md",
+          readOnly: true,
+        },
+      ],
+    });
+    expect(options.HostConfig.Binds).toEqual([
+      "/data/homes/team-space:/home/rakazo",
+      "/srv/daily:/continuum/daily:rw",
+      "/srv/HOWTO.md:/continuum/packet-router/docs/HOWTO.md:ro",
+    ]);
+    expect(options.HostConfig.Mounts).toBeUndefined();
+  });
+
+  it("carries binds beside a named-volume home", () => {
+    const homeVolume = { name: "appdata", subpath: "homes/team-space" };
+    expect(containerCreateOptions({ ...createInput, homeVolume }).HostConfig.Binds).toBeUndefined();
+    const options = containerCreateOptions({
+      ...createInput,
+      homeVolume,
+      binds: [{ source: "/srv/daily", target: "/continuum/daily", readOnly: true }],
+    });
+    expect(options.HostConfig.Binds).toEqual(["/srv/daily:/continuum/daily:ro"]);
+    expect(options.HostConfig.Mounts).toHaveLength(1);
+  });
+
+  it("ships an example overlay whose entries parse and whose sources are read-only supervisor mounts", () => {
+    const overlay = readFileSync(
+      path.resolve(import.meta.dirname, "../../../compose/docker-compose.binds.example.yml"),
+      "utf8",
+    );
+    // Compose interpolation placeholders stand in for operator values; substitute them the way
+    // an .env file would so the committed example is checked against the real parser.
+    const interpolated = overlay.replace(/\$\{([A-Z_]+)(?::\?[^}]*)?\}/g, (_, name) =>
+      name.endsWith("_HOME_KEY") ? name.toLowerCase() : `/srv/${name.toLowerCase()}`,
+    );
+    const volumes = [...interpolated.matchAll(/^\s+- \/srv\/[^:]+:(\/host\/\S+?):ro$/gm)].map(
+      (match) => match[1],
+    );
+    const entries = [...interpolated.matchAll(/^\s{8}(\/host\/\S+@\S+)$/gm)].map(
+      (match) => match[1],
+    );
+    expect(volumes.length).toBeGreaterThan(0);
+    expect(interpolated).not.toMatch(/^\s+- \/srv\/[^:]+:\/host\/\S+?:rw$/m);
+    const rules = parseComputerBinds(entries.join("\n"));
+    expect(rules).toHaveLength(entries.length);
+    expect(new Set(rules.map((rule) => rule.source))).toEqual(new Set(volumes));
+    expect(rules.filter((rule) => !rule.readOnly).map((rule) => rule.target)).toEqual([
+      "/continuum/daily",
+      "/continuum/creation",
+      "/continuum/packet-router/inbox",
+      "/continuum/voice-talks",
+      "/continuum/ai-coach/findings",
+    ]);
+    expect(rules.filter((rule) => rule.readOnly).map((rule) => rule.target)).toEqual([
+      "/continuum/packet-router/templates",
+      "/continuum/packet-router/registry",
+      "/continuum/packet-router/docs/HOWTO.md",
+      "/continuum/packet-router/docs/DISCOVERY.md",
+      "/continuum/capture-staging",
+      "/continuum/system",
+      "/continuum/indexes",
+      "/continuum/project-context/PROJECT_CONTEXT.md",
+      "/continuum/project-context/HANDOFF.md",
+    ]);
+    expect(rules.every((rule) => rule.homeKeys.includes("team_home_key"))).toBe(true);
+  });
+
+  it("matches an existing computer only when its bind set equals the configured set", () => {
+    const daily = { source: "/srv/daily", target: "/continuum/daily", readOnly: false };
+    const docs = {
+      source: "/srv/HOWTO.md",
+      target: "/continuum/packet-router/docs/HOWTO.md",
+      readOnly: true,
+    };
+    const home = "/data/homes/team-space:/home/rakazo";
+    expect(computerBindsMatch([home], [])).toBe(true);
+    expect(computerBindsMatch(undefined, [])).toBe(true);
+    expect(computerBindsMatch(null, [])).toBe(true);
+    expect(computerBindsMatch([home, "/srv/daily:/continuum/daily:rw"], [daily])).toBe(true);
+    expect(
+      computerBindsMatch(
+        [
+          home,
+          "/srv/HOWTO.md:/continuum/packet-router/docs/HOWTO.md:ro",
+          "/srv/daily:/continuum/daily:rw",
+        ],
+        [daily, docs],
+      ),
+    ).toBe(true);
+    // Added, removed, re-sourced or re-moded binds all force a recreate.
+    expect(computerBindsMatch([home], [daily])).toBe(false);
+    expect(computerBindsMatch([home, "/srv/daily:/continuum/daily:rw"], [])).toBe(false);
+    expect(computerBindsMatch([home, "/srv/other:/continuum/daily:rw"], [daily])).toBe(false);
+    expect(computerBindsMatch([home, "/srv/daily:/continuum/daily:ro"], [daily])).toBe(false);
+    expect(computerBindsMatch(undefined, [daily])).toBe(false);
   });
 });
