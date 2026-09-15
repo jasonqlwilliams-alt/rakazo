@@ -87,7 +87,9 @@ each folder (or single file) on the **supervisor** in Compose, then name it in
 widen it. `infra/compose/docker-compose.binds.example.yml` is a complete overlay with `.env`
 placeholders for every value.
 
-Each entry is `<supervisor mount>:<target>:<ro|rw>@<homeKey>[,<homeKey>...]`, one per line:
+Each entry is `<supervisor mount>:<target>:<ro|rw>@<homeKey>[,<homeKey>...]`, one per line, with
+each path in plain form (no trailing slash, `.`, `..` or doubled `/`). A malformed entry fails the
+supervisor at startup, naming the entry:
 
 - The source is exactly the path of one Compose mount on the supervisor, under `/host/`.
 - The target is where the computer sees it, under `/continuum/`. A target may not repeat or nest
