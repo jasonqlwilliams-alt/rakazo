@@ -4412,17 +4412,20 @@ export async function runNotificationsEnabled(
   return Boolean(source && (source.thread.groupId || source.bot.notifyOnFinish));
 }
 
-async function notifyRun(
+export async function notifyRun(
   deps: ExecutorDeps,
   run: { spaceId: string; userId: string; botId: string; threadId: string },
   message: NotificationMessage,
 ) {
   if (!deps.notifications) return;
-  const enabled = await runNotificationsEnabled(deps.prisma, run).catch((error) => {
-    getLogger().error("notification preference lookup", error);
-    return false;
-  });
-  if (!enabled) return;
+  const gatedByNotifyOnFinish = message.kind === "completion" || message.kind === "failure";
+  if (gatedByNotifyOnFinish) {
+    const enabled = await runNotificationsEnabled(deps.prisma, run).catch((error) => {
+      getLogger().error("notification preference lookup", error);
+      return false;
+    });
+    if (!enabled) return;
+  }
   await deps.notifications
     .send(message, {
       operationId: "notify",
