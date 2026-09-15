@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import type { MessagingInboundEvent } from "@rakazo/adapter-kit";
+import type { MessagingInboundEvent, MessagingInboundMessage } from "@rakazo/adapter-kit";
 import { Domain } from "chat-adapter-lark";
 import { describe, expect, it, vi } from "vitest";
 import { ChatSdkMessagingSurface } from "./chat-sdk-surface.js";
@@ -14,6 +14,7 @@ import {
   parseSendblueStatus,
   teamChatProviderId,
 } from "./messaging-platforms.js";
+import { toTeamChatInbound } from "./team-chat-messaging.js";
 
 // Fake credentials: adapters are constructed offline, never called.
 const fullEnv: MessagingEnvironmentValues = {
@@ -623,6 +624,42 @@ describe("discord platform", () => {
     }
   });
 
+  it("keeps a bare bot mention on the team-chat path instead of emptying it", async () => {
+    const platforms = messagingPlatformsFromEnv(
+      { ...discordEnv, discordRespondToChannelIds: "channel-1" },
+      { pollInboundMessages: true },
+    );
+    const adapter = platforms[0]!.adapter as unknown as DiscordGatewayAdapter;
+    vi.spyOn(adapter, "startGatewayListener").mockResolvedValue(new Response("ok"));
+    vi.spyOn(adapter, "createDiscordThread").mockResolvedValue({ id: "thread-new" });
+    const surface = new ChatSdkMessagingSurface(platforms);
+    const inbound: MessagingInboundEvent[] = [];
+    surface.onInbound(async (event) => {
+      inbound.push(event);
+    });
+    try {
+      await surface.initialize();
+      const client = Object.assign(new EventEmitter(), { user: { id: "discord-app-id" } });
+      adapter.setupLegacyGatewayHandlers(client, () => false);
+      client.emit("messageCreate", {
+        ...gatewayMessage({ id: "bare", channelId: "channel-1", mentionsBot: true }),
+        content: "<@discord-app-id>",
+      });
+
+      await vi.waitFor(() => expect(inbound).toHaveLength(1));
+      const [event] = inbound;
+      expect(event).toMatchObject({ provider: "discord", content: "<@discord-app-id>" });
+      expect(toTeamChatInbound(event as MessagingInboundMessage)).toMatchObject({
+        kind: "mention",
+        conversationKey: "channel-1",
+        replyThreadId: "thread-new",
+        content: "<@discord-app-id>",
+      });
+    } finally {
+      await surface.shutdown();
+    }
+  });
+
   it("backs off between Gateway sessions that end early", async () => {
     vi.useFakeTimers();
     try {
@@ -655,7 +692,7 @@ describe("discord platform", () => {
 });
 
 describe("enrichDiscordTeamRoom", () => {
-  const options = { isMention: true, applicationId: "bot-1", mentionRoleIds: ["role-1"] };
+  const options = { isMention: true };
   const base = {
     type: "message" as const,
     provider: "discord",
@@ -676,7 +713,6 @@ describe("enrichDiscordTeamRoom", () => {
       conversationKey: "channel-1",
       replyThreadId: "thread-9",
       kind: "mention",
-      content: "ship it",
     });
     expect(
       enrichDiscordTeamRoom(
@@ -686,17 +722,19 @@ describe("enrichDiscordTeamRoom", () => {
     ).toEqual({ conversationKey: "dm-1", replyThreadId: null });
   });
 
-  it("takes the kind from the mention decision and strips only a leading bot or role mention", () => {
-    const enrich = (content: string, isMention: boolean) =>
-      enrichDiscordTeamRoom({ ...base, content }, { ...options, isMention });
-    expect(enrich("<@grace> can you review PR 12", false)).toMatchObject({ kind: "ambient" });
-    expect(enrich("<@grace> can you review PR 12", false).content).toBeUndefined();
-    expect(enrich("<@&role-1> heads up", true)).toMatchObject({
-      kind: "mention",
-      content: "heads up",
-    });
-    expect(enrich("<@!bot-1> hi", true)).toMatchObject({ kind: "mention", content: "hi" });
-    expect(enrich("ping <@bot-1>", true)).toMatchObject({ kind: "mention" });
-    expect(enrich("ping <@bot-1>", true).content).toBeUndefined();
+  it("takes the kind from the mention flag and leaves the content alone", () => {
+    expect(
+      enrichDiscordTeamRoom(
+        { ...base, content: "<@grace> can you review PR 12" },
+        {
+          isMention: false,
+        },
+      ),
+    ).toEqual(expect.objectContaining({ kind: "ambient" }));
+    for (const content of ["<@bot-1>", "<@&role-1> heads up", "ping <@bot-1>"]) {
+      const enrichment = enrichDiscordTeamRoom({ ...base, content }, options);
+      expect(enrichment.kind).toBe("mention");
+      expect(enrichment).not.toHaveProperty("content");
+    }
   });
 });

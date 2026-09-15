@@ -185,15 +185,13 @@ export function messagingPlatformsFromEnv(
   }
 
   if (env.discordBotToken && env.discordApplicationId) {
-    const applicationId = env.discordApplicationId;
-    const mentionRoleIds = parseMessagingCsvIds(env.discordMentionRoleIds);
     const adapter = createDiscordAdapter({
       botToken: env.discordBotToken,
-      applicationId,
+      applicationId: env.discordApplicationId,
       webhookVerifier: () => false,
       // Explicit empty list prevents the adapter from rereading process.env values.
       respondToChannelIds: [],
-      mentionRoleIds,
+      mentionRoleIds: parseMessagingCsvIds(env.discordMentionRoleIds),
       logger: new ConsoleLogger("warn").child("discord"),
     });
     Object.assign(adapter, {
@@ -206,8 +204,7 @@ export function messagingPlatformsFromEnv(
       provider: "discord",
       capabilities: { direct: true, groups: true, typing: false },
       adapter,
-      enrichTeamRoom: (_raw, base, { isMention }) =>
-        enrichDiscordTeamRoom(base, { isMention, applicationId, mentionRoleIds }),
+      enrichTeamRoom: (_raw, base, message) => enrichDiscordTeamRoom(base, message),
     });
   }
 
@@ -368,26 +365,17 @@ function mentionsSlackBot(text: string, botUserId: string | undefined): boolean 
  * Discord team-room fields from the thread id (discord:{guild}:{channel}[:{thread}]).
  * Guild id is the workspace (direct messages use "@me"), the parent channel
  * is the conversation key, and a thread id is the in-channel reply thread.
- * The Chat SDK mention decision (the same one that opened a Discord thread)
- * sets the kind; a leading bot or configured role mention is stripped.
+ * The Chat SDK mention flag sets the kind; content keeps its mentions, as on Slack.
  */
 export function enrichDiscordTeamRoom(
   base: MessagingInboundMessage,
-  options: { isMention: boolean; applicationId: string; mentionRoleIds: string[] },
+  message: { isMention: boolean },
 ): Partial<MessagingInboundMessage> {
   const [, guildId, channelId, threadId] = base.threadId.split(":");
   const enrichment: Partial<MessagingInboundMessage> = { replyThreadId: threadId ?? null };
   if (guildId && guildId !== "@me") enrichment.workspaceId = guildId;
   if (channelId) enrichment.conversationKey = channelId;
-  if (!base.isDirect) {
-    enrichment.kind = options.isMention ? "mention" : "ambient";
-    const leading = [
-      `<@${options.applicationId}>`,
-      `<@!${options.applicationId}>`,
-      ...options.mentionRoleIds.map((roleId) => `<@&${roleId}>`),
-    ].find((mention) => base.content.startsWith(mention));
-    if (leading) enrichment.content = base.content.slice(leading.length).trimStart();
-  }
+  if (!base.isDirect) enrichment.kind = message.isMention ? "mention" : "ambient";
   return enrichment;
 }
 
