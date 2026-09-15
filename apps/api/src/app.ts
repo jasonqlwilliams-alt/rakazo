@@ -239,6 +239,7 @@ export async function createApp(
   // see messagingPlatformsFromEnv's docstring for why a second poller
   // elsewhere (e.g. the worker) would actively break this.
   const messagingPlatforms = messagingPlatformsFromEnv(env, { pollInboundMessages: true });
+  const teamChatProvider = env.teamChatBotId ? teamChatProviderId(messagingPlatforms) : undefined;
   const messaging =
     messagingOverride ??
     (isMessagingSurfaceEnabled(messagingPlatforms, {
@@ -670,7 +671,7 @@ export async function createApp(
               deploymentModel: env.defaultModel,
               deploymentModelKey: env.deploymentModelKey,
             });
-      const providerId = teamChatProviderId(messagingPlatforms) ?? "slack";
+      const providerId = teamChatProvider ?? "slack";
       const bridge = new TeamChatBridge({
         prisma,
         events,
@@ -801,7 +802,6 @@ export async function createApp(
       composio: Boolean(stack.composio),
       pipedream: Boolean(pipedream),
       messaging: Boolean(messaging),
-      providers: messaging?.platforms().map((platform) => platform.provider) ?? [],
       email: email?.describe().id ?? null,
       jobs: jobKind,
       realtime: realtime.describe().id,

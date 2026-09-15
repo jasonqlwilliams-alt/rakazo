@@ -1,18 +1,27 @@
+import type { DiscordAdapter } from "@chat-adapter/discord";
 import { createDiscordAdapter } from "@chat-adapter/discord";
 import { createSlackAdapter } from "@chat-adapter/slack";
 import { createTelegramAdapter } from "@chat-adapter/telegram";
 import { createWhatsAppAdapter } from "@chat-adapter/whatsapp";
 import type { MessagingInboundMessage, MessagingOutboundStatus } from "@rakazo/adapter-kit";
+import { getLogger } from "@rakazo/logging";
 import type { Adapter, ChatInstance } from "chat";
 import { createLarkAdapter, Domain } from "chat-adapter-lark";
 import { createSendblueAdapter } from "chat-adapter-sendblue";
 import type { MessagingPlatform } from "./chat-sdk-surface.js";
 import { isVitestRuntime } from "./test-runtime.js";
 
-/** Resident API slices for Discord Gateway; abort on shutdown instead of waiting this out. */
-const DISCORD_GATEWAY_SLICE_MS = 12 * 60 * 60 * 1000;
+/** Longest setTimeout delay; shutdown aborts the Gateway instead of waiting this out. */
+const DISCORD_GATEWAY_SLICE_MS = 2 ** 31 - 1;
+const DISCORD_GATEWAY_RETRY_MIN_MS = 2_000;
+const DISCORD_GATEWAY_RETRY_MAX_MS = 5 * 60_000;
 
 const TEAM_ROOM_PROVIDERS = new Set(["slack", "discord"]);
+
+type DiscordGatewayMessage = {
+  channelId: string;
+  channel: { isThread(): boolean; parentId?: string | null };
+};
 
 /**
  * Parsed platform credentials, filled from process.env at the composition
@@ -27,7 +36,6 @@ export interface MessagingEnvironmentValues {
   slackSigningSecret?: string | undefined;
   discordBotToken?: string | undefined;
   discordApplicationId?: string | undefined;
-  discordPublicKey?: string | undefined;
   discordRespondToChannelIds?: string | undefined;
   discordMentionRoleIds?: string | undefined;
   whatsappAccessToken?: string | undefined;
@@ -58,7 +66,6 @@ export function messagingEnvFromProcess(
     slackSigningSecret: clean(env.SLACK_SIGNING_SECRET),
     discordBotToken: clean(env.DISCORD_BOT_TOKEN),
     discordApplicationId: clean(env.DISCORD_APPLICATION_ID),
-    discordPublicKey: clean(env.DISCORD_PUBLIC_KEY),
     discordRespondToChannelIds: clean(env.DISCORD_RESPOND_TO_CHANNEL_IDS),
     discordMentionRoleIds: clean(env.DISCORD_MENTION_ROLE_IDS),
     whatsappAccessToken: clean(env.WHATSAPP_ACCESS_TOKEN),
@@ -86,9 +93,20 @@ export function parseMessagingCsvIds(value: string | undefined): string[] {
     .filter(Boolean);
 }
 
-/** Slack or Discord when that team-room platform is mounted. */
+/** Slack and Discord carry team rooms (workspaces with channels and threads). */
+export function isTeamRoomProvider(provider: string): boolean {
+  return TEAM_ROOM_PROVIDERS.has(provider);
+}
+
+/** The one mounted team-room platform a team-chat bot serves; refuses more than one. */
 export function teamChatProviderId(platforms: Array<{ provider: string }>): string | undefined {
-  return platforms.find((platform) => TEAM_ROOM_PROVIDERS.has(platform.provider))?.provider;
+  const providers = platforms.map((platform) => platform.provider).filter(isTeamRoomProvider);
+  if (providers.length > 1) {
+    throw new Error(
+      `TEAM_CHAT_BOT_ID serves one team platform, but ${providers.join(" and ")} are both configured. Unset one platform's keys.`,
+    );
+  }
+  return providers[0];
 }
 
 /**
@@ -166,22 +184,25 @@ export function messagingPlatformsFromEnv(
   }
 
   if (env.discordBotToken && env.discordApplicationId) {
-    const respondToChannelIds = parseMessagingCsvIds(env.discordRespondToChannelIds);
+    const applicationId = env.discordApplicationId;
+    const mentionRoleIds = parseMessagingCsvIds(env.discordMentionRoleIds);
     const adapter = createDiscordAdapter({
       botToken: env.discordBotToken,
-      applicationId: env.discordApplicationId,
-      ...(env.discordPublicKey
-        ? { publicKey: env.discordPublicKey }
-        : { webhookVerifier: () => false }),
-      respondToChannelIds,
-      mentionRoleIds: parseMessagingCsvIds(env.discordMentionRoleIds),
+      applicationId,
+      webhookVerifier: () => false,
+      // Explicit empty list prevents the adapter from rereading process.env values.
+      respondToChannelIds: [],
+      mentionRoleIds,
     });
-    if (options.pollInboundMessages) attachDiscordGateway(adapter);
+    if (options.pollInboundMessages) {
+      attachDiscordGateway(adapter, parseMessagingCsvIds(env.discordRespondToChannelIds));
+    }
     platforms.push({
       provider: "discord",
       capabilities: { direct: true, groups: true, typing: false },
       adapter,
-      enrichTeamRoom: (raw, base) => enrichDiscordTeamRoom(raw, base, { respondToChannelIds }),
+      enrichTeamRoom: (_raw, base) =>
+        enrichDiscordTeamRoom(base, { applicationId, mentionRoleIds }),
     });
   }
 
@@ -339,42 +360,30 @@ function mentionsSlackBot(text: string, botUserId: string | undefined): boolean 
 }
 
 /**
- * Pull Discord team-room fields the Chat SDK does not expose on Message.
- * Guild id is the workspace, the parent channel is the conversation key,
- * and a thread id is the in-channel reply thread.
+ * Discord team-room fields from the thread id (discord:{guild}:{channel}[:{thread}]).
+ * Guild id is the workspace (direct messages use "@me"), the parent channel
+ * is the conversation key, and a thread id is the in-channel reply thread.
+ * Only the bot's own mention or a configured role mention makes a mention.
  */
 export function enrichDiscordTeamRoom(
-  raw: unknown,
   base: MessagingInboundMessage,
-  options: { respondToChannelIds?: string[] } = {},
+  options: { applicationId: string; mentionRoleIds: string[] },
 ): Partial<MessagingInboundMessage> {
-  const root = asRecord(raw);
-  const encoded = discordIdsFromThreadId(base.threadId);
-  const thread = root ? asRecord(root.thread) : null;
-  const guildId = discordGuildId(root, encoded.guildId);
-  const parentFromThread = thread ? stringField(thread, "parent_id") : undefined;
-  const channelId =
-    encoded.channelId ?? parentFromThread ?? (root ? stringField(root, "channel_id") : undefined);
-  const replyThreadId =
-    encoded.threadId ??
-    (thread ? stringField(thread, "id") : undefined) ??
-    discordThreadChannelId(root);
-  const conversationKey = encoded.channelId ?? parentFromThread ?? channelId;
-  const author = root ? asRecord(root.author) : null;
-  const enrichment: Partial<MessagingInboundMessage> = {};
-  if (guildId) enrichment.workspaceId = guildId;
-  if (conversationKey) enrichment.conversationKey = conversationKey;
-  if (author?.bot === true) enrichment.senderIsBot = true;
-  enrichment.replyThreadId = replyThreadId ?? null;
+  const [, guildId, channelId, threadId] = base.threadId.split(":");
+  const enrichment: Partial<MessagingInboundMessage> = { replyThreadId: threadId ?? null };
+  if (guildId && guildId !== "@me") enrichment.workspaceId = guildId;
+  if (channelId) enrichment.conversationKey = channelId;
   if (!base.isDirect) {
-    const text = (root ? stringField(root, "content") : undefined) ?? base.content;
-    const allowlisted = Boolean(
-      conversationKey && options.respondToChannelIds?.includes(conversationKey),
-    );
-    const mentioned = root?.is_mention === true || discordHasUserMention(text);
-    enrichment.kind = allowlisted || mentioned ? "mention" : "ambient";
-    const stripped = stripLeadingDiscordMention(text);
-    if (stripped !== text) enrichment.content = stripped;
+    const mentions = [
+      `<@${options.applicationId}>`,
+      `<@!${options.applicationId}>`,
+      ...options.mentionRoleIds.map((roleId) => `<@&${roleId}>`),
+    ];
+    enrichment.kind = mentions.some((mention) => base.content.includes(mention))
+      ? "mention"
+      : "ambient";
+    const leading = mentions.find((mention) => base.content.startsWith(mention));
+    if (leading) enrichment.content = base.content.slice(leading.length).trimStart();
   }
   return enrichment;
 }
@@ -383,7 +392,6 @@ function assertDiscordCredentials(env: MessagingEnvironmentValues): void {
   const present = [
     env.discordBotToken,
     env.discordApplicationId,
-    env.discordPublicKey,
     env.discordRespondToChannelIds,
     env.discordMentionRoleIds,
   ].some(Boolean);
@@ -394,8 +402,17 @@ function assertDiscordCredentials(env: MessagingEnvironmentValues): void {
   );
 }
 
-function attachDiscordGateway(adapter: Adapter): void {
+/**
+ * Run the Gateway from initialize() until stopPolling(). When channel ids are
+ * set, a message outside them (direct messages included) is dropped before
+ * the adapter handles it, so it creates no Discord thread.
+ */
+function attachDiscordGateway(adapter: DiscordAdapter, channelIds: string[]): void {
   const initialize = adapter.initialize.bind(adapter);
+  const gateway = adapter as unknown as {
+    handleGatewayMessage(message: DiscordGatewayMessage, isMentioned: boolean): Promise<void>;
+  };
+  const handleGatewayMessage = gateway.handleGatewayMessage.bind(adapter);
   let abort: AbortController | undefined;
   let running: Promise<void> | undefined;
   Object.assign(adapter, {
@@ -409,21 +426,20 @@ function attachDiscordGateway(adapter: Adapter): void {
       abort?.abort();
       await running?.catch(() => undefined);
     },
+    handleGatewayMessage: async (message: DiscordGatewayMessage, isMentioned: boolean) => {
+      const roomId = message.channel.isThread()
+        ? (message.channel.parentId ?? message.channelId)
+        : message.channelId;
+      if (channelIds.length > 0 && !channelIds.includes(roomId)) return;
+      await handleGatewayMessage(message, isMentioned);
+    },
   });
 }
 
-async function listenOnDiscordGateway(adapter: Adapter, signal: AbortSignal): Promise<void> {
-  const startGateway = (
-    adapter as Adapter & {
-      startGatewayListener?: (
-        options: { waitUntil: (task: Promise<unknown>) => void },
-        durationMs?: number,
-        abortSignal?: AbortSignal,
-      ) => Promise<Response>;
-    }
-  ).startGatewayListener;
-  if (!startGateway) return;
+async function listenOnDiscordGateway(adapter: DiscordAdapter, signal: AbortSignal): Promise<void> {
+  let retryMs = DISCORD_GATEWAY_RETRY_MIN_MS;
   while (!signal.aborted) {
+    const startedAt = Date.now();
     let settle: (error?: unknown) => void = () => undefined;
     const finished = new Promise<void>((resolve, reject) => {
       settle = (error) => (error ? reject(error) : resolve());
@@ -431,8 +447,7 @@ async function listenOnDiscordGateway(adapter: Adapter, signal: AbortSignal): Pr
     const onAbort = () => settle();
     signal.addEventListener("abort", onAbort, { once: true });
     try {
-      const response = await startGateway.call(
-        adapter,
+      const response = await adapter.startGatewayListener(
         {
           waitUntil: (task) => {
             void Promise.resolve(task).then(
@@ -448,44 +463,30 @@ async function listenOnDiscordGateway(adapter: Adapter, signal: AbortSignal): Pr
         throw new Error(`Discord Gateway failed to start (${response.status})`);
       }
       await finished;
+    } catch (error) {
+      getLogger().error("discord gateway listener failed", error);
     } finally {
       signal.removeEventListener("abort", onAbort);
     }
+    if (signal.aborted) return;
+    if (Date.now() - startedAt >= DISCORD_GATEWAY_RETRY_MAX_MS) {
+      retryMs = DISCORD_GATEWAY_RETRY_MIN_MS;
+    }
+    await waitUnlessAborted(retryMs, signal);
+    retryMs = Math.min(retryMs * 2, DISCORD_GATEWAY_RETRY_MAX_MS);
   }
 }
 
-function discordIdsFromThreadId(threadId: string): {
-  guildId?: string;
-  channelId?: string;
-  threadId?: string;
-} {
-  const parts = threadId.split(":");
-  if (parts[0] !== "discord") return {};
-  return { guildId: parts[1], channelId: parts[2], threadId: parts[3] };
-}
-
-function discordGuildId(
-  root: Record<string, unknown> | null,
-  encodedGuildId: string | undefined,
-): string | undefined {
-  const raw = root?.guild_id;
-  if (typeof raw === "string" && raw && raw !== "@me") return raw;
-  if (encodedGuildId && encodedGuildId !== "@me") return encodedGuildId;
-  return undefined;
-}
-
-function discordThreadChannelId(root: Record<string, unknown> | null): string | undefined {
-  const channelType = root?.channel_type;
-  if (channelType !== 11 && channelType !== 12) return undefined;
-  return root ? stringField(root, "channel_id") : undefined;
-}
-
-function discordHasUserMention(text: string): boolean {
-  return /<@!?[^>]+>/.test(text);
-}
-
-function stripLeadingDiscordMention(text: string): string {
-  return text.replace(/^<@!?[^>]+>\s*/, "");
+function waitUnlessAborted(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal.addEventListener("abort", done, { once: true });
+  });
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {

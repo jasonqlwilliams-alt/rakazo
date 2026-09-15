@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { Domain } from "chat-adapter-lark";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -355,6 +356,46 @@ describe("discord platform", () => {
     discordBotToken: "discord-bot-token",
     discordApplicationId: "discord-app-id",
   };
+  type DiscordGatewayAdapter = {
+    startGatewayListener: (
+      options: { waitUntil: (task: Promise<unknown>) => void },
+      ...rest: unknown[]
+    ) => Promise<Response>;
+    createDiscordThread: (channelId: string, messageId: string) => Promise<{ id: string }>;
+    setupLegacyGatewayHandlers: (client: EventEmitter, isShuttingDown: () => boolean) => void;
+    stopPolling?: () => Promise<void>;
+  };
+
+  function gatewayMessage(input: {
+    id: string;
+    channelId: string;
+    guildId?: string | null;
+    parentId?: string;
+    authorIsBot?: boolean;
+    mentionsBot?: boolean;
+  }) {
+    return {
+      id: input.id,
+      channelId: input.channelId,
+      guildId: input.guildId === undefined ? "guild-1" : input.guildId,
+      content: input.mentionsBot ? "<@discord-app-id> ship it" : "ship it",
+      author: {
+        id: input.authorIsBot ? "other-bot" : "user-1",
+        username: "ada",
+        displayName: "Ada",
+        bot: Boolean(input.authorIsBot),
+      },
+      mentions: {
+        has: (id: string) => Boolean(input.mentionsBot) && id === "discord-app-id",
+        roles: [],
+        everyone: false,
+      },
+      channel: { isThread: () => Boolean(input.parentId), parentId: input.parentId ?? null },
+      attachments: new Map(),
+      createdAt: new Date(0),
+      editedAt: null,
+    };
+  }
 
   it("refuses a partial DISCORD_* set and stays off when none are set", () => {
     expect(messagingEnvFromProcess({})).not.toMatchObject({
@@ -380,30 +421,47 @@ describe("discord platform", () => {
       messagingEnvFromProcess({
         DISCORD_BOT_TOKEN: " discord-bot-token ",
         DISCORD_APPLICATION_ID: " discord-app-id ",
-        DISCORD_PUBLIC_KEY: " public-key ",
         DISCORD_RESPOND_TO_CHANNEL_IDS: " channel-1 , channel-2 ",
         DISCORD_MENTION_ROLE_IDS: " role-1 ",
       }),
     ).toMatchObject({
       discordBotToken: "discord-bot-token",
       discordApplicationId: "discord-app-id",
-      discordPublicKey: "public-key",
       discordRespondToChannelIds: "channel-1 , channel-2",
       discordMentionRoleIds: "role-1",
     });
     expect(providers(discordEnv)).toEqual(["discord"]);
-    expect(teamChatProviderId(messagingPlatformsFromEnv(discordEnv))).toBe("discord");
-    expect(teamChatProviderId(messagingPlatformsFromEnv(fullEnv))).toBe("slack");
     expect(parseMessagingCsvIds(" channel-1 , channel-2 ")).toEqual(["channel-1", "channel-2"]);
+  });
+
+  it("gives team chat the one team platform and refuses both Slack and Discord", () => {
+    expect(teamChatProviderId(messagingPlatformsFromEnv(discordEnv))).toBe("discord");
+    expect(
+      teamChatProviderId(
+        messagingPlatformsFromEnv({ slackBotToken: "xoxb-fake", slackSigningSecret: "slack" }),
+      ),
+    ).toBe("slack");
+    expect(teamChatProviderId(messagingPlatformsFromEnv({}))).toBeUndefined();
+    expect(() => teamChatProviderId(messagingPlatformsFromEnv(fullEnv))).toThrow(
+      /TEAM_CHAT_BOT_ID serves one team platform, but slack and discord are both configured/,
+    );
+  });
+
+  it("rejects Discord HTTP interactions because inbound is Gateway-only", async () => {
+    const [platform] = messagingPlatformsFromEnv(discordEnv);
+    const response = await platform!.adapter.handleWebhook(
+      new Request("https://rakazo.test/api/v1/messaging/webhook/discord", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ type: 1 }),
+      }),
+    );
+    expect(response.status).toBe(401);
   });
 
   it("starts the Gateway only when the API process asks to poll inbound", async () => {
     const api = messagingPlatformsFromEnv(discordEnv, { pollInboundMessages: true })[0]!;
     const worker = messagingPlatformsFromEnv(discordEnv)[0]!;
-    type DiscordGatewayAdapter = {
-      startGatewayListener: (...args: unknown[]) => Promise<Response>;
-      stopPolling?: () => Promise<void>;
-    };
     const startApi = vi
       .spyOn(api.adapter as unknown as DiscordGatewayAdapter, "startGatewayListener")
       .mockResolvedValue(new Response("ok", { status: 200 }));
@@ -421,9 +479,79 @@ describe("discord platform", () => {
     expect(startApi.mock.calls[0]?.[2]).toBeInstanceOf(AbortSignal);
     await (api.adapter as unknown as DiscordGatewayAdapter).stopPolling?.();
   });
+
+  it("drops bot authors and rooms outside the channel allowlist before making a thread", async () => {
+    const [platform] = messagingPlatformsFromEnv(
+      { ...discordEnv, discordRespondToChannelIds: "channel-1" },
+      { pollInboundMessages: true },
+    );
+    const adapter = platform!.adapter as unknown as DiscordGatewayAdapter;
+    vi.spyOn(adapter, "startGatewayListener").mockResolvedValue(new Response("ok"));
+    const createThread = vi
+      .spyOn(adapter, "createDiscordThread")
+      .mockResolvedValue({ id: "thread-new" });
+    const handleIncomingMessage = vi.fn(async () => undefined);
+    await platform!.adapter.initialize({ handleIncomingMessage } as never);
+    const client = Object.assign(new EventEmitter(), { user: { id: "discord-app-id" } });
+    adapter.setupLegacyGatewayHandlers(client, () => false);
+
+    for (const message of [
+      gatewayMessage({
+        id: "from-bot",
+        channelId: "channel-1",
+        authorIsBot: true,
+        mentionsBot: true,
+      }),
+      gatewayMessage({ id: "other-room", channelId: "channel-2", mentionsBot: true }),
+      gatewayMessage({ id: "direct", channelId: "dm-1", guildId: null }),
+      gatewayMessage({ id: "in-thread", channelId: "thread-9", parentId: "channel-1" }),
+      gatewayMessage({ id: "listed-room", channelId: "channel-1", mentionsBot: true }),
+    ]) {
+      client.emit("messageCreate", message);
+    }
+
+    await vi.waitFor(() => expect(handleIncomingMessage).toHaveBeenCalledTimes(2));
+    expect(createThread.mock.calls).toEqual([["channel-1", "listed-room"]]);
+    expect(handleIncomingMessage.mock.calls.map((call) => (call as unknown[])[1])).toEqual([
+      "discord:guild-1:channel-1:thread-9",
+      "discord:guild-1:channel-1:thread-new",
+    ]);
+    await adapter.stopPolling?.();
+  });
+
+  it("backs off between Gateway sessions that end early", async () => {
+    vi.useFakeTimers();
+    try {
+      const [platform] = messagingPlatformsFromEnv(discordEnv, { pollInboundMessages: true });
+      const adapter = platform!.adapter as unknown as DiscordGatewayAdapter;
+      const start = vi
+        .spyOn(adapter, "startGatewayListener")
+        .mockImplementation(async (options) => {
+          options.waitUntil(Promise.resolve());
+          return new Response("ok");
+        });
+      await platform!.adapter.initialize({} as never);
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(start).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(start).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(3_999);
+      expect(start).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(start).toHaveBeenCalledTimes(3);
+
+      await adapter.stopPolling?.();
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(start).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("enrichDiscordTeamRoom", () => {
+  const options = { applicationId: "bot-1", mentionRoleIds: ["role-1"] };
   const base = {
     type: "message" as const,
     provider: "discord",
@@ -438,38 +566,29 @@ describe("enrichDiscordTeamRoom", () => {
     mediaUrl: null,
   };
 
-  it("maps guild, channel, thread, and bot-author fields", () => {
-    const enrichment = enrichDiscordTeamRoom(
-      {
-        guild_id: "guild-1",
-        channel_id: "thread-9",
-        content: "<@bot-1> ship it",
-        is_mention: true,
-        author: { id: "user-1", username: "ada", bot: false },
-        thread: { id: "thread-9", parent_id: "channel-1" },
-      },
-      base,
-      { respondToChannelIds: ["channel-1"] },
-    );
-    expect(enrichment).toMatchObject({
+  it("maps guild, channel, and thread from the thread id", () => {
+    expect(enrichDiscordTeamRoom(base, options)).toEqual({
       workspaceId: "guild-1",
       conversationKey: "channel-1",
       replyThreadId: "thread-9",
       kind: "mention",
       content: "ship it",
     });
-    expect(enrichment.senderIsBot).toBeUndefined();
+    expect(
+      enrichDiscordTeamRoom(
+        { ...base, threadId: "discord:@me:dm-1", isDirect: true, content: "hi" },
+        options,
+      ),
+    ).toEqual({ conversationKey: "dm-1", replyThreadId: null });
   });
 
-  it("marks another bot as senderIsBot", () => {
-    const enrichment = enrichDiscordTeamRoom(
-      {
-        guild_id: "guild-1",
-        channel_id: "channel-1",
-        author: { id: "other-bot", username: "courier", bot: true },
-      },
-      { ...base, threadId: "discord:guild-1:channel-1", content: "ack" },
-    );
-    expect(enrichment.senderIsBot).toBe(true);
+  it("counts only the bot or a configured role as a mention", () => {
+    const kindOf = (content: string) => enrichDiscordTeamRoom({ ...base, content }, options);
+    expect(kindOf("<@grace> can you review PR 12")).toMatchObject({ kind: "ambient" });
+    expect(kindOf("<@grace> can you review PR 12").content).toBeUndefined();
+    expect(kindOf("<@&role-2> heads up")).toMatchObject({ kind: "ambient" });
+    expect(kindOf("<@&role-1> heads up")).toMatchObject({ kind: "mention", content: "heads up" });
+    expect(kindOf("<@!bot-1> hi")).toMatchObject({ kind: "mention", content: "hi" });
+    expect(kindOf("ping <@bot-1>")).toMatchObject({ kind: "mention" });
   });
 });

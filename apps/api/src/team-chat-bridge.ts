@@ -46,15 +46,6 @@ function isRoutingOwnershipReason(reason: string | null | undefined): boolean {
   return reason === ROUTING_OWNERSHIP_REASON || reason === ROUTING_OWNERSHIP_REARMED_REASON;
 }
 
-function conversationKeyIsAllowed(conversationKey: string, allowed: string[]): boolean {
-  return allowed.some(
-    (id) =>
-      conversationKey === id ||
-      conversationKey.startsWith(`${id}:`) ||
-      conversationKey.endsWith(`:${id}`),
-  );
-}
-
 interface TeamChatBridgeDeps {
   prisma: PrismaClient;
   events: Pick<ThreadEvents, "sendUserMessage">;
@@ -150,10 +141,10 @@ export class TeamChatBridge {
   }
 
   private shouldIgnoreInbound(message: TeamChatInboundMessage): boolean {
-    if (message.senderIsBot) return true;
+    if (message.senderIsBot && this.deps.providerId === "discord") return true;
     const allowed = this.deps.allowedConversationKeys;
     if (!allowed?.length) return false;
-    return !conversationKeyIsAllowed(message.conversationKey, allowed);
+    return !allowed.includes(message.conversationKey);
   }
 
   /** Mark a deferred row as having an in-process routine wake until clearRoutineWake. */

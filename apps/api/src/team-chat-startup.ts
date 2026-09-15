@@ -1,4 +1,5 @@
 import type { MessagingInboundMessage } from "@rakazo/adapter-kit";
+import { isTeamRoomProvider } from "@rakazo/adapters";
 
 /** Cap buffered TeamChat events while the bridge is still starting. */
 export const PENDING_TEAM_CHAT_LIMIT = 100;
@@ -15,15 +16,15 @@ export const TEAMCHAT_AGENT_OWNERSHIP_REASON = "message_teamchat_agent";
 /** Hold deferred rows while a TeamChat wake may still create its run. */
 export const MESSAGE_ROUTING_RESERVATION_MS = 30 * 60_000;
 
-const TEAM_CHAT_PROVIDERS = new Set(["slack", "discord", "teamchat-emulator"]);
-
 export function prefersTeamChatSurface(
   event: Pick<MessagingInboundMessage, "provider" | "workspaceId">,
   teamChatBotId: string | undefined | null,
 ): boolean {
   return (
     Boolean(teamChatBotId) &&
-    (TEAM_CHAT_PROVIDERS.has(event.provider) || Boolean(event.workspaceId))
+    (isTeamRoomProvider(event.provider) ||
+      event.provider === "teamchat-emulator" ||
+      Boolean(event.workspaceId))
   );
 }
 
