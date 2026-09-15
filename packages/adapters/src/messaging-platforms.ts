@@ -112,8 +112,9 @@ export function teamChatProviderId(platforms: Array<{ provider: string }>): stri
 
 /**
  * Build the platform list for every fully configured provider. Group
- * conversations stay sendblue-only until channel semantics are mapped for
- * the other platforms, so their capabilities say so instead of half-working.
+ * conversations stay limited to sendblue and the team-room platforms (Slack,
+ * Discord) until channel semantics are mapped for the others, so their
+ * capabilities say so instead of half-working.
  *
  * `pollInboundMessages` must be true only in the one process that also
  * registers the inbound sink (messaging.onInbound — apps/api/src/app.ts).
