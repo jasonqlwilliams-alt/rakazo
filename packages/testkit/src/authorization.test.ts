@@ -398,6 +398,13 @@ describeWithDatabase("API authorization and resource isolation", () => {
 
     const resourceIdCalls = [
       ["routines/update", { routineId: ownerRoutine.id, name: "Stolen Routine" }],
+      [
+        "routines/update",
+        {
+          routineId: ownerRoutine.id,
+          unattendedTools: ["shell", "message_bot", "scratchpad_add"],
+        },
+      ],
       ["routines/remove", { routineId: ownerRoutine.id }],
       ["routines/testRun", { routineId: ownerRoutine.id }],
       ["scratchpad/update", { itemId: ownerScratchpad.id, title: "Stolen item" }],

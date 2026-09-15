@@ -1021,3 +1021,5 @@ export const agentConnectionTools: ConnectorTool[] = [
     },
   },
 ];
+
+export const BUILTIN_AGENT_TOOL_NAMES = new Set(builtinAgentTools.map((tool) => tool.name));

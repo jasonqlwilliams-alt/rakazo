@@ -38,6 +38,12 @@ function fixture({
   rules = [] as ActionApprovalRule[],
   autoReview = false,
   trigger = "user",
+  routineId = null as string | null,
+  webhookRoutine = null as {
+    active: boolean;
+    webhookEnabled: boolean;
+    unattendedTools: string[];
+  } | null,
 } = {}) {
   const tool: ConnectorTool = {
     name,
@@ -62,6 +68,7 @@ function fixture({
     status: "queued",
     trigger,
     leaseFence: 0,
+    routineId,
   };
   const externalEffect = {
     findMany: vi.fn(async () => effects.filter((effect) => effect.status === "approved")),
@@ -106,7 +113,7 @@ function fixture({
         title: "Assistant",
         description: "Test assistant",
         computerId: "computer-1",
-        computer: { id: "computer-1", scope: "dedicated" },
+        computer: { id: "computer-1", scope: "dedicated", homeKey: "home-1" },
       })),
       findMany: vi.fn(async () => []),
     },
@@ -130,7 +137,38 @@ function fixture({
     taughtSkill: { findMany: vi.fn(async () => []) },
     agentSecret: { findMany: vi.fn(async () => []) },
     agentSkill: { findMany: vi.fn(async () => []) },
-    scratchpadItem: { findMany: vi.fn(async () => []) },
+    routine: { findFirst: vi.fn(async () => webhookRoutine) },
+    computer: { updateMany: vi.fn(async () => ({ count: 1 })) },
+    scratchpadItem: {
+      findMany: vi.fn(async () => []),
+      findFirst: vi.fn(async () => ({
+        id: "item-1",
+        botId: "bot-1",
+        title: "packet",
+        status: "open",
+        notes: "",
+        createdAt: new Date("2026-01-01T00:00:00.000Z"),
+        updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+      })),
+      create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
+        id: "item-1",
+        botId: data.botId,
+        title: data.title,
+        status: data.status ?? "open",
+        notes: data.notes ?? "",
+        createdAt: new Date("2026-01-01T00:00:00.000Z"),
+        updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+      })),
+      update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
+        id: "item-1",
+        botId: "bot-1",
+        title: data.title ?? "packet",
+        status: data.status ?? "open",
+        notes: data.notes ?? "",
+        createdAt: new Date("2026-01-01T00:00:00.000Z"),
+        updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+      })),
+    },
     actionApprovalRule: { findMany: vi.fn(async () => rules) },
     actionAutoReviewPreference: { findUnique: vi.fn(async () => ({ enabled: autoReview })) },
     externalEffect,
@@ -143,12 +181,15 @@ function fixture({
   const execute = vi.fn(async function* (call: ConnectorCall) {
     yield { type: "result" as const, data: { item: call.args.id } };
   });
-  let calls = [{ args: { id: "item-1" }, executionId: "call-1" }];
+  let calls: Array<{ name?: string; args: Record<string, unknown>; executionId: string }> = [
+    { args: { id: "item-1" }, executionId: "call-1" },
+  ];
   const runtimeRun = vi.fn(async function* (request: AgentRunRequest) {
     for (const call of calls) {
+      const toolName = call.name ?? name;
       const result = await request.executeTool!(
-        catalog ? "demo_execute_tool" : name,
-        catalog ? { id: `resource-1:${name}`, arguments: call.args } : call.args,
+        catalog ? "demo_execute_tool" : toolName,
+        catalog ? { id: `resource-1:${toolName}`, arguments: call.args } : call.args,
         call.executionId,
       );
       results.push(result);
@@ -175,7 +216,14 @@ function fixture({
         catalog ? resolveCatalogCall(call, catalogEntries([tool])) : undefined,
       execute,
     },
-    sandbox: { describe: () => ({ capabilities: { graphical: false } }) },
+    sandbox: {
+      describe: () => ({ capabilities: { graphical: false } }),
+      execute: async function* () {
+        yield { type: "exit" as const, code: 0 };
+      },
+      exportWorkspace: async function* () {},
+    },
+    home: { commit: vi.fn(async () => "rev-1") },
     memory: { read: async () => ({ documents: [] }) },
     memoryProviders: { resolve: async () => null },
     events: { append: vi.fn(async () => undefined), pauseRunForInput, finalizeRun },
@@ -219,6 +267,82 @@ describe("connector read-only metadata and approval enforcement", () => {
       expect(runAutoReviewJudge).not.toHaveBeenCalled();
     },
   );
+
+  const PACKET_ROUTER_TOOLS = [
+    "shell",
+    "message_bot",
+    "scratchpad_add",
+    "scratchpad_update",
+    "scratchpad_list",
+  ];
+
+  it("runs allowlisted webhook tools unattended and still parks a tool outside the list", async () => {
+    const f = fixture({
+      name: "shell",
+      trigger: "webhook",
+      routineId: "routine-1",
+      webhookRoutine: {
+        active: true,
+        webhookEnabled: true,
+        unattendedTools: PACKET_ROUTER_TOOLS,
+      },
+    });
+    f.setCalls([
+      { name: "shell", args: { command: "true" }, executionId: "call-1" },
+      { name: "scratchpad_add", args: { title: "packet" }, executionId: "call-2" },
+      {
+        name: "scratchpad_update",
+        args: { itemId: "item-1", notes: "routed" },
+        executionId: "call-3",
+      },
+      { name: "scratchpad_list", args: {}, executionId: "call-4" },
+      { name: "write_file", args: { path: "out.txt", content: "nope" }, executionId: "call-5" },
+    ]);
+    await f.run();
+    expect(f.pauseRunForInput).toHaveBeenCalledOnce();
+    expect(isApprovalPausedResult(f.results[0])).toBe(false);
+    expect(isApprovalPausedResult(f.results[1])).toBe(false);
+    expect(isApprovalPausedResult(f.results[2])).toBe(false);
+    expect(isApprovalPausedResult(f.results[3])).toBe(false);
+    expect(isApprovalPausedResult(f.results.at(-1))).toBe(true);
+    expect(runAutoReviewJudge).not.toHaveBeenCalled();
+  });
+
+  it("keeps cron and chat runs on today's approval path", async () => {
+    for (const trigger of ["user", "routine"] as const) {
+      const f = fixture({
+        name: "shell",
+        trigger,
+        routineId: "routine-1",
+        webhookRoutine: {
+          active: true,
+          webhookEnabled: true,
+          unattendedTools: PACKET_ROUTER_TOOLS,
+        },
+      });
+      f.setCalls([{ name: "shell", args: { command: "true" }, executionId: "call-1" }]);
+      await f.run();
+      expect(f.pauseRunForInput).not.toHaveBeenCalled();
+      expect(isApprovalPausedResult(f.results[0])).toBe(false);
+    }
+  });
+
+  it("does not apply the allowlist when the bound routine is not an active webhook routine", async () => {
+    const f = fixture({
+      name: "shell",
+      trigger: "webhook",
+      routineId: "routine-1",
+      webhookRoutine: {
+        active: true,
+        webhookEnabled: false,
+        unattendedTools: PACKET_ROUTER_TOOLS,
+      },
+    });
+    f.setCalls([{ name: "shell", args: { command: "true" }, executionId: "call-1" }]);
+    await f.run();
+    expect(f.pauseRunForInput).toHaveBeenCalledOnce();
+    expect(isApprovalPausedResult(f.results[0])).toBe(true);
+  });
 
   describe.each([false, true])("catalog = %s", (catalog) => {
     it.each(["tool", "connector"] as const)(

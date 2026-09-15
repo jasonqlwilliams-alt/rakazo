@@ -779,6 +779,8 @@ model Routine {
   webhookEnabled Boolean   @default(false)
   githubEnabled  Boolean   @default(false)
   messageProvider String?
+  /// Known builtin tool names this webhook routine may run without owner approval. Empty keeps the default.
+  unattendedTools String[] @default([])
   lastRunAt      DateTime?
   nextRunAt      DateTime?
   createdAt      DateTime  @default(now())

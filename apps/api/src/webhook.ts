@@ -76,6 +76,7 @@ export function mountWebhookHttpRoutes(app: Hono, deps: WebhookDeps) {
         routines: webhookRoutines,
         source: "webhook",
         idempotencyKey,
+        routineId: webhookRoutines.length === 1 ? webhookRoutines[0]!.id : undefined,
       }),
     );
   });

@@ -97,13 +97,37 @@ export function toolRequiresExplicitApproval(toolName: string): boolean {
   return EXPLICIT_APPROVAL_BUILTIN_TOOLS.has(toolName);
 }
 
-/** External webhook runs may inspect state unattended, but side effects always need the owner. */
+export type WebhookRoutineUnattendedAllowlist = {
+  active: boolean;
+  webhookEnabled: boolean;
+  unattendedTools: readonly string[];
+};
+
+/** Deduped allowlist, or the unknown names that must be rejected at write time. */
+export function parseUnattendedToolAllowlist(
+  names: readonly string[],
+  known: ReadonlySet<string>,
+): { ok: true; tools: string[] } | { ok: false; unknown: string[] } {
+  const unique = [...new Set(names)];
+  const unknown = unique.filter((name) => !known.has(name));
+  if (unknown.length > 0) return { ok: false, unknown };
+  return { ok: true, tools: unique };
+}
+
+/**
+ * External webhook runs may inspect state unattended, but side effects need the owner
+ * unless the bound active webhook routine's owner allowlisted the tool.
+ */
 export function unattendedTriggerToolRequiresApproval(
   trigger: string,
   toolName: string,
   viaConnector: boolean,
+  routine?: WebhookRoutineUnattendedAllowlist | null,
 ): boolean {
   if (trigger !== "webhook") return false;
+  if (routine?.active && routine.webhookEnabled && routine.unattendedTools.includes(toolName)) {
+    return false;
+  }
   return viaConnector
     ? connectorToolRequiresApproval(toolName)
     : !UNATTENDED_SAFE_BUILTIN_TOOLS.has(toolName);
