@@ -49,9 +49,12 @@ not gated by `active`.
 `Routine.notify` is persisted and round-tripped through the API, but does not
 control push delivery. Routine runs follow the run notification policy:
 
-- A routine run with no user interaction posts only its final answer. Text the
-  model writes before a tool call is not posted as a chat message, and the
-  run's instructions tell the model to put any report after its last tool call.
+- A routine run with no user interaction shows only its final answer or a
+  message it sends on purpose with `message_user`. Text the model writes before
+  a tool call is not posted as a chat message, and the run's instructions tell
+  the model to put any report after its last tool call instead of asking for
+  progress updates. A `message_user` call still posts and marks the chat
+  unread.
 - Such a run that ends without a final answer, or with only whitespace, posts
   no bubble, does not mark the chat unread, and does not send a completion
   push. A run that ends with a final answer still posts it, marks unread, and

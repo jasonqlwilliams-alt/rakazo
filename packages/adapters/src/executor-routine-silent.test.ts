@@ -264,9 +264,14 @@ describe("routine silent finish", () => {
   });
 
   it("tells the model that text next to a tool call is hidden only while silence is on", async () => {
+    const progressUpdates = "send a few short progress updates with message_user";
+    const messageUserCap = "message_user is capped at 500 characters";
+
     const silent = fixture({ trigger: "routine", events: [{ type: "done" }] });
     await silent.run();
     expect(silent.request().instructions).toContain(ROUTINE_HIDDEN_NARRATION_NOTE);
+    expect(silent.request().instructions).not.toContain(progressUpdates);
+    expect(silent.request().instructions).toContain(messageUserCap);
 
     const answeredRoutine = fixture({
       trigger: "routine",
@@ -277,10 +282,13 @@ describe("routine silent finish", () => {
     });
     await answeredRoutine.run();
     expect(answeredRoutine.request().instructions).not.toContain(ROUTINE_HIDDEN_NARRATION_NOTE);
+    expect(answeredRoutine.request().instructions).toContain(progressUpdates);
 
     const chat = fixture({ trigger: "user", events: [{ type: "done" }] });
     await chat.run();
     expect(chat.request().instructions).not.toContain(ROUTINE_HIDDEN_NARRATION_NOTE);
+    expect(chat.request().instructions).toContain(progressUpdates);
+    expect(chat.request().instructions).toContain(messageUserCap);
   });
 
   it("posts the reply once a routine run resumes from an answered question", async () => {
