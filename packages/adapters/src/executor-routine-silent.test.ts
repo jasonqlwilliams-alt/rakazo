@@ -2,6 +2,7 @@ import type { AgentRunRequest, AgentRuntimeEvent } from "@rakazo/adapter-kit";
 import type { MessageBlock } from "@rakazo/contracts";
 import type { PrismaClient } from "@rakazo/db";
 import { describe, expect, it, vi } from "vitest";
+import { buildApprovalAskBlock } from "./approval-ask.js";
 import type * as ComputerLifecycleModule from "./computer-lifecycle.js";
 import { createRunExecutor } from "./executor.js";
 
@@ -18,14 +19,20 @@ const steeringQuestion = {
   blocks: [{ kind: "text", text: "What is the status of X?" }] as MessageBlock[],
 };
 
+function answered(block: MessageBlock, answer: string): MessageBlock {
+  return { ...block, status: "answered", answer } as MessageBlock;
+}
+
 function fixture({
   trigger,
   events,
   steering = [],
+  priorBotMessages = [],
 }: {
   trigger: "routine" | "user";
   events: AgentRuntimeEvent[];
   steering?: (typeof steeringQuestion)[];
+  priorBotMessages?: MessageBlock[][];
 }) {
   const run = {
     id: "run-1",
@@ -100,7 +107,14 @@ function fixture({
         historyCompactedUpToSeq: null,
       })),
     },
-    message: { findMany: vi.fn(async () => []), findFirst: vi.fn(async () => null) },
+    message: {
+      findMany: vi.fn(async ({ where }: { where: { runId?: string; role?: string } }) =>
+        where.runId === run.id && where.role === "bot"
+          ? priorBotMessages.map((blocks) => ({ blocks, clientNonce: null }))
+          : [],
+      ),
+      findFirst: vi.fn(async () => null),
+    },
     task: { findUniqueOrThrow: vi.fn(async () => ({ id: run.taskId, prompt: "hourly check" })) },
     connection: { findMany: vi.fn(async () => []) },
     spaceModelPreference: { findFirst: vi.fn(async () => null) },
@@ -227,6 +241,117 @@ describe("routine silent finish", () => {
     expect(f.request().allowSilentFinish?.()).toBe(false);
     expect(f.postedMessages).toEqual([[{ kind: "text", text: "X shipped yesterday." }]]);
     expect(f.thread.unread).toBe(true);
+  });
+
+  it("does not mark unread or push when a routine run writes only whitespace", async () => {
+    const f = fixture({
+      trigger: "routine",
+      events: [
+        { type: "text", text: "\n\n" },
+        { type: "tool", name: "list_items", args: {}, executionId: "exec-1" },
+        { type: "text", text: "\n" },
+        { type: "done" },
+      ],
+    });
+    await f.run();
+    expect(f.finalizeRun).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: "completed", markUnread: false }),
+    );
+    expect(textBlocks(f.finalBlocks())).toEqual([]);
+    expect(f.postedMessages).toEqual([]);
+    expect(f.notify).not.toHaveBeenCalled();
+  });
+
+  it("posts the reply once a routine run resumes from an answered question", async () => {
+    const f = fixture({
+      trigger: "routine",
+      priorBotMessages: [
+        [
+          answered(
+            {
+              kind: "ask",
+              text: "Merge #12 now?",
+              status: "pending",
+              actions: [
+                { id: "yes", label: "Yes" },
+                { id: "no", label: "No" },
+              ],
+            },
+            "yes",
+          ),
+        ],
+      ],
+      events: [
+        { type: "text", text: "Merging #12." },
+        { type: "tool", name: "merge_pull_request", args: {}, executionId: "exec-1" },
+        { type: "done" },
+      ],
+    });
+    await f.run();
+    expect(f.request().allowSilentFinish?.()).toBe(false);
+    expect(f.postedMessages).toEqual([[{ kind: "text", text: "Merging #12." }]]);
+    expect(f.thread.unread).toBe(true);
+  });
+
+  it("posts the reply once a routine run resumes from an approval", async () => {
+    const f = fixture({
+      trigger: "routine",
+      priorBotMessages: [
+        [
+          answered(
+            buildApprovalAskBlock("effect-1", "merge_pull_request", { number: 12 }, []),
+            "allow",
+          ),
+        ],
+      ],
+      events: [
+        { type: "text", text: "Merging #12." },
+        { type: "tool", name: "merge_pull_request", args: { number: 12 }, executionId: "exec-1" },
+        { type: "done" },
+      ],
+    });
+    await f.run();
+    expect(f.request().allowSilentFinish?.()).toBe(false);
+    expect(f.postedMessages).toEqual([[{ kind: "text", text: "Merging #12." }]]);
+    expect(f.thread.unread).toBe(true);
+  });
+
+  it("keeps the empty-run fallback after an approval resume that writes nothing", async () => {
+    const f = fixture({
+      trigger: "routine",
+      priorBotMessages: [
+        [
+          answered(
+            buildApprovalAskBlock("effect-1", "merge_pull_request", { number: 12 }, []),
+            "allow",
+          ),
+        ],
+      ],
+      events: [{ type: "done" }],
+    });
+    await f.run();
+    expect(f.finalizeRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: "completed",
+        blocks: [{ kind: "text", text: "done." }],
+        markUnread: true,
+      }),
+    );
+  });
+
+  it("stays silent when a routine run only has an unanswered question from before", async () => {
+    const f = fixture({
+      trigger: "routine",
+      priorBotMessages: [
+        [buildApprovalAskBlock("effect-1", "merge_pull_request", { number: 12 }, [])],
+      ],
+      events: [{ type: "done" }],
+    });
+    await f.run();
+    expect(f.request().allowSilentFinish?.()).toBe(true);
+    expect(f.finalizeRun).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: "completed", blocks: [], markUnread: false }),
+    );
   });
 
   it("keeps the empty-run fallback once a routine run claims a user message", async () => {

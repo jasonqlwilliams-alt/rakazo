@@ -406,7 +406,8 @@ export interface AgentRunRequest {
    */
   allowSilentEmpty?: boolean;
   /**
-   * Routine runs may finish silently until they claim user steering. While this returns
+   * Routine runs may finish silently until the user interacts with the run (claimed
+   * steering, an answered ask or approval, or a takeover hand-back). While this returns
    * true, continue at most once after a silent tool result, allow silence, and skip the
    * tool-final and empty-turn fallbacks.
    */

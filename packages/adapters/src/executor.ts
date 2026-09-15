@@ -1434,7 +1434,8 @@ export function createRunExecutor(deps: ExecutorDeps) {
           peerMessage?.repliesToRequest,
         );
         const allowSilentEmpty = allowSilentPeerMessage || messagingChannelRun;
-        let routineSilence = run.trigger === "routine";
+        let userInteracted = resumeFromTakeover;
+        const routineSilence = () => run.trigger === "routine" && !userInteracted;
         const emptyResponseText = peerMessage
           ? peerMessage.intent === "result" ||
             peerMessage.intent === "status" ||
@@ -1701,8 +1702,11 @@ export function createRunExecutor(deps: ExecutorDeps) {
             select: { blocks: true, clientNonce: true },
           });
           for (const message of priorProgress) {
-            if (!isUserProgressClientNonce(message.clientNonce)) continue;
             const blocks = Array.isArray(message.blocks) ? (message.blocks as MessageBlock[]) : [];
+            if (blocks.some((block) => block.kind === "ask" && block.status === "answered")) {
+              userInteracted = true;
+            }
+            if (!isUserProgressClientNonce(message.clientNonce)) continue;
             const text = blocks
               .filter(
                 (block): block is Extract<MessageBlock, { kind: "text" }> => block.kind === "text",
@@ -1770,7 +1774,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
           assembled = "";
           hasStreamedText = false;
           pendingProgress = "";
-          if (routineSilence) return;
+          if (routineSilence()) return;
           await publishMessage(
             deps,
             run,
@@ -3697,7 +3701,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
               resumeFromCheckpoint: takeoverResume?.checkpoint,
               script,
               allowSilentEmpty,
-              allowSilentFinish: () => routineSilence,
+              allowSilentFinish: routineSilence,
               emptyResponseText,
               executeTool: scripted ? undefined : applyTool,
               resolveModel: scripted
@@ -3729,7 +3733,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
                       leaseFence: fence,
                       seenIds,
                     });
-                    if (steering.length > 0) routineSilence = false;
+                    if (steering.length > 0) userInteracted = true;
                     return Promise.all(
                       steering.map(async (item) => {
                         const { images, files, unavailableInstruction } =
@@ -4170,17 +4174,22 @@ export function createRunExecutor(deps: ExecutorDeps) {
           terminalCheckpointComplete = true;
 
           flushPendingTools();
-          if (!assembled) {
+          if (!assembled.trim()) {
+            assembled = "";
             // Mid-turn progress already posted durable chat messages; skip the empty
             // "…" fallback so we do not add a junk final bubble. Delegated bot_message
             // runs still return via botMessageOutcomeFromMidTurn below (status when
             // only progress was posted, result when a final reply exists).
-            messageSegments = completionMessageSegments(messageSegments, {
-              allowSilentEmpty: allowSilentEmpty || routineSilence || publishedMidTurnUserMessage,
-              emptyResponseText,
-              suppressOutput: handedOff,
-              skipEmptyFallback: publishedTerminalSubagent || publishedMidTurnUserMessage,
-            });
+            messageSegments = completionMessageSegments(
+              messageSegments.filter((block) => block.kind !== "text" || block.text.trim()),
+              {
+                allowSilentEmpty:
+                  allowSilentEmpty || routineSilence() || publishedMidTurnUserMessage,
+                emptyResponseText,
+                suppressOutput: handedOff,
+                skipEmptyFallback: publishedTerminalSubagent || publishedMidTurnUserMessage,
+              },
+            );
           }
           const blocks = handedOff
             ? []
