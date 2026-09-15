@@ -100,6 +100,7 @@ import { mountScreenTarget } from "./screen-proxy.js";
 import { isDeferredReservationLost, TeamChatBridge } from "./team-chat-bridge.js";
 import { ModelTeamChatEngagementJudge } from "./team-chat-judge.js";
 import {
+  deliverUnmappableTeamChatInbound,
   PendingTeamChatInbound,
   prefersTeamChatSurface,
   settleWithTimeout,
@@ -565,7 +566,7 @@ export async function createApp(
     ) => {
       const mapped = toTeamChatInbound(event);
       if (!mapped) {
-        await inbound(event);
+        await deliverUnmappableTeamChatInbound(event, inbound);
         return;
       }
       const canWake = await teamChatSenderCanWakeMessageRoutines(inboundDeps, event);

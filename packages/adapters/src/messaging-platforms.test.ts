@@ -435,19 +435,19 @@ describe("discord platform", () => {
   });
 
   it("maps DISCORD_* process env and mounts with token, application id, and channel ids", () => {
-    expect(
-      messagingEnvFromProcess({
-        DISCORD_BOT_TOKEN: " discord-bot-token ",
-        DISCORD_APPLICATION_ID: " discord-app-id ",
-        DISCORD_RESPOND_TO_CHANNEL_IDS: " channel-1 , channel-2 ",
-        DISCORD_MENTION_ROLE_IDS: " role-1 ",
-      }),
-    ).toMatchObject({
+    const parsed = messagingEnvFromProcess({
+      DISCORD_BOT_TOKEN: " discord-bot-token ",
+      DISCORD_APPLICATION_ID: " discord-app-id ",
+      DISCORD_RESPOND_TO_CHANNEL_IDS: " channel-1 , channel-2 ",
+      DISCORD_MENTION_ROLE_IDS: " role-1 ",
+    });
+    expect(parsed).toMatchObject({
       discordBotToken: "discord-bot-token",
       discordApplicationId: "discord-app-id",
       discordRespondToChannelIds: "channel-1 , channel-2",
-      discordMentionRoleIds: "role-1",
     });
+    expect(parsed).not.toHaveProperty("discordMentionRoleIds");
+    expect(() => messagingEnvFromProcess({ DISCORD_MENTION_ROLE_IDS: "role-1" })).not.toThrow();
     expect(providers(discordEnv)).toEqual(["discord"]);
   });
 
@@ -621,6 +621,41 @@ describe("discord platform", () => {
       await surface.shutdown();
       info.mockRestore();
       debug.mockRestore();
+    }
+  });
+
+  it("leaves a sticker or embed-only room message empty so team chat cannot map it", async () => {
+    const platforms = messagingPlatformsFromEnv(
+      { ...discordEnv, discordRespondToChannelIds: "channel-1" },
+      { pollInboundMessages: true },
+    );
+    const adapter = platforms[0]!.adapter as unknown as DiscordGatewayAdapter;
+    vi.spyOn(adapter, "startGatewayListener").mockResolvedValue(new Response("ok"));
+    const surface = new ChatSdkMessagingSurface(platforms);
+    const inbound: MessagingInboundEvent[] = [];
+    surface.onInbound(async (event) => {
+      inbound.push(event);
+    });
+    try {
+      await surface.initialize();
+      const client = Object.assign(new EventEmitter(), { user: { id: "discord-app-id" } });
+      adapter.setupLegacyGatewayHandlers(client, () => false);
+      client.emit("messageCreate", {
+        ...gatewayMessage({ id: "sticker", channelId: "channel-1" }),
+        content: "",
+      });
+
+      await vi.waitFor(() => expect(inbound).toHaveLength(1));
+      const [event] = inbound;
+      expect(event).toMatchObject({
+        provider: "discord",
+        content: "",
+        conversationKey: "channel-1",
+        kind: "ambient",
+      });
+      expect(toTeamChatInbound(event as MessagingInboundMessage)).toBeNull();
+    } finally {
+      await surface.shutdown();
     }
   });
 

@@ -1,3 +1,4 @@
+import { toTeamChatInbound } from "@rakazo/adapters";
 import { describe, expect, it, vi } from "vitest";
 import {
   createMessagingInboundHandler,
@@ -5,6 +6,7 @@ import {
   teamChatSenderCanWakeMessageRoutines,
   wakeMessageRoutines,
 } from "./messaging-inbound.js";
+import { deliverUnmappableTeamChatInbound } from "./team-chat-startup.js";
 import { inboundDeliveryClientNonce, messagingWakeIdempotencyKey } from "./webhook-inbound.js";
 
 const signupPolicy = { signupsEnabled: undefined, signupAllowlist: undefined };
@@ -764,6 +766,28 @@ describe("createMessagingInboundHandler owner commands", () => {
 });
 
 describe("createMessagingInboundHandler channel routing", () => {
+  it("does not store a personal-line member for an empty Discord team-room sticker", async () => {
+    const deps = createDeps({ identity: null });
+    const inbound = createMessagingInboundHandler(deps);
+    const sticker = {
+      ...groupEvent,
+      provider: "discord",
+      handle: "sticker-1",
+      threadId: "discord:guild-1:channel-1",
+      from: "user-1",
+      fromLabel: "Ada",
+      channelName: "general",
+      participants: ["user-1"],
+      content: "",
+      mediaUrl: null,
+    };
+    expect(toTeamChatInbound(sticker)).toBeNull();
+    await deliverUnmappableTeamChatInbound(sticker, inbound);
+    expect(deps.members).toEqual([]);
+    expect(deps.outboundRows).toEqual([]);
+    expect(deps.prisma.messagingChannel.upsert).not.toHaveBeenCalled();
+  });
+
   it("discovers the channel, invites linked members, and posts one intro for unlinked ones", async () => {
     const deps = createDeps();
     const handle = createMessagingInboundHandler(deps);

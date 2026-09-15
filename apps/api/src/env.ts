@@ -62,7 +62,6 @@ export interface AppEnv {
   discordBotToken: string | undefined;
   discordApplicationId: string | undefined;
   discordRespondToChannelIds: string | undefined;
-  discordMentionRoleIds: string | undefined;
   whatsappAccessToken: string | undefined;
   whatsappPhoneNumberId: string | undefined;
   whatsappAppSecret: string | undefined;
@@ -154,7 +153,6 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     discordBotToken: optional(source.DISCORD_BOT_TOKEN),
     discordApplicationId: optional(source.DISCORD_APPLICATION_ID),
     discordRespondToChannelIds: optional(source.DISCORD_RESPOND_TO_CHANNEL_IDS),
-    discordMentionRoleIds: optional(source.DISCORD_MENTION_ROLE_IDS),
     whatsappAccessToken: optional(source.WHATSAPP_ACCESS_TOKEN),
     whatsappPhoneNumberId: optional(source.WHATSAPP_PHONE_NUMBER_ID),
     whatsappAppSecret: optional(source.WHATSAPP_APP_SECRET),

@@ -38,7 +38,6 @@ export interface MessagingEnvironmentValues {
   discordBotToken?: string | undefined;
   discordApplicationId?: string | undefined;
   discordRespondToChannelIds?: string | undefined;
-  discordMentionRoleIds?: string | undefined;
   whatsappAccessToken?: string | undefined;
   whatsappPhoneNumberId?: string | undefined;
   whatsappAppSecret?: string | undefined;
@@ -68,7 +67,6 @@ export function messagingEnvFromProcess(
     discordBotToken: clean(env.DISCORD_BOT_TOKEN),
     discordApplicationId: clean(env.DISCORD_APPLICATION_ID),
     discordRespondToChannelIds: clean(env.DISCORD_RESPOND_TO_CHANNEL_IDS),
-    discordMentionRoleIds: clean(env.DISCORD_MENTION_ROLE_IDS),
     whatsappAccessToken: clean(env.WHATSAPP_ACCESS_TOKEN),
     whatsappPhoneNumberId: clean(env.WHATSAPP_PHONE_NUMBER_ID),
     whatsappAppSecret: clean(env.WHATSAPP_APP_SECRET),
@@ -85,7 +83,7 @@ export function messagingEnvFromProcess(
   return parsed;
 }
 
-/** Comma-separated platform ids (Discord channel/role allowlists). */
+/** Comma-separated Discord channel allowlist. */
 function parseMessagingCsvIds(value: string | undefined): string[] {
   if (!value) return [];
   return value
@@ -192,7 +190,7 @@ export function messagingPlatformsFromEnv(
       webhookVerifier: () => false,
       // Explicit empty list prevents the adapter from rereading process.env values.
       respondToChannelIds: [],
-      mentionRoleIds: parseMessagingCsvIds(env.discordMentionRoleIds),
+      mentionRoleIds: [],
       logger: new ConsoleLogger("warn").child("discord"),
     });
     Object.assign(adapter, {
@@ -389,7 +387,6 @@ function assertDiscordCredentials(env: MessagingEnvironmentValues): void {
     env.discordBotToken,
     env.discordApplicationId,
     env.discordRespondToChannelIds,
-    env.discordMentionRoleIds,
   ].some(Boolean);
   if (!present) return;
   if (

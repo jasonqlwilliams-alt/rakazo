@@ -28,6 +28,15 @@ export function prefersTeamChatSurface(
   );
 }
 
+/** Discord team rooms never fall through to the personal line. */
+export async function deliverUnmappableTeamChatInbound(
+  event: MessagingInboundMessage,
+  personalInbound: (event: MessagingInboundMessage) => Promise<void>,
+): Promise<void> {
+  if (event.provider === "discord") return;
+  await personalInbound(event);
+}
+
 /** Queue TeamChat-shaped messages until TeamChatBridge.receive is available. */
 export class PendingTeamChatInbound {
   private readonly events: Array<{
