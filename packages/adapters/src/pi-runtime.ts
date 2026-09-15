@@ -49,6 +49,7 @@ import {
   type PiSessionRecorder,
 } from "./pi-session.js";
 import { textContentArg } from "./tool-text.js";
+import { ROUTINE_HIDDEN_NARRATION_NOTE } from "./user-progress.js";
 
 const running = new Map<string, { controller: AbortController; work: Promise<void> }>();
 // Built on first use, not at module load: entry points call loadRootEnv() after
@@ -66,8 +67,7 @@ const MAX_PARALLEL_SUBAGENTS = 4;
 const MAX_SILENT_TOOL_CONTINUATIONS = 3;
 const SILENT_TOOL_CONTINUATION_PROMPT =
   "Continue the original task from the latest tool result. Do not stop after a tool call; use any remaining tools needed, then give the user the final answer.";
-const SILENT_TOOL_FINISH_CONTINUATION_PROMPT =
-  "Continue the original task from the latest tool result. Use any remaining tools needed. If nothing is new, end without a message; otherwise give the user the final answer.";
+const SILENT_TOOL_FINISH_CONTINUATION_PROMPT = `Continue the original task from the latest tool result. Use any remaining tools needed. If nothing is new, end without a message; otherwise give the user the final answer. ${ROUTINE_HIDDEN_NARRATION_NOTE}`;
 const TOOL_FINAL_RESPONSE_FALLBACK =
   "I completed the tool step but could not produce a final response. Please ask me to continue.";
 const DEFAULT_COMPUTER_SCREENSHOTS_TO_KEEP = 2;

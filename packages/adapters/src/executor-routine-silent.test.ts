@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { buildApprovalAskBlock } from "./approval-ask.js";
 import type * as ComputerLifecycleModule from "./computer-lifecycle.js";
 import { createRunExecutor } from "./executor.js";
+import { ROUTINE_HIDDEN_NARRATION_NOTE } from "./user-progress.js";
 
 vi.mock("./computer-lifecycle.js", async (importOriginal) => ({
   ...(await importOriginal<typeof ComputerLifecycleModule>()),
@@ -260,6 +261,26 @@ describe("routine silent finish", () => {
     expect(textBlocks(f.finalBlocks())).toEqual([]);
     expect(f.postedMessages).toEqual([]);
     expect(f.notify).not.toHaveBeenCalled();
+  });
+
+  it("tells the model that text next to a tool call is hidden only while silence is on", async () => {
+    const silent = fixture({ trigger: "routine", events: [{ type: "done" }] });
+    await silent.run();
+    expect(silent.request().instructions).toContain(ROUTINE_HIDDEN_NARRATION_NOTE);
+
+    const answeredRoutine = fixture({
+      trigger: "routine",
+      priorBotMessages: [
+        [answered({ kind: "ask", text: "Merge #12 now?", status: "pending" }, "yes")],
+      ],
+      events: [{ type: "done" }],
+    });
+    await answeredRoutine.run();
+    expect(answeredRoutine.request().instructions).not.toContain(ROUTINE_HIDDEN_NARRATION_NOTE);
+
+    const chat = fixture({ trigger: "user", events: [{ type: "done" }] });
+    await chat.run();
+    expect(chat.request().instructions).not.toContain(ROUTINE_HIDDEN_NARRATION_NOTE);
   });
 
   it("posts the reply once a routine run resumes from an answered question", async () => {

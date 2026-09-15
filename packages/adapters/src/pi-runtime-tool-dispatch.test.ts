@@ -249,6 +249,7 @@ vi.mock("./pi-openai-compatible-provider.js", () => ({
 
 import { builtinAgentTools } from "./builtin-tools.js";
 import { maxToolCallsPerTurn, PiAgentRuntime } from "./pi-runtime.js";
+import { ROUTINE_HIDDEN_NARRATION_NOTE } from "./user-progress.js";
 
 const destinationTool: ConnectorTool = {
   name: "destination.write",
@@ -770,6 +771,9 @@ describe("Pi connector tool dispatch", () => {
         content: expect.stringContaining("If nothing is new, end without a message"),
       }),
     ]);
+    expect(fakeAgentState.followUpMessages[0]).toEqual(
+      expect.objectContaining({ content: expect.stringContaining(ROUTINE_HIDDEN_NARRATION_NOTE) }),
+    );
     expect(events).not.toContainEqual({
       type: "text",
       text: "I completed the tool step but could not produce a final response. Please ask me to continue.",

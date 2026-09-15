@@ -4,6 +4,9 @@ import { createStreamingRedactor, isToolActivityBlock } from "@rakazo/core";
 /** Keep mid-turn progress beats short; prefer a few high-signal updates. */
 export const USER_PROGRESS_MESSAGE_MAX_LENGTH = 500;
 
+export const ROUTINE_HIDDEN_NARRATION_NOTE =
+  "Text you write in the same turn as a tool call is not shown. Put any report in your final reply, after your last tool call.";
+
 export function clampUserProgressMessage(text: string): string {
   const trimmed = text.trim();
   if (!trimmed) return "";
