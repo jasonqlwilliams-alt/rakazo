@@ -97,6 +97,14 @@ describe("completionMarksUnread", () => {
     expect(completionMarksUnread("routine", text)).toBe(false);
     expect(completionMarksUnread("user", text)).toBe(true);
   });
+
+  it("does not invent done. unread when a routine is allowed to finish silently", () => {
+    const segments = completionMessageSegments([], { allowSilentEmpty: true });
+    const text = completionNotificationBody("", segments);
+    expect(segments).toEqual([]);
+    expect(text).toBe("");
+    expect(completionMarksUnread("routine", text)).toBe(false);
+  });
 });
 
 describe("subagentMarksUnread", () => {

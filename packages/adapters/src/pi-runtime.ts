@@ -49,6 +49,7 @@ import {
   type PiSessionRecorder,
 } from "./pi-session.js";
 import { textContentArg } from "./tool-text.js";
+import { ROUTINE_HIDDEN_NARRATION_NOTE } from "./user-progress.js";
 
 const running = new Map<string, { controller: AbortController; work: Promise<void> }>();
 // Built on first use, not at module load: entry points call loadRootEnv() after
@@ -66,6 +67,7 @@ const MAX_PARALLEL_SUBAGENTS = 4;
 const MAX_SILENT_TOOL_CONTINUATIONS = 3;
 const SILENT_TOOL_CONTINUATION_PROMPT =
   "Continue the original task from the latest tool result. Do not stop after a tool call; use any remaining tools needed, then give the user the final answer.";
+const SILENT_TOOL_FINISH_CONTINUATION_PROMPT = `Continue the original task from the latest tool result. Use any remaining tools needed. If nothing is new, end without a message; otherwise give the user the final answer. ${ROUTINE_HIDDEN_NARRATION_NOTE}`;
 const TOOL_FINAL_RESPONSE_FALLBACK =
   "I completed the tool step but could not produce a final response. Please ask me to continue.";
 const DEFAULT_COMPUTER_SCREENSHOTS_TO_KEEP = 2;
@@ -286,6 +288,7 @@ export class PiAgentRuntime implements AgentRuntime {
         let toolActivityShowing = false;
         let silentToolContinuations = 0;
         let toolWorkPendingFinal = false;
+        const silentFinish = () => request.allowSilentFinish?.() === true;
         agent.subscribe(async (event) => {
           if (event.type === "message_start" && event.message.role === "assistant") {
             requestTextStart = streamed.length;
@@ -346,12 +349,14 @@ export class PiAgentRuntime implements AgentRuntime {
                 silentToolContinuations = 0;
               } else if (
                 !host.pausePending &&
-                silentToolContinuations < MAX_SILENT_TOOL_CONTINUATIONS
+                silentToolContinuations < (silentFinish() ? 1 : MAX_SILENT_TOOL_CONTINUATIONS)
               ) {
                 silentToolContinuations += 1;
                 agent.followUp({
                   role: "user",
-                  content: SILENT_TOOL_CONTINUATION_PROMPT,
+                  content: silentFinish()
+                    ? SILENT_TOOL_FINISH_CONTINUATION_PROMPT
+                    : SILENT_TOOL_CONTINUATION_PROMPT,
                   timestamp: Date.now(),
                 });
               }
@@ -410,10 +415,10 @@ export class PiAgentRuntime implements AgentRuntime {
             streamed = budgetMessage;
           }
         } else if (!host.pausePending && toolWorkPendingFinal) {
-          // Discard cumulative pre-tool narration from the terminal payload and make the
-          // missing final response visible to the user instead of silently completing.
-          streamed = TOOL_FINAL_RESPONSE_FALLBACK;
-          queue.push({ type: "text", text: streamed });
+          // Discard cumulative pre-tool narration from the terminal payload and, unless the
+          // run may finish silently, make the missing final response visible to the user.
+          streamed = silentFinish() ? "" : TOOL_FINAL_RESPONSE_FALLBACK;
+          if (streamed) queue.push({ type: "text", text: streamed });
         } else if (!streamed.trim() && !host.pausePending) {
           streamed = "";
           const lastMessage = agent.state.messages.at(-1);
@@ -425,7 +430,7 @@ export class PiAgentRuntime implements AgentRuntime {
             // A tool-bearing run must never finish with only a progress/narration message.
             streamed = TOOL_FINAL_RESPONSE_FALLBACK;
             queue.push({ type: "text", text: streamed });
-          } else if (toolCalls === 0 && !request.allowSilentEmpty) {
+          } else if (toolCalls === 0 && !request.allowSilentEmpty && !silentFinish()) {
             streamed = request.emptyResponseText?.trim() || "No response. Try again.";
             queue.push({ type: "text", text: streamed });
           }

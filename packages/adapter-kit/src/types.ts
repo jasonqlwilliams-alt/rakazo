@@ -405,6 +405,13 @@ export interface AgentRunRequest {
    * When set, skip synthetic empty-turn fallbacks.
    */
   allowSilentEmpty?: boolean;
+  /**
+   * Routine runs may finish silently until the user interacts with the run (claimed
+   * steering, an answered ask or approval, or a takeover hand-back). While this returns
+   * true, continue at most once after a silent tool result, allow silence, and skip the
+   * tool-final and empty-turn fallbacks.
+   */
+  allowSilentFinish?: () => boolean;
   /** Contextual fallback when a non-silent run produces no written response. */
   emptyResponseText?: string;
   executeTool?: (
