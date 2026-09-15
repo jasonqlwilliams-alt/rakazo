@@ -11,7 +11,6 @@ import {
   type MessagingEnvironmentValues,
   messagingEnvFromProcess,
   messagingPlatformsFromEnv,
-  parseMessagingCsvIds,
   parseSendblueStatus,
   teamChatProviderId,
 } from "./messaging-platforms.js";
@@ -26,6 +25,7 @@ const fullEnv: MessagingEnvironmentValues = {
   slackSigningSecret: "slack-signing",
   discordBotToken: "discord-bot-token",
   discordApplicationId: "discord-app-id",
+  discordRespondToChannelIds: "channel-1",
   whatsappAccessToken: "wa-token",
   whatsappPhoneNumberId: "wa-phone-id",
   whatsappAppSecret: "wa-app-secret",
@@ -357,6 +357,7 @@ describe("discord platform", () => {
   const discordEnv = {
     discordBotToken: "discord-bot-token",
     discordApplicationId: "discord-app-id",
+    discordRespondToChannelIds: " channel-1 , channel-2 ",
   };
   type DiscordGatewayAdapter = {
     startGatewayListener: (
@@ -418,7 +419,21 @@ describe("discord platform", () => {
     );
   });
 
-  it("maps DISCORD_* process env and mounts only with token plus application id", () => {
+  it("refuses Discord without a channel allowlist, with or without team chat", () => {
+    for (const discordRespondToChannelIds of [undefined, " , "]) {
+      expect(() =>
+        messagingPlatformsFromEnv({ ...discordEnv, discordRespondToChannelIds }),
+      ).toThrow(/DISCORD_RESPOND_TO_CHANNEL_IDS \(the only channel ids the bot answers\)/);
+    }
+    expect(() =>
+      messagingEnvFromProcess({
+        DISCORD_BOT_TOKEN: "discord-bot-token",
+        DISCORD_APPLICATION_ID: "discord-app-id",
+      }),
+    ).toThrow(/partially configured/);
+  });
+
+  it("maps DISCORD_* process env and mounts with token, application id, and channel ids", () => {
     expect(
       messagingEnvFromProcess({
         DISCORD_BOT_TOKEN: " discord-bot-token ",
@@ -433,46 +448,61 @@ describe("discord platform", () => {
       discordMentionRoleIds: "role-1",
     });
     expect(providers(discordEnv)).toEqual(["discord"]);
-    expect(parseMessagingCsvIds(" channel-1 , channel-2 ")).toEqual(["channel-1", "channel-2"]);
   });
 
   it("gives team chat the one team platform and refuses both Slack and Discord", () => {
-    const listed = { ...discordEnv, discordRespondToChannelIds: "channel-1" };
-    const slackEnv: MessagingEnvironmentValues = {
-      slackBotToken: "xoxb-fake",
-      slackSigningSecret: "slack",
-    };
-    expect(teamChatProviderId(messagingPlatformsFromEnv(listed), listed)).toBe("discord");
-    expect(teamChatProviderId(messagingPlatformsFromEnv(slackEnv), slackEnv)).toBe("slack");
-    expect(teamChatProviderId(messagingPlatformsFromEnv({}), {})).toBeUndefined();
-    expect(() =>
-      teamChatProviderId(messagingPlatformsFromEnv(fullEnv), {
-        discordRespondToChannelIds: "channel-1",
-      }),
-    ).toThrow(
+    expect(teamChatProviderId(messagingPlatformsFromEnv(discordEnv))).toBe("discord");
+    expect(
+      teamChatProviderId(
+        messagingPlatformsFromEnv({ slackBotToken: "xoxb-fake", slackSigningSecret: "slack" }),
+      ),
+    ).toBe("slack");
+    expect(teamChatProviderId(messagingPlatformsFromEnv({}))).toBeUndefined();
+    expect(() => teamChatProviderId(messagingPlatformsFromEnv(fullEnv))).toThrow(
       /TEAM_CHAT_BOT_ID serves one team platform, but slack and discord are both configured/,
     );
   });
 
-  it("refuses Discord team chat without a channel allowlist", () => {
-    for (const discordRespondToChannelIds of [undefined, " , "]) {
-      const env = { ...discordEnv, discordRespondToChannelIds };
-      expect(() => teamChatProviderId(messagingPlatformsFromEnv(env), env)).toThrow(
-        /TEAM_CHAT_BOT_ID with Discord needs DISCORD_RESPOND_TO_CHANNEL_IDS/,
+  it("rejects every Discord HTTP request, forwarded Gateway events included", async () => {
+    const platforms = messagingPlatformsFromEnv(discordEnv);
+    const surface = new ChatSdkMessagingSurface(platforms);
+    const inbound: MessagingInboundEvent[] = [];
+    surface.onInbound(async (event) => {
+      inbound.push(event);
+    });
+    const post = (headers: Record<string, string>, body: unknown) =>
+      surface.handleWebhook(
+        "discord",
+        new Request("https://rakazo.test/api/v1/messaging/webhook/discord", {
+          method: "POST",
+          headers: { "content-type": "application/json", ...headers },
+          body: JSON.stringify(body),
+        }),
       );
+    try {
+      expect((await post({}, { type: 1 }))?.status).toBe(404);
+      const forwarded = await post(
+        { "x-discord-gateway-token": "discord-bot-token" },
+        {
+          type: "GATEWAY_MESSAGE_CREATE",
+          timestamp: 0,
+          data: {
+            id: "forged",
+            channel_id: "dm-1",
+            content: "run owner command",
+            author: { id: "linked-user", username: "ada" },
+            mentions: [],
+            attachments: [],
+            timestamp: new Date(0).toISOString(),
+          },
+        },
+      );
+      expect(forwarded?.status).toBe(404);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(inbound).toEqual([]);
+    } finally {
+      await surface.shutdown();
     }
-  });
-
-  it("rejects Discord HTTP interactions because inbound is Gateway-only", async () => {
-    const [platform] = messagingPlatformsFromEnv(discordEnv);
-    const response = await platform!.adapter.handleWebhook(
-      new Request("https://rakazo.test/api/v1/messaging/webhook/discord", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ type: 1 }),
-      }),
-    );
-    expect(response.status).toBe(401);
   });
 
   it("starts the Gateway only when the API process asks to poll inbound", async () => {

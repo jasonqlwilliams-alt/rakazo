@@ -86,7 +86,7 @@ export function messagingEnvFromProcess(
 }
 
 /** Comma-separated platform ids (Discord channel/role allowlists). */
-export function parseMessagingCsvIds(value: string | undefined): string[] {
+function parseMessagingCsvIds(value: string | undefined): string[] {
   if (!value) return [];
   return value
     .split(",")
@@ -99,27 +99,12 @@ export function isTeamRoomProvider(provider: string): boolean {
   return TEAM_ROOM_PROVIDERS.has(provider);
 }
 
-/**
- * The one mounted team-room platform a team-chat bot serves. Refuses more
- * than one, and Discord without a channel allowlist: a Discord bot token
- * reaches every server it joins and every user who can message it.
- */
-export function teamChatProviderId(
-  platforms: Array<{ provider: string }>,
-  env: Pick<MessagingEnvironmentValues, "discordRespondToChannelIds">,
-): string | undefined {
+/** The one mounted team-room platform a team-chat bot serves; refuses more than one. */
+export function teamChatProviderId(platforms: Array<{ provider: string }>): string | undefined {
   const providers = platforms.map((platform) => platform.provider).filter(isTeamRoomProvider);
   if (providers.length > 1) {
     throw new Error(
       `TEAM_CHAT_BOT_ID serves one team platform, but ${providers.join(" and ")} are both configured. Unset one platform's keys.`,
-    );
-  }
-  if (
-    providers[0] === "discord" &&
-    parseMessagingCsvIds(env.discordRespondToChannelIds).length === 0
-  ) {
-    throw new Error(
-      "TEAM_CHAT_BOT_ID with Discord needs DISCORD_RESPOND_TO_CHANNEL_IDS. List the only channel ids the bot answers.",
     );
   }
   return providers[0];
@@ -211,6 +196,9 @@ export function messagingPlatformsFromEnv(
       mentionRoleIds,
       logger: new ConsoleLogger("warn").child("discord"),
     });
+    Object.assign(adapter, {
+      handleWebhook: async () => new Response("Not found", { status: 404 }),
+    } satisfies Pick<Adapter, "handleWebhook">);
     if (options.pollInboundMessages) {
       attachDiscordGateway(adapter, parseMessagingCsvIds(env.discordRespondToChannelIds));
     }
@@ -403,6 +391,10 @@ export function enrichDiscordTeamRoom(
   return enrichment;
 }
 
+/**
+ * A Discord bot token reaches every server the bot joins and every user who
+ * can message it, so the channel allowlist is part of the required set.
+ */
 function assertDiscordCredentials(env: MessagingEnvironmentValues): void {
   const present = [
     env.discordBotToken,
@@ -411,16 +403,22 @@ function assertDiscordCredentials(env: MessagingEnvironmentValues): void {
     env.discordMentionRoleIds,
   ].some(Boolean);
   if (!present) return;
-  if (env.discordBotToken && env.discordApplicationId) return;
+  if (
+    env.discordBotToken &&
+    env.discordApplicationId &&
+    parseMessagingCsvIds(env.discordRespondToChannelIds).length > 0
+  ) {
+    return;
+  }
   throw new Error(
-    "Discord messaging is partially configured. Set DISCORD_BOT_TOKEN and DISCORD_APPLICATION_ID together, or unset every DISCORD_* key.",
+    "Discord messaging is partially configured. Set DISCORD_BOT_TOKEN, DISCORD_APPLICATION_ID, and DISCORD_RESPOND_TO_CHANNEL_IDS (the only channel ids the bot answers) together, or unset every DISCORD_* key.",
   );
 }
 
 /**
- * Run the Gateway from initialize() until stopPolling(). When channel ids are
- * set, a message outside them (direct messages included) is dropped before
- * the adapter handles it, so it creates no Discord thread.
+ * Run the Gateway from initialize() until stopPolling(). A message outside the
+ * channel ids (direct messages included) is dropped before the adapter
+ * handles it, so it creates no Discord thread.
  */
 function attachDiscordGateway(adapter: DiscordAdapter, channelIds: string[]): void {
   const initialize = adapter.initialize.bind(adapter);
@@ -445,7 +443,7 @@ function attachDiscordGateway(adapter: DiscordAdapter, channelIds: string[]): vo
       const roomId = message.channel.isThread()
         ? (message.channel.parentId ?? message.channelId)
         : message.channelId;
-      if (channelIds.length > 0 && !channelIds.includes(roomId)) return;
+      if (!channelIds.includes(roomId)) return;
       await handleGatewayMessage(message, isMentioned);
     },
   });

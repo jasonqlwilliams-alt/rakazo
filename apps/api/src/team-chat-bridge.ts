@@ -53,8 +53,6 @@ interface TeamChatBridgeDeps {
   send: (request: TeamChatSendRequest) => Promise<TeamChatSendResult>;
   providerId: string;
   botId: string;
-  /** When set, inbound whose conversation key is outside this list is ignored. */
-  allowedConversationKeys?: string[];
   judge?: TeamChatEngagementJudge;
   reconcileIntervalMs?: number;
   ambientDebounceMs?: number;
@@ -140,13 +138,6 @@ export class TeamChatBridge {
     return this.deps.providerId;
   }
 
-  private shouldIgnoreInbound(message: TeamChatInboundMessage): boolean {
-    if (message.senderIsBot && this.deps.providerId === "discord") return true;
-    const allowed = this.deps.allowedConversationKeys;
-    if (!allowed?.length) return false;
-    return !allowed.includes(message.conversationKey);
-  }
-
   /** Mark a deferred row as having an in-process routine wake until clearRoutineWake. */
   markRoutineWakeInFlight(externalMessageId: string): void {
     this.inFlightRoutineWakes.add(externalMessageId);
@@ -216,16 +207,6 @@ export class TeamChatBridge {
   ): Promise<TeamChatInboundTarget | DeferredTeamChatInboundTarget> {
     const target = this.target;
     if (!target) throw new Error("Team chat bridge is not started");
-    if (this.shouldIgnoreInbound(message)) {
-      return {
-        spaceId: target.spaceId,
-        userId: target.userId,
-        botId: target.id,
-        threadId: "",
-        deferred: false,
-        externalMessageId: "",
-      };
-    }
     const conversation = await this.deps.prisma.externalConversation.upsert({
       where: {
         provider_workspaceId_externalKey: {
