@@ -822,7 +822,7 @@ describe("computer host folder binds", () => {
 
   it("parses one scoped entry per line", () => {
     const rules = parseComputerBinds(
-      "/host/daily:/continuum/daily:rw@team-space\n  /host/templates:/continuum/packet-router/templates:ro@team-space, bot-1\r\n\n/host/docs/HOWTO.md:/continuum/packet-router/docs/HOWTO.md:ro@bot-1\n",
+      "/host/daily:/continuum/daily:rw@team-space\n/host/templates:/continuum/packet-router/templates:ro@team-space,bot-1\n\n/host/docs/HOWTO.md:/continuum/packet-router/docs/HOWTO.md:ro@bot-1\n",
     );
     expect(rules).toEqual([
       {
@@ -848,10 +848,27 @@ describe("computer host folder binds", () => {
     expect(parseComputerBinds("")).toEqual([]);
   });
 
-  it("normalizes trailing slashes and duplicate separators", () => {
-    expect(parseComputerBinds("/host//daily/:/continuum/daily/:ro@team")).toEqual([
-      { source: "/host/daily", target: "/continuum/daily", readOnly: true, homeKeys: ["team"] },
-    ]);
+  it("refuses non-canonical paths and whitespace instead of rewriting them", () => {
+    for (const entry of [
+      "/host//daily:/continuum/daily:ro@team",
+      "/host/daily/:/continuum/daily:ro@team",
+      "/host/./daily:/continuum/daily:ro@team",
+      " /host/daily:/continuum/daily:ro@team",
+    ])
+      expect(() => parseComputerBinds(entry)).toThrow(/source must be a canonical path/);
+    for (const entry of [
+      "/host/daily:/continuum//daily:ro@team",
+      "/host/daily:/continuum/daily/:ro@team",
+      "/host/daily: /continuum/daily:ro@team",
+    ])
+      expect(() => parseComputerBinds(entry)).toThrow(/target must be a canonical path/);
+    expect(() => parseComputerBinds("/host/daily:/continuum/daily: ro@team")).toThrow(/mode/);
+    for (const entry of [
+      "/host/daily:/continuum/daily:ro@team, bot-1",
+      "/host/daily:/continuum/daily:ro@team ",
+      "/host/daily:/continuum/daily:ro@team\r",
+    ])
+      expect(() => parseComputerBinds(entry)).toThrow(/home keys/);
   });
 
   it("rejects targets outside /continuum/ and sources outside /host/", () => {
@@ -868,8 +885,8 @@ describe("computer host folder binds", () => {
     expect(() => parseComputerBinds("/host/daily:/continuum/daily:@team")).toThrow(/mode/);
     expect(() => parseComputerBinds("/host/daily:/continuum/daily@team")).toThrow(/look like/);
     expect(() => parseComputerBinds("/host/daily:/continuum/daily")).toThrow(/look like/);
-    expect(() => parseComputerBinds("/host/daily:/continuum/daily:ro@")).toThrow(/home key/);
-    expect(() => parseComputerBinds("/host/daily:/continuum/daily:ro@team,")).toThrow(/home key/);
+    expect(() => parseComputerBinds("/host/daily:/continuum/daily:ro@")).toThrow(/home keys/);
+    expect(() => parseComputerBinds("/host/daily:/continuum/daily:ro@team,")).toThrow(/home keys/);
     expect(() =>
       parseComputerBinds("/host/a:/continuum/a:ro@team;/host/b:/continuum/b:ro@team"),
     ).toThrow(/look like/);
@@ -1042,6 +1059,7 @@ describe("computer host folder binds", () => {
     };
     const home = "/data/homes/team-space:/home/rakazo";
     expect(computerBindsMatch([home], [])).toBe(true);
+    expect(computerBindsMatch(["C:\\rakazo\\data\\homes\\team-space:/home/rakazo"], [])).toBe(true);
     expect(computerBindsMatch(undefined, [])).toBe(true);
     expect(computerBindsMatch(null, [])).toBe(true);
     expect(computerBindsMatch([home, "/srv/daily:/continuum/daily:rw"], [daily])).toBe(true);

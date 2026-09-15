@@ -226,17 +226,17 @@ export const COMPUTER_BIND_SOURCE_PREFIX = "/host/";
 export const COMPUTER_BIND_TARGET_PREFIX = "/continuum/";
 
 function containedPath(value: string, prefix: string, what: string, entry: string): string {
-  const normalized = path.posix.normalize(value.trim()).replace(/\/+$/, "");
   if (
-    !path.posix.isAbsolute(normalized) ||
-    !normalized.startsWith(prefix) ||
-    normalized.length === prefix.length
+    value !== value.trim() ||
+    value !== path.posix.normalize(value) ||
+    value.endsWith("/") ||
+    !value.startsWith(prefix)
   ) {
     throw new Error(
-      `SANDBOX_COMPUTER_BINDS ${what} must be a path under ${prefix}, received "${entry}"`,
+      `SANDBOX_COMPUTER_BINDS ${what} must be a canonical path under ${prefix}, received "${entry}"`,
     );
   }
-  return normalized;
+  return value;
 }
 
 /**
@@ -248,8 +248,7 @@ function containedPath(value: string, prefix: string, what: string, entry: strin
 export function parseComputerBinds(value = process.env.SANDBOX_COMPUTER_BINDS): ComputerBindRule[] {
   const rules: ComputerBindRule[] = [];
   const targetsByHome = new Map<string, string[]>();
-  for (const raw of (value ?? "").split("\n")) {
-    const entry = raw.trim();
+  for (const entry of (value ?? "").split("\n")) {
     if (!entry) continue;
     const at = entry.lastIndexOf("@");
     const parts = at < 0 ? [] : entry.slice(0, at).split(":");
@@ -258,19 +257,17 @@ export function parseComputerBinds(value = process.env.SANDBOX_COMPUTER_BINDS): 
         `SANDBOX_COMPUTER_BINDS entries look like "<source>:<target>:<ro|rw>@<homeKey>[,...]", received "${entry}"`,
       );
     }
-    const [rawSource, rawTarget, rawMode] = parts as [string, string, string];
+    const [rawSource, rawTarget, mode] = parts as [string, string, string];
     const source = containedPath(rawSource, COMPUTER_BIND_SOURCE_PREFIX, "source", entry);
     const target = containedPath(rawTarget, COMPUTER_BIND_TARGET_PREFIX, "target", entry);
-    const mode = rawMode.trim();
     if (mode !== "ro" && mode !== "rw") {
       throw new Error(`SANDBOX_COMPUTER_BINDS mode must be "ro" or "rw", received "${entry}"`);
     }
-    const homeKeys = entry
-      .slice(at + 1)
-      .split(",")
-      .map((key) => key.trim());
-    if (homeKeys.some((key) => !key)) {
-      throw new Error(`SANDBOX_COMPUTER_BINDS needs at least one home key, received "${entry}"`);
+    const homeKeys = entry.slice(at + 1).split(",");
+    if (homeKeys.some((key) => !key || /\s/.test(key))) {
+      throw new Error(
+        `SANDBOX_COMPUTER_BINDS home keys must be non-empty with no whitespace, received "${entry}"`,
+      );
     }
     for (const homeKey of homeKeys) {
       const targets = targetsByHome.get(homeKey) ?? [];
@@ -330,7 +327,7 @@ export function computerBindsMatch(
   existing: string[] | null | undefined,
   desired: ComputerBind[],
 ): boolean {
-  const current = (existing ?? []).filter((bind) => bind.split(":")[1] !== "/home/rakazo").sort();
+  const current = (existing ?? []).filter((bind) => !bind.endsWith(":/home/rakazo")).sort();
   const wanted = desired.map(bindSpec).sort();
   return current.length === wanted.length && current.every((bind, i) => bind === wanted[i]);
 }
