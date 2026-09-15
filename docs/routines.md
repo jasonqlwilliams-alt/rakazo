@@ -58,6 +58,9 @@ control push delivery. Routine runs follow the run notification policy:
 - If the model stops right after a tool result, a routine run asks it once to
   continue and still lets it end without a message. Chat, group-channel, and
   bot-message runs keep their own retries and fallback reply.
+- A routine run that picks up a message the user sends while it runs behaves
+  as a chat run for the rest of that run. Its text before a tool call is
+  posted, and the chat retries and fallback reply apply.
 - Completion and failure pushes in the bot's own chat are gated by
   `Bot.notifyOnFinish`; group threads enable them regardless of that flag.
 - `help` and `takeover` pushes (the agent needs an answer, or needs the user on

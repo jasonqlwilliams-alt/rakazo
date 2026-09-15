@@ -1433,8 +1433,8 @@ export function createRunExecutor(deps: ExecutorDeps) {
           peerMessage?.intent,
           peerMessage?.repliesToRequest,
         );
-        const routineRun = run.trigger === "routine";
-        const allowSilentEmpty = allowSilentPeerMessage || messagingChannelRun || routineRun;
+        const allowSilentEmpty = allowSilentPeerMessage || messagingChannelRun;
+        let routineSilence = run.trigger === "routine";
         const emptyResponseText = peerMessage
           ? peerMessage.intent === "result" ||
             peerMessage.intent === "status" ||
@@ -1770,7 +1770,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
           assembled = "";
           hasStreamedText = false;
           pendingProgress = "";
-          if (routineRun) return;
+          if (routineSilence) return;
           await publishMessage(
             deps,
             run,
@@ -3697,7 +3697,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
               resumeFromCheckpoint: takeoverResume?.checkpoint,
               script,
               allowSilentEmpty,
-              allowSilentToolFinish: routineRun,
+              allowSilentFinish: () => routineSilence,
               emptyResponseText,
               executeTool: scripted ? undefined : applyTool,
               resolveModel: scripted
@@ -3729,6 +3729,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
                       leaseFence: fence,
                       seenIds,
                     });
+                    if (steering.length > 0) routineSilence = false;
                     return Promise.all(
                       steering.map(async (item) => {
                         const { images, files, unavailableInstruction } =
@@ -4175,7 +4176,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
             // runs still return via botMessageOutcomeFromMidTurn below (status when
             // only progress was posted, result when a final reply exists).
             messageSegments = completionMessageSegments(messageSegments, {
-              allowSilentEmpty: allowSilentEmpty || publishedMidTurnUserMessage,
+              allowSilentEmpty: allowSilentEmpty || routineSilence || publishedMidTurnUserMessage,
               emptyResponseText,
               suppressOutput: handedOff,
               skipEmptyFallback: publishedTerminalSubagent || publishedMidTurnUserMessage,

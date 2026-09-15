@@ -288,6 +288,7 @@ export class PiAgentRuntime implements AgentRuntime {
         let toolActivityShowing = false;
         let silentToolContinuations = 0;
         let toolWorkPendingFinal = false;
+        const silentFinish = () => request.allowSilentFinish?.() === true;
         agent.subscribe(async (event) => {
           if (event.type === "message_start" && event.message.role === "assistant") {
             requestTextStart = streamed.length;
@@ -348,13 +349,12 @@ export class PiAgentRuntime implements AgentRuntime {
                 silentToolContinuations = 0;
               } else if (
                 !host.pausePending &&
-                silentToolContinuations <
-                  (request.allowSilentToolFinish ? 1 : MAX_SILENT_TOOL_CONTINUATIONS)
+                silentToolContinuations < (silentFinish() ? 1 : MAX_SILENT_TOOL_CONTINUATIONS)
               ) {
                 silentToolContinuations += 1;
                 agent.followUp({
                   role: "user",
-                  content: request.allowSilentToolFinish
+                  content: silentFinish()
                     ? SILENT_TOOL_FINISH_CONTINUATION_PROMPT
                     : SILENT_TOOL_CONTINUATION_PROMPT,
                   timestamp: Date.now(),
@@ -417,7 +417,7 @@ export class PiAgentRuntime implements AgentRuntime {
         } else if (!host.pausePending && toolWorkPendingFinal) {
           // Discard cumulative pre-tool narration from the terminal payload and, unless the
           // run may finish silently, make the missing final response visible to the user.
-          streamed = request.allowSilentToolFinish ? "" : TOOL_FINAL_RESPONSE_FALLBACK;
+          streamed = silentFinish() ? "" : TOOL_FINAL_RESPONSE_FALLBACK;
           if (streamed) queue.push({ type: "text", text: streamed });
         } else if (!streamed.trim() && !host.pausePending) {
           streamed = "";
@@ -430,7 +430,7 @@ export class PiAgentRuntime implements AgentRuntime {
             // A tool-bearing run must never finish with only a progress/narration message.
             streamed = TOOL_FINAL_RESPONSE_FALLBACK;
             queue.push({ type: "text", text: streamed });
-          } else if (toolCalls === 0 && !request.allowSilentEmpty) {
+          } else if (toolCalls === 0 && !request.allowSilentEmpty && !silentFinish()) {
             streamed = request.emptyResponseText?.trim() || "No response. Try again.";
             queue.push({ type: "text", text: streamed });
           }

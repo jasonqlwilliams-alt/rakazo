@@ -1,4 +1,4 @@
-import type { ConnectorTool } from "@rakazo/adapter-kit";
+import type { AgentRunRequest, ConnectorTool } from "@rakazo/adapter-kit";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const fakeAgentState = vi.hoisted(() => ({
@@ -160,6 +160,7 @@ vi.mock("@earendil-works/pi-agent-core", () => ({
           },
           toolResults: [{ toolCallId: "call-1", result: { ok: true } }],
         });
+        await this.prepareNextTurnWithContext?.({ context: { messages: [] } });
         for (let turn = 0; turn < 10; turn += 1) {
           const followUps = fakeAgentState.followUpMessages.length;
           this.emit({
@@ -727,10 +728,9 @@ describe("Pi connector tool dispatch", () => {
     });
   });
 
-  async function runSilentToolTurn(silence: {
-    allowSilentEmpty?: boolean;
-    allowSilentToolFinish?: boolean;
-  }) {
+  async function runSilentToolTurn(
+    silence: Pick<AgentRunRequest, "allowSilentEmpty" | "allowSilentFinish" | "claimSteering">,
+  ) {
     fakeAgentState.mode = "silent-tool-empty";
     const runtime = new PiAgentRuntime();
     const events: unknown[] = [];
@@ -762,10 +762,7 @@ describe("Pi connector tool dispatch", () => {
   }
 
   it("nudges a silent routine tool turn once and lets it finish without a message", async () => {
-    const events = await runSilentToolTurn({
-      allowSilentEmpty: true,
-      allowSilentToolFinish: true,
-    });
+    const events = await runSilentToolTurn({ allowSilentFinish: () => true });
 
     expect(fakeAgentState.followUpMessages).toEqual([
       expect.objectContaining({
@@ -792,6 +789,30 @@ describe("Pi connector tool dispatch", () => {
         }),
       );
     }
+    expect(events.at(-1)).toEqual({
+      type: "done",
+      text: "I completed the tool step but could not produce a final response. Please ask me to continue.",
+    });
+  });
+
+  it("recovers a routine tool turn like a chat run once silence is withdrawn by steering", async () => {
+    let silent = true;
+    const claimSteering = vi.fn(async (seenIds: string[]) => {
+      if (claimSteering.mock.calls.length === 1) return [];
+      silent = false;
+      return seenIds.includes("steering-1")
+        ? []
+        : [{ id: "steering-1", messageId: "m-1", text: "What is the status of X?" }];
+    });
+    const events = await runSilentToolTurn({ allowSilentFinish: () => silent, claimSteering });
+
+    expect(fakeAgentState.steeredMessages).toHaveLength(1);
+    expect(fakeAgentState.followUpMessages).toHaveLength(3);
+    expect(fakeAgentState.followUpMessages[0]).toEqual(
+      expect.objectContaining({
+        content: expect.stringContaining("Do not stop after a tool call"),
+      }),
+    );
     expect(events.at(-1)).toEqual({
       type: "done",
       text: "I completed the tool step but could not produce a final response. Please ask me to continue.",
@@ -829,6 +850,50 @@ describe("Pi connector tool dispatch", () => {
 
     expect(events).not.toContainEqual({ type: "text", text: "No response. Try again." });
     expect(events).toEqual([{ type: "done" }]);
+  });
+
+  it("keeps an empty routine turn silent only until steering withdraws silence", async () => {
+    fakeAgentState.mode = "empty";
+    const runEmptyRoutine = async (steered: boolean) => {
+      let silent = true;
+      const events: unknown[] = [];
+      const claimSteering = vi.fn(async () => {
+        if (!steered || claimSteering.mock.calls.length === 1) return [];
+        silent = false;
+        return [{ id: "steering-1", messageId: "m-1", text: "What is the status of X?" }];
+      });
+      for await (const event of new PiAgentRuntime().run(
+        {
+          botId: "b",
+          threadId: "t",
+          runId: "routine-empty",
+          prompt: "hourly check",
+          instructions: "Stay silent when nothing is new.",
+          history: [],
+          tools: [],
+          model: { provider: "test", id: "dispatch-test-model" },
+          allowSilentFinish: () => silent,
+          claimSteering,
+          executeTool: vi.fn(async () => ({ ok: true })),
+        },
+        {
+          operationId: "routine-empty",
+          traceId: "routine-empty",
+          spaceId: "w",
+          userId: "u",
+          signal: new AbortController().signal,
+        },
+      )) {
+        events.push(event);
+      }
+      return events;
+    };
+
+    expect(await runEmptyRoutine(false)).toEqual([{ type: "done" }]);
+    expect(await runEmptyRoutine(true)).toEqual([
+      { type: "text", text: "No response. Try again." },
+      { type: "done", text: "No response. Try again." },
+    ]);
   });
 
   it("still asks the user to retry when a normal empty turn produces nothing", async () => {

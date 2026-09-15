@@ -11,12 +11,21 @@ vi.mock("./computer-lifecycle.js", async (importOriginal) => ({
   provisionComputer: async () => ({ id: "computer-1", kind: "desktop" }),
 }));
 
+const steeringQuestion = {
+  id: "steering-1",
+  messageId: "message-user-1",
+  text: "What is the status of X?",
+  blocks: [{ kind: "text", text: "What is the status of X?" }] as MessageBlock[],
+};
+
 function fixture({
   trigger,
   events,
+  steering = [],
 }: {
   trigger: "routine" | "user";
   events: AgentRuntimeEvent[];
+  steering?: (typeof steeringQuestion)[];
 }) {
   const run = {
     id: "run-1",
@@ -30,12 +39,30 @@ function fixture({
     routineId: trigger === "routine" ? "routine-1" : null,
     leaseFence: 0,
   };
+  const thread = { unread: false };
+  const postedMessages: MessageBlock[][] = [];
   const notify = vi.fn(async () => undefined);
   const finalizeRun = vi.fn(async () => ({ continuationRunId: null }));
-  const publishMessage = vi.fn(async () => ({ message: { id: "message-1" }, eventSeq: 1 }));
-  const runtimeRun = vi.fn(async function* (_request: AgentRunRequest) {
+  const runtimeRun = vi.fn(async function* (request: AgentRunRequest) {
+    await request.claimSteering?.([]);
     yield* events;
   });
+  const tx = {
+    thread: {
+      update: vi.fn(async ({ data }: { data: { unread?: boolean } }) => {
+        if (data.unread) thread.unread = true;
+        return { nextMessageSeq: postedMessages.length + 1, nextEventSeq: 1 };
+      }),
+    },
+    run: { findUnique: vi.fn(async () => run) },
+    message: {
+      create: vi.fn(async ({ data }: { data: { blocks: MessageBlock[] } }) => {
+        postedMessages.push(data.blocks);
+        return { id: `message-bot-${postedMessages.length}` };
+      }),
+    },
+    event: { create: vi.fn(async () => ({ seq: 1 })) },
+  };
   const prisma = {
     run: {
       findUnique: vi.fn(async () => run),
@@ -73,7 +100,7 @@ function fixture({
         historyCompactedUpToSeq: null,
       })),
     },
-    message: { findMany: vi.fn(async () => []) },
+    message: { findMany: vi.fn(async () => []), findFirst: vi.fn(async () => null) },
     task: { findUniqueOrThrow: vi.fn(async () => ({ id: run.taskId, prompt: "hourly check" })) },
     connection: { findMany: vi.fn(async () => []) },
     spaceModelPreference: { findFirst: vi.fn(async () => null) },
@@ -91,7 +118,7 @@ function fixture({
     actionApprovalRule: { findMany: vi.fn(async () => []) },
     actionAutoReviewPreference: { findUnique: vi.fn(async () => ({ enabled: false })) },
     externalEffect: { findMany: vi.fn(async () => []) },
-    $transaction: publishMessage,
+    $transaction: vi.fn(async (work: (client: typeof tx) => unknown) => work(tx)),
   } as unknown as PrismaClient;
   const executor = createRunExecutor({
     prisma,
@@ -102,6 +129,7 @@ function fixture({
     events: {
       append: vi.fn(async () => undefined),
       notify: vi.fn(async () => undefined),
+      claimSteering: vi.fn(async () => steering),
       finalizeRun,
     },
     jobs: { enqueue: vi.fn(async () => undefined) },
@@ -111,8 +139,12 @@ function fixture({
   return {
     runtimeRun,
     finalizeRun,
-    publishMessage,
+    postedMessages,
+    thread,
     notify,
+    request: () => runtimeRun.mock.calls[0]![0],
+    finalBlocks: () =>
+      (finalizeRun.mock.calls[0] as unknown as [{ blocks: MessageBlock[] }])[0].blocks,
     async run() {
       run.status = "queued";
       await executor.continueRun(run.id, "worker-1");
@@ -122,13 +154,13 @@ function fixture({
   };
 }
 
+const textBlocks = (blocks: MessageBlock[]) => blocks.filter((block) => block.kind === "text");
+
 describe("routine silent finish", () => {
   it("posts nothing and sends no push when a routine run ends without text", async () => {
     const f = fixture({ trigger: "routine", events: [{ type: "done" }] });
     await f.run();
-    expect(f.runtimeRun.mock.calls[0]![0]).toEqual(
-      expect.objectContaining({ allowSilentEmpty: true, allowSilentToolFinish: true }),
-    );
+    expect(f.request().allowSilentFinish?.()).toBe(true);
     expect(f.finalizeRun).toHaveBeenCalledWith(
       expect.objectContaining({
         outcome: "completed",
@@ -136,7 +168,7 @@ describe("routine silent finish", () => {
         markUnread: false,
       }),
     );
-    expect(f.publishMessage).not.toHaveBeenCalled();
+    expect(f.postedMessages).toEqual([]);
     expect(f.notify).not.toHaveBeenCalled();
   });
 
@@ -153,9 +185,9 @@ describe("routine silent finish", () => {
     expect(f.finalizeRun).toHaveBeenCalledWith(
       expect.objectContaining({ outcome: "completed", markUnread: false }),
     );
-    const [{ blocks }] = f.finalizeRun.mock.calls[0] as unknown as [{ blocks: MessageBlock[] }];
-    expect(blocks.filter((block) => block.kind === "text")).toEqual([]);
-    expect(f.publishMessage).not.toHaveBeenCalled();
+    expect(textBlocks(f.finalBlocks())).toEqual([]);
+    expect(f.postedMessages).toEqual([]);
+    expect(f.thread.unread).toBe(false);
     expect(f.notify).not.toHaveBeenCalled();
   });
 
@@ -173,14 +205,43 @@ describe("routine silent finish", () => {
     expect(f.finalizeRun).toHaveBeenCalledWith(
       expect.objectContaining({ outcome: "completed", markUnread: true }),
     );
-    const [{ blocks }] = f.finalizeRun.mock.calls[0] as unknown as [{ blocks: MessageBlock[] }];
-    expect(blocks.filter((block) => block.kind === "text")).toEqual([
-      { kind: "text", text: "Two items need you." },
-    ]);
-    expect(f.publishMessage).not.toHaveBeenCalled();
+    expect(textBlocks(f.finalBlocks())).toEqual([{ kind: "text", text: "Two items need you." }]);
+    expect(f.postedMessages).toEqual([]);
     expect(f.notify).toHaveBeenCalledWith(
       expect.objectContaining({ kind: "completion", body: "Two items need you." }),
       expect.anything(),
+    );
+  });
+
+  it("posts the reply and marks unread once a routine run claims a user message", async () => {
+    const f = fixture({
+      trigger: "routine",
+      steering: [steeringQuestion],
+      events: [
+        { type: "text", text: "X shipped yesterday." },
+        { type: "tool", name: "list_items", args: {}, executionId: "exec-1" },
+        { type: "done" },
+      ],
+    });
+    await f.run();
+    expect(f.request().allowSilentFinish?.()).toBe(false);
+    expect(f.postedMessages).toEqual([[{ kind: "text", text: "X shipped yesterday." }]]);
+    expect(f.thread.unread).toBe(true);
+  });
+
+  it("keeps the empty-run fallback once a routine run claims a user message", async () => {
+    const f = fixture({
+      trigger: "routine",
+      steering: [steeringQuestion],
+      events: [{ type: "done" }],
+    });
+    await f.run();
+    expect(f.finalizeRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: "completed",
+        blocks: [{ kind: "text", text: "done." }],
+        markUnread: true,
+      }),
     );
   });
 
@@ -195,11 +256,9 @@ describe("routine silent finish", () => {
       ],
     });
     await f.run();
-    expect(f.publishMessage).toHaveBeenCalledTimes(1);
-    const [{ blocks }] = f.finalizeRun.mock.calls[0] as unknown as [{ blocks: MessageBlock[] }];
-    expect(blocks.filter((block) => block.kind === "text")).toEqual([
-      { kind: "text", text: "Two items need you." },
-    ]);
+    expect(f.postedMessages).toEqual([[{ kind: "text", text: "Checking the human-gated list." }]]);
+    expect(f.thread.unread).toBe(true);
+    expect(textBlocks(f.finalBlocks())).toEqual([{ kind: "text", text: "Two items need you." }]);
   });
 
   it("posts and notifies when a routine run produces text", async () => {
@@ -211,7 +270,6 @@ describe("routine silent finish", () => {
       ],
     });
     await f.run();
-    expect(f.runtimeRun.mock.calls[0]![0].allowSilentEmpty).toBe(true);
     expect(f.finalizeRun).toHaveBeenCalledWith(
       expect.objectContaining({
         outcome: "completed",
@@ -232,8 +290,8 @@ describe("routine silent finish", () => {
   it("keeps the empty-run fallback for a chat run that ends without text", async () => {
     const f = fixture({ trigger: "user", events: [{ type: "done" }] });
     await f.run();
-    expect(f.runtimeRun.mock.calls[0]![0].allowSilentEmpty).toBeFalsy();
-    expect(f.runtimeRun.mock.calls[0]![0].allowSilentToolFinish).toBeFalsy();
+    expect(f.request().allowSilentEmpty).toBeFalsy();
+    expect(f.request().allowSilentFinish?.()).toBe(false);
     expect(f.finalizeRun).toHaveBeenCalledWith(
       expect.objectContaining({
         outcome: "completed",
