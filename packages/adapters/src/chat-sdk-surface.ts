@@ -45,11 +45,13 @@ export interface MessagingPlatform {
   transport?: (raw: unknown) => string | null;
   /**
    * Optional team-room enrichment (workspace id, mention/ambient kind, bot
-   * sender, reply thread) derived from the raw platform payload.
+   * sender, reply thread) derived from the raw platform payload and the
+   * Chat SDK mention decision.
    */
   enrichTeamRoom?: (
     raw: unknown,
     base: MessagingInboundMessage,
+    message: { isMention: boolean },
   ) => Partial<MessagingInboundMessage>;
 }
 
@@ -281,7 +283,8 @@ export class ChatSdkMessagingSurface implements MessagingSurface {
       content: message.text ?? "",
       mediaUrl: message.attachments.find((attachment) => attachment.url)?.url ?? null,
     };
-    const enrichment = platform.enrichTeamRoom?.(message.raw, base) ?? {};
+    const enrichment =
+      platform.enrichTeamRoom?.(message.raw, base, { isMention: message.isMention === true }) ?? {};
     return { ...base, ...enrichment };
   }
 }

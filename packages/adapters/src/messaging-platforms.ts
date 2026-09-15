@@ -6,6 +6,7 @@ import { createWhatsAppAdapter } from "@chat-adapter/whatsapp";
 import type { MessagingInboundMessage, MessagingOutboundStatus } from "@rakazo/adapter-kit";
 import { getLogger } from "@rakazo/logging";
 import type { Adapter, ChatInstance } from "chat";
+import { ConsoleLogger } from "chat";
 import { createLarkAdapter, Domain } from "chat-adapter-lark";
 import { createSendblueAdapter } from "chat-adapter-sendblue";
 import type { MessagingPlatform } from "./chat-sdk-surface.js";
@@ -98,12 +99,27 @@ export function isTeamRoomProvider(provider: string): boolean {
   return TEAM_ROOM_PROVIDERS.has(provider);
 }
 
-/** The one mounted team-room platform a team-chat bot serves; refuses more than one. */
-export function teamChatProviderId(platforms: Array<{ provider: string }>): string | undefined {
+/**
+ * The one mounted team-room platform a team-chat bot serves. Refuses more
+ * than one, and Discord without a channel allowlist: a Discord bot token
+ * reaches every server it joins and every user who can message it.
+ */
+export function teamChatProviderId(
+  platforms: Array<{ provider: string }>,
+  env: Pick<MessagingEnvironmentValues, "discordRespondToChannelIds">,
+): string | undefined {
   const providers = platforms.map((platform) => platform.provider).filter(isTeamRoomProvider);
   if (providers.length > 1) {
     throw new Error(
       `TEAM_CHAT_BOT_ID serves one team platform, but ${providers.join(" and ")} are both configured. Unset one platform's keys.`,
+    );
+  }
+  if (
+    providers[0] === "discord" &&
+    parseMessagingCsvIds(env.discordRespondToChannelIds).length === 0
+  ) {
+    throw new Error(
+      "TEAM_CHAT_BOT_ID with Discord needs DISCORD_RESPOND_TO_CHANNEL_IDS. List the only channel ids the bot answers.",
     );
   }
   return providers[0];
@@ -193,6 +209,7 @@ export function messagingPlatformsFromEnv(
       // Explicit empty list prevents the adapter from rereading process.env values.
       respondToChannelIds: [],
       mentionRoleIds,
+      logger: new ConsoleLogger("warn").child("discord"),
     });
     if (options.pollInboundMessages) {
       attachDiscordGateway(adapter, parseMessagingCsvIds(env.discordRespondToChannelIds));
@@ -201,8 +218,8 @@ export function messagingPlatformsFromEnv(
       provider: "discord",
       capabilities: { direct: true, groups: true, typing: false },
       adapter,
-      enrichTeamRoom: (_raw, base) =>
-        enrichDiscordTeamRoom(base, { applicationId, mentionRoleIds }),
+      enrichTeamRoom: (_raw, base, { isMention }) =>
+        enrichDiscordTeamRoom(base, { isMention, applicationId, mentionRoleIds }),
     });
   }
 
@@ -363,26 +380,24 @@ function mentionsSlackBot(text: string, botUserId: string | undefined): boolean 
  * Discord team-room fields from the thread id (discord:{guild}:{channel}[:{thread}]).
  * Guild id is the workspace (direct messages use "@me"), the parent channel
  * is the conversation key, and a thread id is the in-channel reply thread.
- * Only the bot's own mention or a configured role mention makes a mention.
+ * The Chat SDK mention decision (the same one that opened a Discord thread)
+ * sets the kind; a leading bot or configured role mention is stripped.
  */
 export function enrichDiscordTeamRoom(
   base: MessagingInboundMessage,
-  options: { applicationId: string; mentionRoleIds: string[] },
+  options: { isMention: boolean; applicationId: string; mentionRoleIds: string[] },
 ): Partial<MessagingInboundMessage> {
   const [, guildId, channelId, threadId] = base.threadId.split(":");
   const enrichment: Partial<MessagingInboundMessage> = { replyThreadId: threadId ?? null };
   if (guildId && guildId !== "@me") enrichment.workspaceId = guildId;
   if (channelId) enrichment.conversationKey = channelId;
   if (!base.isDirect) {
-    const mentions = [
+    enrichment.kind = options.isMention ? "mention" : "ambient";
+    const leading = [
       `<@${options.applicationId}>`,
       `<@!${options.applicationId}>`,
       ...options.mentionRoleIds.map((roleId) => `<@&${roleId}>`),
-    ];
-    enrichment.kind = mentions.some((mention) => base.content.includes(mention))
-      ? "mention"
-      : "ambient";
-    const leading = mentions.find((mention) => base.content.startsWith(mention));
+    ].find((mention) => base.content.startsWith(mention));
     if (leading) enrichment.content = base.content.slice(leading.length).trimStart();
   }
   return enrichment;

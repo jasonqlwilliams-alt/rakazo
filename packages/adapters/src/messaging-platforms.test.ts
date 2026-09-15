@@ -1,6 +1,8 @@
 import { EventEmitter } from "node:events";
+import type { MessagingInboundEvent } from "@rakazo/adapter-kit";
 import { Domain } from "chat-adapter-lark";
 import { describe, expect, it, vi } from "vitest";
+import { ChatSdkMessagingSurface } from "./chat-sdk-surface.js";
 import {
   enrichDiscordTeamRoom,
   enrichSlackTeamRoom,
@@ -435,16 +437,30 @@ describe("discord platform", () => {
   });
 
   it("gives team chat the one team platform and refuses both Slack and Discord", () => {
-    expect(teamChatProviderId(messagingPlatformsFromEnv(discordEnv))).toBe("discord");
-    expect(
-      teamChatProviderId(
-        messagingPlatformsFromEnv({ slackBotToken: "xoxb-fake", slackSigningSecret: "slack" }),
-      ),
-    ).toBe("slack");
-    expect(teamChatProviderId(messagingPlatformsFromEnv({}))).toBeUndefined();
-    expect(() => teamChatProviderId(messagingPlatformsFromEnv(fullEnv))).toThrow(
+    const listed = { ...discordEnv, discordRespondToChannelIds: "channel-1" };
+    const slackEnv: MessagingEnvironmentValues = {
+      slackBotToken: "xoxb-fake",
+      slackSigningSecret: "slack",
+    };
+    expect(teamChatProviderId(messagingPlatformsFromEnv(listed), listed)).toBe("discord");
+    expect(teamChatProviderId(messagingPlatformsFromEnv(slackEnv), slackEnv)).toBe("slack");
+    expect(teamChatProviderId(messagingPlatformsFromEnv({}), {})).toBeUndefined();
+    expect(() =>
+      teamChatProviderId(messagingPlatformsFromEnv(fullEnv), {
+        discordRespondToChannelIds: "channel-1",
+      }),
+    ).toThrow(
       /TEAM_CHAT_BOT_ID serves one team platform, but slack and discord are both configured/,
     );
+  });
+
+  it("refuses Discord team chat without a channel allowlist", () => {
+    for (const discordRespondToChannelIds of [undefined, " , "]) {
+      const env = { ...discordEnv, discordRespondToChannelIds };
+      expect(() => teamChatProviderId(messagingPlatformsFromEnv(env), env)).toThrow(
+        /TEAM_CHAT_BOT_ID with Discord needs DISCORD_RESPOND_TO_CHANNEL_IDS/,
+      );
+    }
   });
 
   it("rejects Discord HTTP interactions because inbound is Gateway-only", async () => {
@@ -519,6 +535,64 @@ describe("discord platform", () => {
     await adapter.stopPolling?.();
   });
 
+  it("uses the adapter's mention decision end to end and logs no message content", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const debug = vi.spyOn(console, "debug").mockImplementation(() => undefined);
+    const platforms = messagingPlatformsFromEnv(
+      { ...discordEnv, discordRespondToChannelIds: "channel-1" },
+      { pollInboundMessages: true },
+    );
+    const adapter = platforms[0]!.adapter as unknown as DiscordGatewayAdapter;
+    vi.spyOn(adapter, "startGatewayListener").mockResolvedValue(new Response("ok"));
+    const createThread = vi
+      .spyOn(adapter, "createDiscordThread")
+      .mockResolvedValue({ id: "thread-new" });
+    const surface = new ChatSdkMessagingSurface(platforms);
+    const inbound: MessagingInboundEvent[] = [];
+    surface.onInbound(async (event) => {
+      inbound.push(event);
+    });
+    try {
+      await surface.initialize();
+      const client = Object.assign(new EventEmitter(), { user: { id: "discord-app-id" } });
+      adapter.setupLegacyGatewayHandlers(client, () => false);
+
+      client.emit("messageCreate", {
+        ...gatewayMessage({ id: "managed-role", channelId: "channel-1", mentionsBot: true }),
+        content: "<@&managed-role> can you check this",
+      });
+      client.emit(
+        "messageCreate",
+        gatewayMessage({ id: "chatter", channelId: "thread-9", parentId: "channel-1" }),
+      );
+
+      await vi.waitFor(() => expect(inbound).toHaveLength(2));
+      expect(createThread.mock.calls).toEqual([["channel-1", "managed-role"]]);
+      expect(
+        inbound.find((event) => "handle" in event && event.handle === "managed-role"),
+      ).toMatchObject({
+        kind: "mention",
+        conversationKey: "channel-1",
+        replyThreadId: "thread-new",
+        content: "<@&managed-role> can you check this",
+      });
+      expect(
+        inbound.find((event) => "handle" in event && event.handle === "chatter"),
+      ).toMatchObject({
+        kind: "ambient",
+        replyThreadId: "thread-9",
+      });
+      const logged = JSON.stringify([...info.mock.calls, ...debug.mock.calls]);
+      expect(logged).not.toContain("can you check this");
+      expect(logged).not.toContain("ship it");
+      expect(logged).not.toContain("user-1");
+    } finally {
+      await surface.shutdown();
+      info.mockRestore();
+      debug.mockRestore();
+    }
+  });
+
   it("backs off between Gateway sessions that end early", async () => {
     vi.useFakeTimers();
     try {
@@ -551,7 +625,7 @@ describe("discord platform", () => {
 });
 
 describe("enrichDiscordTeamRoom", () => {
-  const options = { applicationId: "bot-1", mentionRoleIds: ["role-1"] };
+  const options = { isMention: true, applicationId: "bot-1", mentionRoleIds: ["role-1"] };
   const base = {
     type: "message" as const,
     provider: "discord",
@@ -582,13 +656,17 @@ describe("enrichDiscordTeamRoom", () => {
     ).toEqual({ conversationKey: "dm-1", replyThreadId: null });
   });
 
-  it("counts only the bot or a configured role as a mention", () => {
-    const kindOf = (content: string) => enrichDiscordTeamRoom({ ...base, content }, options);
-    expect(kindOf("<@grace> can you review PR 12")).toMatchObject({ kind: "ambient" });
-    expect(kindOf("<@grace> can you review PR 12").content).toBeUndefined();
-    expect(kindOf("<@&role-2> heads up")).toMatchObject({ kind: "ambient" });
-    expect(kindOf("<@&role-1> heads up")).toMatchObject({ kind: "mention", content: "heads up" });
-    expect(kindOf("<@!bot-1> hi")).toMatchObject({ kind: "mention", content: "hi" });
-    expect(kindOf("ping <@bot-1>")).toMatchObject({ kind: "mention" });
+  it("takes the kind from the mention decision and strips only a leading bot or role mention", () => {
+    const enrich = (content: string, isMention: boolean) =>
+      enrichDiscordTeamRoom({ ...base, content }, { ...options, isMention });
+    expect(enrich("<@grace> can you review PR 12", false)).toMatchObject({ kind: "ambient" });
+    expect(enrich("<@grace> can you review PR 12", false).content).toBeUndefined();
+    expect(enrich("<@&role-1> heads up", true)).toMatchObject({
+      kind: "mention",
+      content: "heads up",
+    });
+    expect(enrich("<@!bot-1> hi", true)).toMatchObject({ kind: "mention", content: "hi" });
+    expect(enrich("ping <@bot-1>", true)).toMatchObject({ kind: "mention" });
+    expect(enrich("ping <@bot-1>", true).content).toBeUndefined();
   });
 });

@@ -239,7 +239,9 @@ export async function createApp(
   // see messagingPlatformsFromEnv's docstring for why a second poller
   // elsewhere (e.g. the worker) would actively break this.
   const messagingPlatforms = messagingPlatformsFromEnv(env, { pollInboundMessages: true });
-  const teamChatProvider = env.teamChatBotId ? teamChatProviderId(messagingPlatforms) : undefined;
+  const teamChatProvider = env.teamChatBotId
+    ? teamChatProviderId(messagingPlatforms, env)
+    : undefined;
   const messaging =
     messagingOverride ??
     (isMessagingSurfaceEnabled(messagingPlatforms, {
