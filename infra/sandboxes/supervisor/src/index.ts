@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, opendir, stat } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,12 +18,14 @@ import Docker from "dockerode";
 import { Hono, type MiddlewareHandler } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
+import type { ComputerBind } from "./computer-spec.js";
 import {
   assertVolumeSubpathSupport,
   COMPUTER_GID,
   COMPUTER_IMAGE,
   COMPUTER_UID,
   COMPUTER_USER,
+  computerBindsMatch,
   computerHomeStorage,
   computerNetworkNameFor,
   computerNetworkNamesForCleanup,
@@ -34,7 +36,9 @@ import {
   homeVolumeMatches,
   hostComputerUser,
   legacyNetworkOwnedSolelyBy,
+  parseComputerBinds,
   publishedLoopbackControlHostPort,
+  resolveComputerBinds,
   resolveComputerControlEndpoint,
   resolveScreenNetworkMode,
   resolveScreenPublishTarget,
@@ -95,6 +99,7 @@ let supervisorInfo: Docker.ContainerInspectInfo | undefined;
 const supervisorToken = resolveSupervisorToken(process.env);
 const screenNetworkMode = resolveScreenNetworkMode(process.env.SANDBOX_SCREEN_NETWORK);
 const teamScreenLimit = resolveTeamScreenLimit();
+const computerBindRules = parseComputerBinds();
 // Host-run supervisors on Docker Desktop (macOS/Windows) cannot reach container
 // IPs, so computer control must use a published loopback port instead.
 const controlViaLoopback = process.env.SANDBOX_CONTROL_VIA_LOOPBACK === "true";
@@ -179,6 +184,8 @@ app.post("/computers", async (c) => {
       if (storage.homeVolume) {
         assertVolumeSubpathSupport((await docker.version()).ApiVersion);
       }
+      const bindRules = computerBindRules.filter((rule) => rule.homeKeys.includes(body.botId));
+      const binds = resolveComputerBinds(bindRules, runtimeInfo);
       const computerUser = runtimeInfo ? COMPUTER_USER : hostComputerUser(hostUid, hostGid);
       const existing = await findBotContainer(body.botId, body.spaceId);
       if (existing) {
@@ -193,7 +200,8 @@ app.post("/computers", async (c) => {
           (!networkMode || info.HostConfig.NetworkMode === networkMode) &&
           info.Config.User === computerUser &&
           controlPublishOk &&
-          (!storage.homeVolume || homeVolumeMatches(info.HostConfig.Mounts, storage.homeVolume))
+          (!storage.homeVolume || homeVolumeMatches(info.HostConfig.Mounts, storage.homeVolume)) &&
+          computerBindsMatch(info.HostConfig.Binds, binds)
         ) {
           if (!info.State.Running) await existing.start();
           return c.json({
@@ -233,6 +241,7 @@ app.post("/computers", async (c) => {
             ? COMPUTER_GID
             : hostGid;
         await assertComputerHomeWritable(serviceHomePath, effectiveUid, effectiveGid);
+        await assertComputerBindSources(bindRules);
         const name = containerNameFor(body.botId);
         const createdNetwork =
           screenNetworkMode === "internal" ? undefined : await ensureBotNetwork(body.botId);
@@ -248,6 +257,7 @@ app.post("/computers", async (c) => {
               botId: body.botId,
               spaceId: body.spaceId,
               ...storage,
+              binds,
               user: computerUser,
               networkMode,
               controlToken: randomUUID(),
@@ -1012,6 +1022,25 @@ function assertBotHomePath(homePath: string, botId: string) {
   const expected = path.join(dataDir, "homes", botId);
   if (homePath !== expected) {
     throw new Error("computer home must be the bot's home directory");
+  }
+}
+
+/**
+ * Probe each bind source on the supervisor before a computer is created with it: Docker
+ * Desktop mounts a host path written in the wrong form as an empty directory instead of
+ * failing, so a missing or empty source is refused before a computer could boot with a
+ * hollow mount and "write" into scratch. A resumed computer already carries the same
+ * binds, so a queue folder that later drains does not block its runs.
+ */
+async function assertComputerBindSources(rules: ComputerBind[]) {
+  for (const rule of rules) {
+    const stats = await stat(rule.source).catch(() => undefined);
+    if (!stats) throw new Error(`computer bind source ${rule.source} is missing on the supervisor`);
+    if (stats.isDirectory()) {
+      const dir = await opendir(rule.source);
+      const first = await dir.read().finally(() => dir.close());
+      if (!first) throw new Error(`computer bind source ${rule.source} is empty on the supervisor`);
+    }
   }
 }
 
