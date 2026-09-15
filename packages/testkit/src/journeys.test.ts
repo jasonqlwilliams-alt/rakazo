@@ -1040,14 +1040,11 @@ describeJourneys("required product journeys", () => {
       name: "routine.wakeup",
       payload: { routineId: routine.id, scheduledFor: dueAt.toISOString() },
     });
+    // A routine pass posts its tool steps; text written before the tool call stays hidden.
     const snap = await waitFor(app, cookie, bot.id, (s) =>
-      s.messages.some(
-        (m) =>
-          JSON.stringify(m.blocks).includes("routine-ok") ||
-          JSON.stringify(m.blocks).includes("writing"),
-      ),
+      s.messages.some((m) => JSON.stringify(m.blocks).includes("Write file")),
     );
-    expect(snap.messages.length).toBeGreaterThan(0);
+    expect(JSON.stringify(snap.messages.map((m) => m.blocks))).not.toContain("writing");
     const routineRuns = await prisma.run.count({
       where: { botId: bot.id, trigger: "routine" },
     });
