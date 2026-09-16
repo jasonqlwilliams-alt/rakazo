@@ -6,6 +6,7 @@ import {
   connectorToolRequiresApproval,
   isApprovalAskBlock,
   isSecretAskBlock,
+  parseUnattendedToolAllowlist,
   planActionGate,
   resolveActionApproval,
   resolveActionApprovalDetail,
@@ -99,6 +100,81 @@ describe("unattendedTriggerToolRequiresApproval", () => {
       true,
     );
     expect(unattendedTriggerToolRequiresApproval("user", "shell", false)).toBe(false);
+  });
+
+  const PACKET_ROUTER_TOOLS = [
+    "shell",
+    "message_bot",
+    "scratchpad_add",
+    "scratchpad_update",
+    "scratchpad_list",
+  ] as const;
+
+  it("parks webhook shell when the bound routine has no allowlist", () => {
+    expect(unattendedTriggerToolRequiresApproval("webhook", "shell", false)).toBe(true);
+    expect(
+      unattendedTriggerToolRequiresApproval("webhook", "shell", false, {
+        active: true,
+        webhookEnabled: true,
+        unattendedTools: [],
+      }),
+    ).toBe(true);
+  });
+
+  it("runs allowlisted webhook tools unattended and still parks a tool outside the list", () => {
+    const routine = {
+      active: true,
+      webhookEnabled: true,
+      unattendedTools: [...PACKET_ROUTER_TOOLS],
+    };
+    for (const name of PACKET_ROUTER_TOOLS) {
+      expect(unattendedTriggerToolRequiresApproval("webhook", name, false, routine)).toBe(false);
+    }
+    expect(unattendedTriggerToolRequiresApproval("webhook", "write_file", false, routine)).toBe(
+      true,
+    );
+    expect(
+      unattendedTriggerToolRequiresApproval("webhook", "github_create_issue", true, routine),
+    ).toBe(true);
+  });
+
+  it("does not apply the allowlist to cron, chat, or non-webhook routines", () => {
+    const routine = {
+      active: true,
+      webhookEnabled: true,
+      unattendedTools: [...PACKET_ROUTER_TOOLS],
+    };
+    expect(unattendedTriggerToolRequiresApproval("user", "shell", false, routine)).toBe(false);
+    expect(unattendedTriggerToolRequiresApproval("routine", "shell", false, routine)).toBe(false);
+    expect(
+      unattendedTriggerToolRequiresApproval("webhook", "shell", false, {
+        active: false,
+        webhookEnabled: true,
+        unattendedTools: [...PACKET_ROUTER_TOOLS],
+      }),
+    ).toBe(true);
+    expect(
+      unattendedTriggerToolRequiresApproval("webhook", "shell", false, {
+        active: true,
+        webhookEnabled: false,
+        unattendedTools: [...PACKET_ROUTER_TOOLS],
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("parseUnattendedToolAllowlist", () => {
+  const known = new Set(["shell", "message_bot", "scratchpad_add"]);
+
+  it("dedupes known names and rejects unknown ones", () => {
+    expect(parseUnattendedToolAllowlist(["shell", "shell", "message_bot"], known)).toEqual({
+      ok: true,
+      tools: ["shell", "message_bot"],
+    });
+    expect(parseUnattendedToolAllowlist(["shell", "not_a_tool"], known)).toEqual({
+      ok: false,
+      unknown: ["not_a_tool"],
+    });
   });
 });
 

@@ -376,6 +376,13 @@ export const UpdateBotInput = z
     }
   });
 
+export const UnattendedToolName = z
+  .string()
+  .min(1)
+  .max(80)
+  .regex(/^[a-z][a-z0-9._-]*$/i);
+export const UnattendedTools = z.array(UnattendedToolName).max(100);
+
 export const RoutineSchema = z.object({
   id: Id,
   botId: Id,
@@ -393,6 +400,7 @@ export const RoutineSchema = z.object({
     .max(50)
     .regex(/^[a-z0-9._-]+$/i)
     .nullable(),
+  unattendedTools: UnattendedTools,
   lastRunAt: z.string().nullable(),
   nextRunAt: z.string().nullable(),
   createdAt: z.string(),
@@ -417,6 +425,7 @@ export const CreateRoutineInput = z
       .regex(/^[a-z0-9._-]+$/i)
       .nullable()
       .default(null),
+    unattendedTools: UnattendedTools.default([]),
   })
   .superRefine((value, ctx) => {
     if (

@@ -156,7 +156,11 @@ import {
   browserNavigateFromTool,
   browserSnapshotFromTool,
 } from "./browser-tools.js";
-import { agentConnectionTools, builtinAgentTools } from "./builtin-tools.js";
+import {
+  agentConnectionTools,
+  BUILTIN_AGENT_TOOL_NAMES,
+  builtinAgentTools,
+} from "./builtin-tools.js";
 import { archiveSpawnedBot, spawnBot } from "./child-bots.js";
 import { type CloudAgentConnection, cloudAgentsEnabled } from "./cloud-agent-factory.js";
 import { executeCloudAgentTool } from "./cloud-agent-service.js";
@@ -333,7 +337,6 @@ const MAX_MODEL_FILE_BYTES = 250_000;
 const TURN_ATTACHMENT_UNAVAILABLE =
   "An attachment in this message could not be loaded. Tell the user the attachment was unavailable and do not guess its contents.";
 const STEERING_ATTACHMENT_UNAVAILABLE = TURN_ATTACHMENT_UNAVAILABLE;
-const BUILTIN_AGENT_TOOL_NAMES = new Set(builtinAgentTools.map((tool) => tool.name));
 
 /** Avoid an expensive remote workspace export when a turn never touched the computer. */
 export function createRunWorkspaceCheckpoint(checkpoint: () => Promise<unknown>) {
@@ -1285,6 +1288,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
           savedSkills,
           agentSkills,
           agentSecretRows,
+          webhookRoutine,
         ] = await Promise.all([
           deps.prisma.bot.findUniqueOrThrow({
             where: { id: run.botId },
@@ -1324,6 +1328,12 @@ export function createRunExecutor(deps: ExecutorDeps) {
               secret: { select: { id: true, ciphertext: true } },
             },
           }),
+          run.trigger === "webhook" && run.routineId
+            ? deps.prisma.routine.findFirst({
+                where: { id: run.routineId, spaceId: run.spaceId, botId: run.botId },
+                select: { active: true, webhookEnabled: true, unattendedTools: true },
+              })
+            : Promise.resolve(null),
         ]);
         const agentEnvironment = decryptAgentEnvironment(agentSecretRows, deps.secretStore);
         runSecrets.push(...Object.values(agentEnvironment));
@@ -2004,6 +2014,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
             run.trigger,
             name,
             viaConnector,
+            webhookRoutine,
           );
           const requiresApprovalByDefault =
             requiresUnattendedApproval || toolRequiresApproval(name, viaConnector);

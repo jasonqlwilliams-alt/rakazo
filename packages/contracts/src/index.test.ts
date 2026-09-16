@@ -298,7 +298,7 @@ describe("contracts", () => {
         prompt: "Review the message event",
         messageProvider: "slack",
       }),
-    ).toMatchObject({ crons: [], messageProvider: "slack" });
+    ).toMatchObject({ crons: [], messageProvider: "slack", unattendedTools: [] });
     expect(
       CreateRoutineInput.safeParse({
         botId: "bot-1",
@@ -312,6 +312,42 @@ describe("contracts", () => {
         botId: "bot-1",
         name: "Never runs",
         prompt: "This has no trigger",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("accepts an explicit webhook unattended-tool allowlist", () => {
+    expect(
+      CreateRoutineInput.parse({
+        botId: "bot-1",
+        name: "Relay",
+        prompt: "Route the packet",
+        webhookEnabled: true,
+        unattendedTools: [
+          "shell",
+          "message_bot",
+          "scratchpad_add",
+          "scratchpad_update",
+          "scratchpad_list",
+        ],
+      }),
+    ).toMatchObject({
+      webhookEnabled: true,
+      unattendedTools: [
+        "shell",
+        "message_bot",
+        "scratchpad_add",
+        "scratchpad_update",
+        "scratchpad_list",
+      ],
+    });
+    expect(
+      CreateRoutineInput.safeParse({
+        botId: "bot-1",
+        name: "Relay",
+        prompt: "Route the packet",
+        webhookEnabled: true,
+        unattendedTools: ["shell with spaces"],
       }).success,
     ).toBe(false);
   });

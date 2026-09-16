@@ -20,6 +20,7 @@ import {
   acquireComputerExecutionLease,
   applyTeachingDesktopInput,
   archiveBot,
+  BUILTIN_AGENT_TOOL_NAMES,
   buildMcpCredentialBlob,
   buildModelConnectPlaintext,
   type ComposioProvider,
@@ -96,6 +97,7 @@ import {
   hasMixedOneShotSchedule,
   isOneShotRoutineCrons,
   nextCronDateAcrossStrict,
+  parseUnattendedToolAllowlist,
 } from "@rakazo/core";
 import {
   appendEventInTransaction,
@@ -2355,6 +2357,7 @@ export function createRouter(deps: RouterDeps) {
             webhookEnabled: input.webhookEnabled,
             githubEnabled: input.githubEnabled,
             messageProvider: input.messageProvider,
+            unattendedTools: parseRoutineUnattendedTools(input.unattendedTools),
             nextRunAt,
           },
         });
@@ -2459,6 +2462,9 @@ export function createRouter(deps: RouterDeps) {
             webhookEnabled: input.webhookEnabled,
             githubEnabled: input.githubEnabled,
             messageProvider: input.messageProvider,
+            ...(input.unattendedTools !== undefined
+              ? { unattendedTools: parseRoutineUnattendedTools(input.unattendedTools) }
+              : {}),
             nextRunAt,
           },
         });
@@ -5177,6 +5183,17 @@ function throwIfAborted(signal?: AbortSignal) {
   if (signal?.aborted) throw signal.reason ?? new Error("Request cancelled");
 }
 
+function parseRoutineUnattendedTools(names: string[] | undefined): string[] {
+  if (!names) return [];
+  const parsed = parseUnattendedToolAllowlist(names, BUILTIN_AGENT_TOOL_NAMES);
+  if (!parsed.ok) {
+    throw new ORPCError("BAD_REQUEST", {
+      message: `Unknown tool${parsed.unknown.length === 1 ? "" : "s"}: ${parsed.unknown.join(", ")}`,
+    });
+  }
+  return parsed.tools;
+}
+
 function nextRoutineDate(crons: string[], timezone: string): Date {
   let next: Date | null;
   try {
@@ -5200,6 +5217,7 @@ function mapRoutine(row: {
   webhookEnabled: boolean;
   githubEnabled: boolean;
   messageProvider: string | null;
+  unattendedTools: string[];
   lastRunAt: Date | null;
   nextRunAt: Date | null;
   createdAt: Date;
@@ -5216,6 +5234,7 @@ function mapRoutine(row: {
     webhookEnabled: row.webhookEnabled,
     githubEnabled: row.githubEnabled,
     messageProvider: row.messageProvider,
+    unattendedTools: row.unattendedTools,
     lastRunAt: row.lastRunAt?.toISOString() ?? null,
     nextRunAt: row.nextRunAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
