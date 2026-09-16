@@ -62,6 +62,7 @@ import {
   TeachRecordingEventSchema,
   ThreadMessagePageSchema,
   ThreadSnapshotSchema,
+  UnattendedTools,
   UpdateAgentSkillInput,
   UpdateBotInput,
   UpdateExternalConversationPolicyInput,
@@ -392,6 +393,7 @@ export const appContract = {
               .regex(/^[a-z0-9._-]+$/i)
               .nullable()
               .optional(),
+            unattendedTools: UnattendedTools.optional(),
             /** ISO datetime to arm a never-run one-shot. */
             runAt: IsoDate.optional(),
           })

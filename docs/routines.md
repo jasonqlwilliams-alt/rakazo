@@ -87,6 +87,15 @@ use `crons: []` with at least one event trigger enabled; they keep
 payload with the routine prompt. A polling cron does not substitute for this
 event context.
 
+The inbound payload stays fenced as untrusted delivery data, not instructions.
+
+Webhook-triggered runs may inspect state unattended, but side effects need
+the owner's approval. A routine owner can opt a webhook-enabled routine in to
+run named tools unattended by setting `unattendedTools` to an explicit
+allowlist of known tool names through `routines.create` or `routines.update`.
+An empty list, any other trigger, and any tool not on the list keep that
+default.
+
 Authentication and dispatch are implemented in
 [`webhook.ts`](../apps/api/src/webhook.ts),
 [`github-webhook.ts`](../apps/api/src/github-webhook.ts), and

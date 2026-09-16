@@ -19,6 +19,7 @@ export type WebhookEvents = {
     trigger: "webhook";
     clientNonce?: string;
     allowParallelRun?: boolean;
+    routineId?: string;
   }): Promise<{ messageId: string; runId: string | null; seq: number }>;
 };
 
@@ -153,11 +154,13 @@ export async function deliverWebhookEvent(
   target: InboundTarget,
   input: {
     prompt: string;
-    routines: Array<{ name: string; prompt: string }>;
+    routines: Array<{ id: string; name: string; prompt: string }>;
     source: "webhook" | "github" | "messaging";
     idempotencyKey?: string;
     /** Messaging wakes share the live chat thread; keep a separate webhook run. */
     allowParallelRun?: boolean;
+    /** Bind HTTP webhook deliveries to a single matching webhook-enabled routine. */
+    routineId?: string;
   },
 ) {
   const promptText =
@@ -190,6 +193,7 @@ export async function deliverWebhookEvent(
     trigger: "webhook",
     clientNonce,
     ...(input.allowParallelRun ? { allowParallelRun: true } : {}),
+    ...(input.routineId ? { routineId: input.routineId } : {}),
   });
 
   if (sent.runId) {

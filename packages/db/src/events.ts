@@ -197,6 +197,8 @@ export interface SendUserMessageInput {
   trigger: "user" | "follow_up" | "webhook" | "messaging";
   clientNonce?: string;
   linkMessageToRun?: boolean;
+  /** Bind a webhook delivery to the routine that opted in to unattended tools. */
+  routineId?: string;
   /** When false, persist the user message without starting a run (team-chat transcript). */
   createRun?: boolean;
   /** When true, start a new run even if the bot is already busy (team-chat delivery). */
@@ -413,6 +415,7 @@ export async function sendUserMessage(
             trigger: input.trigger,
             clientNonce: input.clientNonce ? `send:${message.id}` : undefined,
             sourceMessageId: message.id,
+            routineId: input.routineId,
           },
         });
         if (input.linkMessageToRun) {
