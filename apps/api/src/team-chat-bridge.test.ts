@@ -1954,4 +1954,88 @@ describe("team chat bridge", () => {
       }),
     );
   });
+
+  it("keeps storing bot-authored Slack messages for automated-sender policies", async () => {
+    const conversation = {
+      id: "conversation-1",
+      provider: "slack",
+      workspaceId: "T-1",
+      externalKey: "C-1",
+      conversationId: "C-1",
+      spaceId: "space-1",
+      botId: "bot-1",
+      userId: "owner-1",
+      thread: { id: "thread-1" },
+    };
+    const messageUpsert = vi.fn(async ({ create }: { create: Record<string, unknown> }) => ({
+      id: "external-1",
+      threadMessageId: null,
+      ...create,
+    }));
+    const sendUserMessage = vi.fn(async () => ({
+      messageId: "message-visible",
+      seq: 1,
+      taskId: null,
+      runId: null,
+    }));
+    const enqueue = vi.fn();
+    const bridge = new TeamChatBridge({
+      prisma: {
+        externalConversation: { upsert: vi.fn(async () => conversation) },
+        externalMessage: {
+          upsert: messageUpsert,
+          update: vi.fn(async () => undefined),
+          updateMany: vi.fn(async () => ({ count: 0 })),
+          findMany: vi.fn(async () => []),
+        },
+        run: { findMany: vi.fn(async () => []) },
+      } as unknown as PrismaClient,
+      events: { sendUserMessage },
+      jobs: { enqueue },
+      send: vi.fn(),
+      providerId: "slack",
+      botId: "bot-1",
+    });
+    (
+      bridge as unknown as {
+        target: { id: string; spaceId: string; userId: string; name: string };
+      }
+    ).target = { id: "bot-1", spaceId: "space-1", userId: "owner-1", name: "Desk" };
+
+    await expect(
+      bridge.receive({
+        eventId: "Ev-ci",
+        workspaceId: "T-1",
+        kind: "ambient",
+        conversationKey: "C-1",
+        conversationId: "C-1",
+        replyThreadId: null,
+        senderId: "B-ci",
+        senderName: "CI",
+        senderIsBot: true,
+        content: "Build failed on main",
+      }),
+    ).resolves.toEqual({
+      spaceId: "space-1",
+      userId: "owner-1",
+      botId: "bot-1",
+      threadId: "thread-1",
+    });
+    expect(messageUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          senderId: "B-ci",
+          senderIsBot: true,
+          status: "observed",
+        }),
+      }),
+    );
+    expect(sendUserMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        blocks: [{ kind: "text", text: "Build failed on main" }],
+        clientNonce: "teamchat-transcript:slack:Ev-ci",
+        createRun: false,
+      }),
+    );
+  });
 });

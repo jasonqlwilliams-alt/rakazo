@@ -1,8 +1,10 @@
 import type { MessagingInboundMessage } from "@rakazo/adapter-kit";
+import { toTeamChatInbound } from "@rakazo/adapters";
 import type { PrismaClient } from "@rakazo/db";
 import { describe, expect, it, vi } from "vitest";
 import { TeamChatBridge } from "./team-chat-bridge.js";
 import {
+  deliverUnmappableTeamChatInbound,
   PendingTeamChatInbound,
   prefersTeamChatSurface,
   settleWithTimeout,
@@ -32,9 +34,44 @@ describe("team chat startup helpers", () => {
   it("prefers TeamChat for configured workspace surfaces even before the bridge is ready", () => {
     expect(prefersTeamChatSurface(message(), "bot-1")).toBe(true);
     expect(
+      prefersTeamChatSurface(message({ provider: "discord", workspaceId: undefined }), "bot-1"),
+    ).toBe(true);
+    expect(
       prefersTeamChatSurface(message({ provider: "sendblue", workspaceId: undefined }), "bot-1"),
     ).toBe(false);
     expect(prefersTeamChatSurface(message(), undefined)).toBe(false);
+  });
+
+  it("drops an empty Discord team-room sticker instead of the personal line", async () => {
+    const sticker = message({
+      provider: "discord",
+      handle: "sticker-1",
+      threadId: "discord:guild-1:channel-1",
+      isDirect: false,
+      from: "user-1",
+      content: "",
+      mediaUrl: null,
+      workspaceId: "guild-1",
+      conversationKey: "channel-1",
+      kind: "ambient",
+      participants: ["user-1"],
+    });
+    expect(prefersTeamChatSurface(sticker, "bot-1")).toBe(true);
+    expect(toTeamChatInbound(sticker)).toBeNull();
+
+    const personalInbound = vi.fn(async () => {
+      throw new Error("personal line must not see Discord team-room stickers");
+    });
+    await deliverUnmappableTeamChatInbound(sticker, personalInbound);
+    expect(personalInbound).not.toHaveBeenCalled();
+  });
+
+  it("still delivers unmappable Slack events to the personal line", async () => {
+    const empty = message({ content: "", mediaUrl: null });
+    expect(toTeamChatInbound(empty)).toBeNull();
+    const personalInbound = vi.fn(async () => undefined);
+    await deliverUnmappableTeamChatInbound(empty, personalInbound);
+    expect(personalInbound).toHaveBeenCalledWith(empty);
   });
 
   it("settles buffered TeamChat inbound only after the bridge receives it", async () => {

@@ -1,12 +1,28 @@
+import type { DiscordAdapter } from "@chat-adapter/discord";
+import { createDiscordAdapter } from "@chat-adapter/discord";
 import { createSlackAdapter } from "@chat-adapter/slack";
 import { createTelegramAdapter } from "@chat-adapter/telegram";
 import { createWhatsAppAdapter } from "@chat-adapter/whatsapp";
 import type { MessagingInboundMessage, MessagingOutboundStatus } from "@rakazo/adapter-kit";
-import type { Adapter } from "chat";
+import { getLogger } from "@rakazo/logging";
+import type { Adapter, ChatInstance } from "chat";
+import { ConsoleLogger } from "chat";
 import { createLarkAdapter, Domain } from "chat-adapter-lark";
 import { createSendblueAdapter } from "chat-adapter-sendblue";
 import type { MessagingPlatform } from "./chat-sdk-surface.js";
 import { isVitestRuntime } from "./test-runtime.js";
+
+/** Longest setTimeout delay; shutdown aborts the Gateway instead of waiting this out. */
+const DISCORD_GATEWAY_SLICE_MS = 2 ** 31 - 1;
+const DISCORD_GATEWAY_RETRY_MIN_MS = 2_000;
+const DISCORD_GATEWAY_RETRY_MAX_MS = 5 * 60_000;
+
+const TEAM_ROOM_PROVIDERS = new Set(["slack", "discord"]);
+
+type DiscordGatewayMessage = {
+  channelId: string;
+  channel: { isThread(): boolean; parentId?: string | null };
+};
 
 /**
  * Parsed platform credentials, filled from process.env at the composition
@@ -19,6 +35,9 @@ export interface MessagingEnvironmentValues {
   sendbluePhoneNumber?: string | undefined;
   slackBotToken?: string | undefined;
   slackSigningSecret?: string | undefined;
+  discordBotToken?: string | undefined;
+  discordApplicationId?: string | undefined;
+  discordRespondToChannelIds?: string | undefined;
   whatsappAccessToken?: string | undefined;
   whatsappPhoneNumberId?: string | undefined;
   whatsappAppSecret?: string | undefined;
@@ -38,13 +57,16 @@ export function messagingEnvFromProcess(
   // Same trim/empty-to-undefined normalization the API's env loader applies,
   // so a credential with stray whitespace behaves identically in both roles.
   const clean = (value: string | undefined) => value?.trim() || undefined;
-  return {
+  const parsed: MessagingEnvironmentValues = {
     sendblueApiKeyId: clean(env.SENDBLUE_API_KEY_ID),
     sendblueApiSecret: clean(env.SENDBLUE_API_SECRET),
     sendblueSigningSecret: clean(env.SENDBLUE_SIGNING_SECRET),
     sendbluePhoneNumber: clean(env.SENDBLUE_PHONE_NUMBER),
     slackBotToken: clean(env.SLACK_BOT_TOKEN),
     slackSigningSecret: clean(env.SLACK_SIGNING_SECRET),
+    discordBotToken: clean(env.DISCORD_BOT_TOKEN),
+    discordApplicationId: clean(env.DISCORD_APPLICATION_ID),
+    discordRespondToChannelIds: clean(env.DISCORD_RESPOND_TO_CHANNEL_IDS),
     whatsappAccessToken: clean(env.WHATSAPP_ACCESS_TOKEN),
     whatsappPhoneNumberId: clean(env.WHATSAPP_PHONE_NUMBER_ID),
     whatsappAppSecret: clean(env.WHATSAPP_APP_SECRET),
@@ -57,12 +79,40 @@ export function messagingEnvFromProcess(
     larkEncryptKey: clean(env.LARK_ENCRYPT_KEY),
     larkDomain: clean(env.LARK_DOMAIN),
   };
+  assertDiscordCredentials(parsed);
+  return parsed;
+}
+
+/** Comma-separated Discord channel allowlist. */
+function parseMessagingCsvIds(value: string | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+/** Slack and Discord carry team rooms (workspaces with channels and threads). */
+export function isTeamRoomProvider(provider: string): boolean {
+  return TEAM_ROOM_PROVIDERS.has(provider);
+}
+
+/** The one mounted team-room platform a team-chat bot serves; refuses more than one. */
+export function teamChatProviderId(platforms: Array<{ provider: string }>): string | undefined {
+  const providers = platforms.map((platform) => platform.provider).filter(isTeamRoomProvider);
+  if (providers.length > 1) {
+    throw new Error(
+      `TEAM_CHAT_BOT_ID serves one team platform, but ${providers.join(" and ")} are both configured. Unset one platform's keys.`,
+    );
+  }
+  return providers[0];
 }
 
 /**
  * Build the platform list for every fully configured provider. Group
- * conversations stay sendblue-only until channel semantics are mapped for
- * the other platforms, so their capabilities say so instead of half-working.
+ * conversations stay limited to sendblue and the team-room platforms (Slack,
+ * Discord) until channel semantics are mapped for the others, so their
+ * capabilities say so instead of half-working.
  *
  * `pollInboundMessages` must be true only in the one process that also
  * registers the inbound sink (messaging.onInbound — apps/api/src/app.ts).
@@ -73,16 +123,19 @@ export function messagingEnvFromProcess(
  * inbound sink attached doesn't just do nothing — it actively steals
  * Telegram's single getUpdates slot away from the process that IS
  * listening, so both sides spend every cycle losing a 409 Conflict to the
- * other and messages stop arriving at all. Any caller that only sends
- * (e.g. apps/worker/src/index.ts, for messaging.deliver jobs) must leave
- * this false so Telegram mode resolves to "webhook" (passive — resolves
- * bot identity for outbound calls, never polls, and no webhook route is
- * mounted there for it to receive on anyway).
+ * other and messages stop arriving at all. Discord Gateway has the same
+ * single-consumer rule: only the API process starts it. Any caller that
+ * only sends (e.g. apps/worker/src/index.ts, for messaging.deliver jobs)
+ * must leave this false so Telegram mode resolves to "webhook" (passive —
+ * resolves bot identity for outbound calls, never polls, and no webhook
+ * route is mounted there for it to receive on anyway) and Discord never
+ * opens a Gateway.
  */
 export function messagingPlatformsFromEnv(
   env: MessagingEnvironmentValues,
   options: { pollInboundMessages?: boolean } = {},
 ): MessagingPlatform[] {
+  assertDiscordCredentials(env);
   const platforms: MessagingPlatform[] = [];
 
   if (
@@ -127,6 +180,30 @@ export function messagingPlatformsFromEnv(
         signingSecret: env.slackSigningSecret,
       }),
       enrichTeamRoom: enrichSlackTeamRoom,
+    });
+  }
+
+  if (env.discordBotToken && env.discordApplicationId) {
+    const adapter = createDiscordAdapter({
+      botToken: env.discordBotToken,
+      applicationId: env.discordApplicationId,
+      webhookVerifier: () => false,
+      // Explicit empty list prevents the adapter from rereading process.env values.
+      respondToChannelIds: [],
+      mentionRoleIds: [],
+      logger: new ConsoleLogger("warn").child("discord"),
+    });
+    Object.assign(adapter, {
+      handleWebhook: async () => new Response("Not found", { status: 404 }),
+    } satisfies Pick<Adapter, "handleWebhook">);
+    if (options.pollInboundMessages) {
+      attachDiscordGateway(adapter, parseMessagingCsvIds(env.discordRespondToChannelIds));
+    }
+    platforms.push({
+      provider: "discord",
+      capabilities: { direct: true, groups: true, typing: false },
+      adapter,
+      enrichTeamRoom: (_raw, base, message) => enrichDiscordTeamRoom(base, message),
     });
   }
 
@@ -271,7 +348,7 @@ function slackAuthorizedBotUserId(root: Record<string, unknown>): string | undef
   if (!Array.isArray(authorizations)) return undefined;
   for (const entry of authorizations) {
     const record = asRecord(entry);
-    if (!record || record.is_bot !== true) continue;
+    if (record?.is_bot !== true) continue;
     const userId = stringField(record, "user_id");
     if (userId) return userId;
   }
@@ -281,6 +358,134 @@ function slackAuthorizedBotUserId(root: Record<string, unknown>): string | undef
 function mentionsSlackBot(text: string, botUserId: string | undefined): boolean {
   if (!botUserId) return false;
   return text.includes(`<@${botUserId}>`);
+}
+
+/**
+ * Discord team-room fields from the thread id (discord:{guild}:{channel}[:{thread}]).
+ * Guild id is the workspace (direct messages use "@me"), the parent channel
+ * is the conversation key, and a thread id is the in-channel reply thread.
+ * The Chat SDK mention flag sets the kind; content keeps its mentions, as on Slack.
+ */
+export function enrichDiscordTeamRoom(
+  base: MessagingInboundMessage,
+  message: { isMention: boolean },
+): Partial<MessagingInboundMessage> {
+  const [, guildId, channelId, threadId] = base.threadId.split(":");
+  const enrichment: Partial<MessagingInboundMessage> = { replyThreadId: threadId ?? null };
+  if (guildId && guildId !== "@me") enrichment.workspaceId = guildId;
+  if (channelId) enrichment.conversationKey = channelId;
+  if (!base.isDirect) enrichment.kind = message.isMention ? "mention" : "ambient";
+  return enrichment;
+}
+
+/**
+ * A Discord bot token reaches every server the bot joins and every user who
+ * can message it, so the channel allowlist is part of the required set.
+ */
+function assertDiscordCredentials(env: MessagingEnvironmentValues): void {
+  const present = [
+    env.discordBotToken,
+    env.discordApplicationId,
+    env.discordRespondToChannelIds,
+  ].some(Boolean);
+  if (!present) return;
+  if (
+    env.discordBotToken &&
+    env.discordApplicationId &&
+    parseMessagingCsvIds(env.discordRespondToChannelIds).length > 0
+  ) {
+    return;
+  }
+  throw new Error(
+    "Discord messaging is partially configured. Set DISCORD_BOT_TOKEN, DISCORD_APPLICATION_ID, and DISCORD_RESPOND_TO_CHANNEL_IDS (the only channel ids the bot answers) together, or unset every DISCORD_* key.",
+  );
+}
+
+/**
+ * Run the Gateway from initialize() until stopPolling(). A message outside the
+ * channel ids (direct messages included) is dropped before the adapter
+ * handles it, so it creates no Discord thread.
+ */
+function attachDiscordGateway(adapter: DiscordAdapter, channelIds: string[]): void {
+  const initialize = adapter.initialize.bind(adapter);
+  const gateway = adapter as unknown as {
+    handleGatewayMessage(message: DiscordGatewayMessage, isMentioned: boolean): Promise<void>;
+  };
+  const handleGatewayMessage = gateway.handleGatewayMessage.bind(adapter);
+  let abort: AbortController | undefined;
+  let running: Promise<void> | undefined;
+  Object.assign(adapter, {
+    initialize: async (chat: ChatInstance) => {
+      await initialize(chat);
+      abort?.abort();
+      abort = new AbortController();
+      running = listenOnDiscordGateway(adapter, abort.signal);
+    },
+    stopPolling: async () => {
+      abort?.abort();
+      await running?.catch(() => undefined);
+    },
+    handleGatewayMessage: async (message: DiscordGatewayMessage, isMentioned: boolean) => {
+      const roomId = message.channel.isThread()
+        ? (message.channel.parentId ?? message.channelId)
+        : message.channelId;
+      if (!channelIds.includes(roomId)) return;
+      await handleGatewayMessage(message, isMentioned);
+    },
+  });
+}
+
+async function listenOnDiscordGateway(adapter: DiscordAdapter, signal: AbortSignal): Promise<void> {
+  let retryMs = DISCORD_GATEWAY_RETRY_MIN_MS;
+  while (!signal.aborted) {
+    const startedAt = Date.now();
+    let settle: (error?: unknown) => void = () => undefined;
+    const finished = new Promise<void>((resolve, reject) => {
+      settle = (error) => (error ? reject(error) : resolve());
+    });
+    const onAbort = () => settle();
+    signal.addEventListener("abort", onAbort, { once: true });
+    try {
+      const response = await adapter.startGatewayListener(
+        {
+          waitUntil: (task) => {
+            void Promise.resolve(task).then(
+              () => settle(),
+              (error) => settle(error),
+            );
+          },
+        },
+        DISCORD_GATEWAY_SLICE_MS,
+        signal,
+      );
+      if (!response.ok) {
+        throw new Error(`Discord Gateway failed to start (${response.status})`);
+      }
+      await finished;
+    } catch (error) {
+      getLogger().error("discord gateway listener failed", error);
+    } finally {
+      signal.removeEventListener("abort", onAbort);
+    }
+    if (signal.aborted) return;
+    if (Date.now() - startedAt >= DISCORD_GATEWAY_RETRY_MAX_MS) {
+      retryMs = DISCORD_GATEWAY_RETRY_MIN_MS;
+    }
+    await waitUnlessAborted(retryMs, signal);
+    retryMs = Math.min(retryMs * 2, DISCORD_GATEWAY_RETRY_MAX_MS);
+  }
+}
+
+function waitUnlessAborted(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal.addEventListener("abort", done, { once: true });
+  });
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
