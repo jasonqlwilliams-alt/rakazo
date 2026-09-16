@@ -62,6 +62,7 @@ import {
   ScriptedAgentRuntime,
   SmtpEmailProvider,
   SpaceMemoryProviderResolver,
+  teamChatProviderId,
   toTeamChatInbound,
 } from "@rakazo/adapters";
 import { blockedAuthPaths, createAuth } from "@rakazo/auth";
@@ -99,6 +100,7 @@ import { mountScreenTarget } from "./screen-proxy.js";
 import { isDeferredReservationLost, TeamChatBridge } from "./team-chat-bridge.js";
 import { ModelTeamChatEngagementJudge } from "./team-chat-judge.js";
 import {
+  deliverUnmappableTeamChatInbound,
   PendingTeamChatInbound,
   prefersTeamChatSurface,
   settleWithTimeout,
@@ -237,6 +239,7 @@ export async function createApp(
   // see messagingPlatformsFromEnv's docstring for why a second poller
   // elsewhere (e.g. the worker) would actively break this.
   const messagingPlatforms = messagingPlatformsFromEnv(env, { pollInboundMessages: true });
+  const teamChatProvider = env.teamChatBotId ? teamChatProviderId(messagingPlatforms) : undefined;
   const messaging =
     messagingOverride ??
     (isMessagingSurfaceEnabled(messagingPlatforms, {
@@ -563,7 +566,7 @@ export async function createApp(
     ) => {
       const mapped = toTeamChatInbound(event);
       if (!mapped) {
-        await inbound(event);
+        await deliverUnmappableTeamChatInbound(event, inbound);
         return;
       }
       const canWake = await teamChatSenderCanWakeMessageRoutines(inboundDeps, event);
@@ -673,7 +676,7 @@ export async function createApp(
         events,
         jobs,
         send: createMessagingTeamChatSender(messaging),
-        providerId: "slack",
+        providerId: teamChatProvider ?? "slack",
         botId: env.teamChatBotId,
         judge,
       });
@@ -747,12 +750,13 @@ export async function createApp(
     });
     mountMessagingWebhookRoutes(app, { messaging });
     // Start polling-mode adapters (e.g. Telegram with no public webhook URL
-    // registered) immediately rather than waiting for the first webhook
-    // POST or outbound send to lazily trigger it. This is the process that
-    // owns the inbound sink registered just above, so it must be the one
-    // holding the live connection — a second poller elsewhere (e.g. the
-    // worker) would only fight this one for Telegram's single getUpdates
-    // slot without ever seeing the messages itself.
+    // registered) and the Discord Gateway immediately rather than waiting
+    // for the first webhook POST or outbound send to lazily trigger them.
+    // This is the process that owns the inbound sink registered just above,
+    // so it must be the one holding the live connection — a second poller
+    // elsewhere (e.g. the worker) would only fight this one for Telegram's
+    // single getUpdates slot or Discord's Gateway without ever seeing the
+    // messages itself.
     // Bounded retries cover transient Telegram startup failures; polling-only
     // bots otherwise stay dark until an unrelated outbound send re-inits.
     messagingInitTask = (async () => {

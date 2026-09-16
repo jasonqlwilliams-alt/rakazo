@@ -1,4 +1,5 @@
 import type { MessagingInboundMessage } from "@rakazo/adapter-kit";
+import { isTeamRoomProvider } from "@rakazo/adapters";
 
 /** Cap buffered TeamChat events while the bridge is still starting. */
 export const PENDING_TEAM_CHAT_LIMIT = 100;
@@ -21,10 +22,19 @@ export function prefersTeamChatSurface(
 ): boolean {
   return (
     Boolean(teamChatBotId) &&
-    (event.provider === "slack" ||
+    (isTeamRoomProvider(event.provider) ||
       event.provider === "teamchat-emulator" ||
       Boolean(event.workspaceId))
   );
+}
+
+/** Discord team rooms never fall through to the personal line. */
+export async function deliverUnmappableTeamChatInbound(
+  event: MessagingInboundMessage,
+  personalInbound: (event: MessagingInboundMessage) => Promise<void>,
+): Promise<void> {
+  if (event.provider === "discord") return;
+  await personalInbound(event);
 }
 
 /** Queue TeamChat-shaped messages until TeamChatBridge.receive is available. */

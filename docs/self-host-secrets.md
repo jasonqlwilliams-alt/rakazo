@@ -73,7 +73,7 @@ From `.env.images.example` (images installer). Leave blank if unused:
 | `COMPOSIO_API_KEY` | Composio managed catalog |
 | `E2B_API_KEY` / `DAYTONA_API_KEY` / `BOX_API_KEY` | Remote computers when `SANDBOX_PROVIDER` is not `docker` |
 | `SMTP_URL` / `EMAIL_FROM` | Password-recovery email |
-| Messaging tokens (Slack, Telegram, …) | Only if you enable those surfaces |
+| Messaging tokens (Slack, Discord, Telegram, …) | Only if you enable those surfaces |
 
 Blank optional keys are normal for a minimal published-images boot. Pipedream
 Connect keys appear only in source/Compose `.env.example`, not the images
