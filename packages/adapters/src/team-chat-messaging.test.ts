@@ -90,6 +90,18 @@ describe("resolveMessagingThreadId", () => {
   it("leaves conversationId alone when it already ends with replyThreadId", () => {
     expect(resolveMessagingThreadId("slack:C1:100.1", "100.1")).toBe("slack:C1:100.1");
   });
+
+  it("appends a Discord thread onto guild and channel", () => {
+    expect(resolveMessagingThreadId("discord:guild-1:channel-projects", "thread-99")).toBe(
+      "discord:guild-1:channel-projects:thread-99",
+    );
+  });
+
+  it("replaces a stale Discord thread without dropping the channel", () => {
+    expect(
+      resolveMessagingThreadId("discord:guild-1:channel-projects:thread-old", "thread-99"),
+    ).toBe("discord:guild-1:channel-projects:thread-99");
+  });
 });
 
 describe("createMessagingTeamChatSender", () => {

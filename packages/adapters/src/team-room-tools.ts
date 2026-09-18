@@ -69,13 +69,16 @@ export function buildTeamRoomAllowlist(
   envRoomIds: string[],
   seen: SeenTeamRoom[],
 ): TeamRoomAllowlistEntry[] {
+  const restrictToEnv = envRoomIds.length > 0;
+  const envSet = new Set(envRoomIds);
   const byId = new Map<string, TeamRoomAllowlistEntry>();
   for (const row of seen) {
     if (!isTeamRoomSeen(provider, row)) continue;
+    if (restrictToEnv && !envSet.has(row.externalKey)) continue;
     byId.set(row.externalKey, {
       id: row.externalKey,
       name: row.displayName,
-      conversationId: row.conversationId,
+      conversationId: conversationIdForRoom(provider, row.externalKey, row.workspaceId),
     });
   }
   for (const roomId of envRoomIds) {
@@ -182,14 +185,22 @@ function isTeamRoomSeen(provider: string, row: SeenTeamRoom): boolean {
   return true;
 }
 
-function conversationIdForEnvRoom(provider: string, roomId: string, seen: SeenTeamRoom[]): string {
-  const match = seen.find((row) => row.externalKey === roomId);
-  if (match) return match.conversationId;
-  if (provider === "discord") {
-    const guild = seen.find((row) => row.workspaceId && row.workspaceId !== "@me")?.workspaceId;
-    return guild ? `discord:${guild}:${roomId}` : `discord:${roomId}`;
+function conversationIdForRoom(provider: string, roomId: string, workspaceId?: string): string {
+  if (provider === "discord" && workspaceId && workspaceId !== "@me") {
+    return `discord:${workspaceId}:${roomId}`;
   }
   return `${provider}:${roomId}`;
+}
+
+function conversationIdForEnvRoom(provider: string, roomId: string, seen: SeenTeamRoom[]): string {
+  const match = seen.find((row) => row.externalKey === roomId);
+  const workspaceId = teamRoomWorkspaceId(match) ?? seen.map(teamRoomWorkspaceId).find(Boolean);
+  return conversationIdForRoom(provider, roomId, workspaceId);
+}
+
+function teamRoomWorkspaceId(row?: SeenTeamRoom): string | undefined {
+  if (!row?.workspaceId || row.workspaceId === "@me") return undefined;
+  return row.workspaceId;
 }
 
 function normalizeRoomKey(value: string): string {

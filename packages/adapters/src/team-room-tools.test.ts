@@ -19,7 +19,9 @@ const projects = {
   workspaceId: "guild-1",
 };
 
-function createDeps(options: { seen?: (typeof projects)[]; envRoomIds?: string[] } = {}) {
+function createDeps(
+  options: { seen?: (typeof projects)[]; envRoomIds?: string[]; provider?: string } = {},
+) {
   const outbound: Array<{
     idempotencyKey: string;
     kind: string;
@@ -69,7 +71,7 @@ function createDeps(options: { seen?: (typeof projects)[]; envRoomIds?: string[]
       prisma: prisma as never,
       jobs: { enqueue },
       teamRoom: {
-        provider: "discord",
+        provider: options.provider ?? "discord",
         envRoomIds: options.envRoomIds ?? ["channel-projects"],
       },
     },
@@ -115,7 +117,7 @@ describe("team-room allowlist", () => {
   it("accepts env ids, seen names, and rejects DMs", () => {
     const allowlist = buildTeamRoomAllowlist(
       "discord",
-      ["channel-dump"],
+      ["channel-projects", "channel-dump"],
       [
         projects,
         {
@@ -133,6 +135,30 @@ describe("team-room allowlist", () => {
     );
     expect(resolveTeamRoom("dm-1", allowlist)).toBeNull();
     expect(resolveTeamRoom("gates", allowlist)).toBeNull();
+  });
+
+  it("drops a seen Discord room that is no longer in the env list", () => {
+    const stale = {
+      externalKey: "channel-old",
+      displayName: "old",
+      conversationId: "discord:guild-1:channel-old",
+      workspaceId: "guild-1",
+    };
+    const allowlist = buildTeamRoomAllowlist("discord", ["channel-projects"], [projects, stale]);
+    expect(resolveTeamRoom("old", allowlist)).toBeNull();
+    expect(resolveTeamRoom("channel-old", allowlist)).toBeNull();
+    expect(resolveTeamRoom("projects", allowlist)?.id).toBe("channel-projects");
+  });
+
+  it("keeps seen Slack rooms when there is no env list", () => {
+    const general = {
+      externalKey: "C1",
+      displayName: "general",
+      conversationId: "slack:C1",
+      workspaceId: "T1",
+    };
+    const allowlist = buildTeamRoomAllowlist("slack", [], [general]);
+    expect(resolveTeamRoom("general", allowlist)?.conversationId).toBe("slack:C1");
   });
 });
 
@@ -179,6 +205,78 @@ describe("postToTeamRoom", () => {
     expect(outbound).toHaveLength(1);
     expect(createMany).toHaveBeenCalledTimes(2);
     expect(enqueue).toHaveBeenCalledTimes(2);
+  });
+
+  it("posts to the Discord room, not the last inbound thread", async () => {
+    const { outbound, deps } = createDeps({
+      seen: [
+        {
+          ...projects,
+          conversationId: "discord:guild-1:channel-projects:thread-new",
+        },
+      ],
+    });
+    await expect(
+      postToTeamRoom(deps, { room: "projects", text: "Daily log", deliveryKey: "exec-room" }),
+    ).resolves.toEqual({ ok: true });
+    expect(outbound[0]?.threadId).toBe("discord:guild-1:channel-projects");
+  });
+
+  it("appends a Discord thread onto guild and channel", async () => {
+    const { outbound, deps } = createDeps();
+    await expect(
+      postToTeamRoom(deps, {
+        room: "projects",
+        text: "In thread",
+        thread: "thread-99",
+        deliveryKey: "exec-discord-thread",
+      }),
+    ).resolves.toEqual({ ok: true });
+    expect(outbound[0]?.threadId).toBe("discord:guild-1:channel-projects:thread-99");
+  });
+
+  it("keeps Slack thread composition as provider:channel:thread", async () => {
+    const { outbound, deps } = createDeps({
+      provider: "slack",
+      envRoomIds: [],
+      seen: [
+        {
+          externalKey: "C1",
+          displayName: "general",
+          conversationId: "slack:C1",
+          workspaceId: "T1",
+        },
+      ],
+    });
+    await expect(
+      postToTeamRoom(deps, {
+        room: "general",
+        text: "In thread",
+        thread: "100.1",
+        deliveryKey: "exec-slack-thread",
+      }),
+    ).resolves.toEqual({ ok: true });
+    expect(outbound[0]?.threadId).toBe("slack:C1:100.1");
+  });
+
+  it("rejects a seen Discord room missing from the env list", async () => {
+    const { outbound, enqueue, deps } = createDeps({
+      seen: [
+        projects,
+        {
+          externalKey: "channel-old",
+          displayName: "old",
+          conversationId: "discord:guild-1:channel-old",
+          workspaceId: "guild-1",
+        },
+      ],
+      envRoomIds: ["channel-projects"],
+    });
+    await expect(
+      postToTeamRoom(deps, { room: "old", text: "nope", deliveryKey: "exec-stale" }),
+    ).resolves.toEqual({ ok: false, error: "That room is not on the team-room allowlist." });
+    expect(outbound).toEqual([]);
+    expect(enqueue).not.toHaveBeenCalled();
   });
 
   it("rejects text over the 2,000-character bound", () => {

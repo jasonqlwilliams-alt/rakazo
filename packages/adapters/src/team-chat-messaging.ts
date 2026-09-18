@@ -45,9 +45,10 @@ function looksLikeMention(content: string, channelName: string | null): boolean 
 }
 
 /**
- * Chat SDK Slack thread ids are `slack:CHANNEL:threadTs`. Team-chat stores the
- * room conversation id separately from the in-channel reply thread, so outbound
- * sends must recombine them when a reply thread is present.
+ * Slack thread ids are `slack:CHANNEL:threadTs`. Discord thread ids are
+ * `discord:GUILD:CHANNEL:thread`. Team-chat stores the room conversation id
+ * separately from the in-channel reply thread, so outbound sends must recombine
+ * them when a reply thread is present.
  */
 export function resolveMessagingThreadId(
   conversationId: string,
@@ -56,6 +57,9 @@ export function resolveMessagingThreadId(
   if (!replyThreadId) return conversationId;
   if (conversationId.endsWith(`:${replyThreadId}`)) return conversationId;
   const parts = conversationId.split(":");
+  if (parts[0] === "discord" && parts[1] && parts[2]) {
+    return `discord:${parts[1]}:${parts[2]}:${replyThreadId}`;
+  }
   // provider:channel[:existingTs] → provider:channel:replyThreadId
   if (parts.length >= 2 && parts[0] && parts[1]) {
     return `${parts[0]}:${parts[1]}:${replyThreadId}`;
