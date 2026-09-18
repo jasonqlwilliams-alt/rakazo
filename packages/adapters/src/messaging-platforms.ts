@@ -84,7 +84,7 @@ export function messagingEnvFromProcess(
 }
 
 /** Comma-separated Discord channel allowlist. */
-function parseMessagingCsvIds(value: string | undefined): string[] {
+export function parseMessagingCsvIds(value: string | undefined): string[] {
   if (!value) return [];
   return value
     .split(",")

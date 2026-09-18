@@ -190,7 +190,7 @@ msgstr "Acciones para {0}"
 msgid "Actions for space"
 msgstr ""
 
-#: src/pages/RoutineEditor.tsx:297
+#: src/pages/RoutineEditor.tsx:294
 msgid "Active"
 msgstr "Activo"
 
@@ -221,7 +221,7 @@ msgstr "Agrega una hora de ejecución para este one-shot."
 msgid "Add a schedule, webhook, GitHub, or message trigger"
 msgstr ""
 
-#: src/pages/RoutineEditor.tsx:482
+#: src/pages/RoutineEditor.tsx:474
 msgid "Add a schedule, webhook, GitHub, or message trigger to run this routine."
 msgstr ""
 
@@ -287,7 +287,7 @@ msgstr "Agregar a la rutina"
 msgid "Add Treg"
 msgstr "Agregar Treg"
 
-#: src/pages/RoutineEditor.tsx:418
+#: src/pages/RoutineEditor.tsx:415
 msgid "Add trigger"
 msgstr "Agregar disparador"
 
@@ -312,7 +312,7 @@ msgstr "Agregando…"
 msgid "Advanced"
 msgstr "Avanzado"
 
-#: src/pages/RoutineEditor.tsx:643
+#: src/pages/RoutineEditor.tsx:634
 msgid "Advanced..."
 msgstr "Avanzado..."
 
@@ -541,7 +541,7 @@ msgstr ""
 msgid "Automated senders will appear after they post here."
 msgstr ""
 
-#: src/pages/RoutineEditor.tsx:557
+#: src/pages/RoutineEditor.tsx:548
 msgid "Available after the routine is saved"
 msgstr "Disponible después de guardar la rutina"
 
@@ -550,7 +550,7 @@ msgid "Avatars"
 msgstr "Avatares"
 
 #: src/pages/PluginsOverlay.tsx:540
-#: src/pages/RoutineEditor.tsx:260
+#: src/pages/RoutineEditor.tsx:257
 msgid "Back"
 msgstr "Atrás"
 
@@ -766,7 +766,7 @@ msgstr ""
 #: src/pages/MessagingSettingsOverlay.tsx:361
 #: src/pages/PeerMessagesOverlay.tsx:91
 #: src/pages/PeerMessagesOverlay.tsx:92
-#: src/pages/RoutineEditor.tsx:272
+#: src/pages/RoutineEditor.tsx:269
 #: src/pages/WindowChrome.tsx:19
 msgid "Close"
 msgstr "Cerrar"
@@ -853,7 +853,7 @@ msgstr "Color"
 msgid "Color {0}"
 msgstr "Color {0}"
 
-#: src/pages/RoutineEditor.tsx:455
+#: src/pages/RoutineEditor.tsx:447
 msgid "Coming soon"
 msgstr "Próximamente"
 
@@ -1405,8 +1405,8 @@ msgstr "Crear nuevo grupo"
 msgid "Create new Space"
 msgstr "Crear nuevo space"
 
+#: src/pages/RoutineEditor.tsx:121
 #: src/pages/RoutineEditor.tsx:122
-#: src/pages/RoutineEditor.tsx:123
 msgid "Create Routine"
 msgstr "Crear rutina"
 
@@ -1493,7 +1493,7 @@ msgstr "Alcance predeterminado"
 #: src/pages/BotContextMenu.tsx:140
 #: src/pages/KnowledgeSection.tsx:449
 #: src/pages/McpServersOverlay.tsx:508
-#: src/pages/RoutineEditor.tsx:301
+#: src/pages/RoutineEditor.tsx:298
 #: src/pages/Shell.tsx:2950
 #: src/pages/Shell.tsx:2981
 #: src/pages/shell/dialogs.tsx:345
@@ -1707,13 +1707,13 @@ msgstr "Cada"
 msgid "every {intervalAmountSelect} {intervalUnitSelect}"
 msgstr "cada {intervalAmountSelect} {intervalUnitSelect}"
 
-#: src/pages/RoutineEditor.tsx:633
+#: src/pages/RoutineEditor.tsx:624
 #: src/pages/RoutineSchedule.tsx:34
 #: src/pages/RoutineSchedule.tsx:163
 msgid "Every day"
 msgstr "Todos los días"
 
-#: src/pages/RoutineEditor.tsx:631
+#: src/pages/RoutineEditor.tsx:622
 #: src/pages/RoutineSchedule.tsx:32
 #: src/pages/RoutineSchedule.tsx:149
 msgid "Every hour"
@@ -1723,12 +1723,12 @@ msgstr "Cada hora"
 msgid "Every Monday"
 msgstr "Cada lunes"
 
-#: src/pages/RoutineEditor.tsx:639
+#: src/pages/RoutineEditor.tsx:630
 #: src/pages/RoutineSchedule.tsx:40
 msgid "Every month"
 msgstr "Cada mes"
 
-#: src/pages/RoutineEditor.tsx:637
+#: src/pages/RoutineEditor.tsx:628
 #: src/pages/RoutineSchedule.tsx:38
 msgid "Every week"
 msgstr "Cada semana"
@@ -1856,9 +1856,9 @@ msgstr ""
 msgid "Getting ready"
 msgstr ""
 
-#: src/pages/RoutineEditor.tsx:103
-#: src/pages/RoutineEditor.tsx:470
-#: src/pages/RoutineEditor.tsx:586
+#: src/pages/RoutineEditor.tsx:104
+#: src/pages/RoutineEditor.tsx:462
+#: src/pages/RoutineEditor.tsx:577
 msgid "Git event"
 msgstr "Evento de Git"
 
@@ -1893,7 +1893,7 @@ msgstr "Cuelga primero y luego ingresa el código en pantalla."
 msgid "Hang up, then enter the code on screen."
 msgstr "Cuelga y luego ingresa el código en pantalla."
 
-#: src/pages/RoutineEditor.tsx:610
+#: src/pages/RoutineEditor.tsx:601
 msgid "header"
 msgstr "Encabezado"
 
@@ -1973,7 +1973,7 @@ msgstr "Entradas"
 msgid "Instance API key"
 msgstr "Clave de API de instancia"
 
-#: src/pages/RoutineEditor.tsx:321
+#: src/pages/RoutineEditor.tsx:318
 msgid "Instruction"
 msgstr "Instrucción"
 
@@ -1994,7 +1994,7 @@ msgstr "Integraciones"
 msgid "Interrupt"
 msgstr "Interrumpir"
 
-#: src/pages/RoutineEditor.tsx:641
+#: src/pages/RoutineEditor.tsx:632
 #: src/pages/RoutineSchedule.tsx:42
 msgid "Interval"
 msgstr "Intervalo"
@@ -2036,7 +2036,7 @@ msgstr "ahora mismo"
 msgid "Keep memories"
 msgstr "Conservar memorias"
 
-#: src/pages/RoutineEditor.tsx:605
+#: src/pages/RoutineEditor.tsx:596
 msgid "key"
 msgstr "Clave"
 
@@ -2062,7 +2062,7 @@ msgstr "Salir"
 msgid "Light"
 msgstr "Claro"
 
-#: src/pages/RoutineEditor.tsx:57
+#: src/pages/RoutineEditor.tsx:58
 msgid "Linear issue"
 msgstr "Issue de Linear"
 
@@ -2238,6 +2238,7 @@ msgstr "Menciones"
 msgid "Mentions only"
 msgstr ""
 
+#: src/pages/RoutineEditor.tsx:501
 #: src/pages/Shell.tsx:5090
 #: src/pages/Shell.tsx:5217
 msgid "Message"
@@ -2256,11 +2257,6 @@ msgstr "Mensaje a {activeName}"
 #: src/pages/Shell.tsx:4801
 msgid "Message composer"
 msgstr "Redactor de mensajes"
-
-#: src/pages/RoutineEditor.tsx:106
-#: src/pages/RoutineEditor.tsx:515
-msgid "Message event"
-msgstr ""
 
 #: src/pages/Shell.tsx:5502
 msgid "Message from {peer}"
@@ -2377,7 +2373,7 @@ msgstr "Mover a"
 #: src/pages/Auth.tsx:134
 #: src/pages/GroupPanel.tsx:119
 #: src/pages/GroupPanel.tsx:212
-#: src/pages/RoutineEditor.tsx:310
+#: src/pages/RoutineEditor.tsx:307
 #: src/pages/shell/bot-panel.tsx:139
 #: src/pages/shell/bot-panel.tsx:326
 #: src/pages/shell/dialogs.tsx:72
@@ -2393,7 +2389,7 @@ msgstr "Nombra este bot"
 msgid "Name this group"
 msgstr "Nombra este grupo"
 
-#: src/pages/RoutineEditor.tsx:314
+#: src/pages/RoutineEditor.tsx:311
 msgid "Name this routine"
 msgstr "Nombra esta rutina"
 
@@ -2516,7 +2512,7 @@ msgstr ""
 msgid "No results"
 msgstr "Sin resultados"
 
-#: src/pages/RoutineEditor.tsx:501
+#: src/pages/RoutineEditor.tsx:493
 msgid "No runs yet"
 msgstr "Aún no hay ejecuciones"
 
@@ -2532,7 +2528,7 @@ msgstr ""
 msgid "No tools available."
 msgstr ""
 
-#: src/pages/RoutineEditor.tsx:108
+#: src/pages/RoutineEditor.tsx:107
 msgid "No trigger"
 msgstr "Sin disparador"
 
@@ -2585,7 +2581,7 @@ msgstr "Falló la conexión OAuth"
 msgid "OAuth expired"
 msgstr "OAuth expirado"
 
-#: src/pages/RoutineEditor.tsx:424
+#: src/pages/RoutineEditor.tsx:421
 msgid "On a schedule"
 msgstr "Con un horario"
 
@@ -2677,7 +2673,7 @@ msgstr "Otro modelo…"
 msgid "output"
 msgstr ""
 
-#: src/pages/RoutineEditor.tsx:59
+#: src/pages/RoutineEditor.tsx:60
 msgid "PagerDuty incident"
 msgstr "Incidente de PagerDuty"
 
@@ -2719,7 +2715,7 @@ msgstr "Pega la dirección compatible con OpenAI de tu servidor. Rakazo agrega /
 msgid "Paste your API key"
 msgstr "Pega tu clave de API"
 
-#: src/pages/RoutineEditor.tsx:100
+#: src/pages/RoutineEditor.tsx:101
 msgid "Paused"
 msgstr "En pausa"
 
@@ -2739,7 +2735,7 @@ msgstr "Fijar"
 msgid "Playing…"
 msgstr "Reproduciendo…"
 
-#: src/pages/RoutineEditor.tsx:600
+#: src/pages/RoutineEditor.tsx:591
 msgid "POST to"
 msgstr "POST a"
 
@@ -2915,7 +2911,7 @@ msgstr "Quitar"
 msgid "Remove {0}"
 msgstr "Quitar {0}"
 
-#: src/pages/RoutineEditor.tsx:591
+#: src/pages/RoutineEditor.tsx:582
 msgid "Remove Git event"
 msgstr ""
 
@@ -2924,11 +2920,11 @@ msgstr ""
 msgid "Remove mention {0}"
 msgstr "Quitar mención {0}"
 
-#: src/pages/RoutineEditor.tsx:524
+#: src/pages/RoutineEditor.tsx:515
 msgid "Remove message trigger"
 msgstr ""
 
-#: src/pages/RoutineEditor.tsx:353
+#: src/pages/RoutineEditor.tsx:350
 msgid "Remove schedule"
 msgstr "Quitar horario"
 
@@ -2937,7 +2933,7 @@ msgstr "Quitar horario"
 msgid "Remove skill {0}"
 msgstr "Quitar habilidad {0}"
 
-#: src/pages/RoutineEditor.tsx:591
+#: src/pages/RoutineEditor.tsx:582
 msgid "Remove webhook"
 msgstr "Quitar webhook"
 
@@ -3055,26 +3051,26 @@ msgstr "Robot"
 msgid "Room guidance"
 msgstr ""
 
-#: src/pages/RoutineEditor.tsx:620
+#: src/pages/RoutineEditor.tsx:611
 msgid "Rotate key"
 msgstr "Rotar clave"
 
-#: src/pages/RoutineEditor.tsx:265
+#: src/pages/RoutineEditor.tsx:262
 #: src/pages/Shell.tsx:3569
 #: src/pages/Shell.tsx:3581
 msgid "Routine"
 msgstr "Rutina"
 
-#: src/pages/RoutineEditor.tsx:116
+#: src/pages/RoutineEditor.tsx:115
 msgid "Routines"
 msgstr "Rutinas"
 
-#: src/pages/RoutineEditor.tsx:400
-#: src/pages/RoutineEditor.tsx:406
+#: src/pages/RoutineEditor.tsx:397
+#: src/pages/RoutineEditor.tsx:403
 msgid "Run at"
 msgstr "Ejecutar a las"
 
-#: src/pages/RoutineEditor.tsx:499
+#: src/pages/RoutineEditor.tsx:491
 msgid "Run history"
 msgstr "Historial de ejecuciones"
 
@@ -3091,15 +3087,15 @@ msgstr "en ejecución"
 msgid "Running"
 msgstr "En ejecución"
 
-#: src/pages/RoutineEditor.tsx:172
+#: src/pages/RoutineEditor.tsx:171
 msgid "Running · Stop"
 msgstr "En ejecución · Detener"
 
-#: src/pages/RoutineEditor.tsx:304
+#: src/pages/RoutineEditor.tsx:301
 msgid "Running…"
 msgstr "Ejecutando…"
 
-#: src/pages/RoutineEditor.tsx:532
+#: src/pages/RoutineEditor.tsx:523
 msgid "Runs when this bot receives a verified message from this provider."
 msgstr ""
 
@@ -3111,7 +3107,7 @@ msgstr ""
 #: src/pages/KnowledgeSection.tsx:422
 #: src/pages/ModelSettingsOverlay.tsx:794
 #: src/pages/ResearchSettingsOverlay.tsx:139
-#: src/pages/RoutineEditor.tsx:489
+#: src/pages/RoutineEditor.tsx:481
 #: src/pages/shell/bot-panel.tsx:550
 msgid "Save"
 msgstr "Guardar"
@@ -3131,7 +3127,7 @@ msgstr "Guardado, pero falló la actualización de la lista"
 msgid "Saved."
 msgstr "Guardado."
 
-#: src/pages/RoutineEditor.tsx:563
+#: src/pages/RoutineEditor.tsx:554
 msgid "Saved. Rotate to reveal."
 msgstr "Guardado. Rota para revelar."
 
@@ -3147,7 +3143,7 @@ msgstr ""
 #: src/components/teach/SkillDraftCard.tsx:142
 #: src/pages/GroupPanel.tsx:236
 #: src/pages/ModelSettingsOverlay.tsx:792
-#: src/pages/RoutineEditor.tsx:489
+#: src/pages/RoutineEditor.tsx:481
 msgid "Saving…"
 msgstr "Guardando…"
 
@@ -3233,7 +3229,7 @@ msgstr "Enviar enlace de restablecimiento"
 msgid "Sending…"
 msgstr "Enviando…"
 
-#: src/pages/RoutineEditor.tsx:58
+#: src/pages/RoutineEditor.tsx:59
 msgid "Sentry alert"
 msgstr "Alerta de Sentry"
 
@@ -3351,17 +3347,6 @@ msgstr "Omitir o desplegar clave"
 #: src/pages/Shell.tsx:1903
 msgid "Skipped {0}"
 msgstr "Se omitió {0}"
-
-#: src/pages/RoutineEditor.tsx:104
-#: src/pages/RoutineEditor.tsx:442
-#: src/pages/RoutineEditor.tsx:512
-msgid "Slack message"
-msgstr "Mensaje de Slack"
-
-#: src/pages/RoutineEditor.tsx:435
-#: src/pages/RoutineEditor.tsx:446
-msgid "Slack not enabled"
-msgstr ""
 
 #: src/components/SoftwareUpdateSection.tsx:140
 #: src/components/SoftwareUpdateSection.tsx:235
@@ -3503,13 +3488,11 @@ msgstr "Team Computer"
 msgid "Team conversations"
 msgstr ""
 
-#: src/pages/RoutineEditor.tsx:56
-#: src/pages/RoutineEditor.tsx:105
-#: src/pages/RoutineEditor.tsx:514
+#: src/pages/RoutineEditor.tsx:57
 msgid "Teams message"
 msgstr "Mensaje de Teams"
 
-#: src/pages/RoutineEditor.tsx:455
+#: src/pages/RoutineEditor.tsx:447
 msgid "Teams not enabled"
 msgstr ""
 
@@ -3517,7 +3500,7 @@ msgstr ""
 msgid "Test"
 msgstr "Probar"
 
-#: src/pages/RoutineEditor.tsx:304
+#: src/pages/RoutineEditor.tsx:301
 msgid "Test run"
 msgstr "Ejecución de prueba"
 
@@ -3767,11 +3750,11 @@ msgstr "Esperando a que vuelva la API…"
 msgid "Waiting…"
 msgstr "Esperando…"
 
-#: src/pages/RoutineEditor.tsx:475
+#: src/pages/RoutineEditor.tsx:467
 msgid "Webhook"
 msgstr "Webhook"
 
-#: src/pages/RoutineEditor.tsx:635
+#: src/pages/RoutineEditor.tsx:626
 #: src/pages/RoutineSchedule.tsx:36
 #: src/pages/RoutineSchedule.tsx:155
 msgid "Weekdays"
@@ -3785,7 +3768,7 @@ msgstr "¿Qué hay de sus memorias?"
 msgid "What result will you demonstrate?"
 msgstr "¿Qué resultado demostrarás?"
 
-#: src/pages/RoutineEditor.tsx:325
+#: src/pages/RoutineEditor.tsx:322
 msgid "What should this routine do each time it runs?"
 msgstr "¿Qué debe hacer esta rutina cada vez que se ejecute?"
 
@@ -3797,12 +3780,12 @@ msgstr "Para qué es este bot"
 msgid "What to return"
 msgstr "Qué devolver"
 
-#: src/pages/RoutineEditor.tsx:102
-#: src/pages/RoutineEditor.tsx:586
+#: src/pages/RoutineEditor.tsx:103
+#: src/pages/RoutineEditor.tsx:577
 msgid "When a webhook fires"
 msgstr "Cuando se dispara un webhook"
 
-#: src/pages/RoutineEditor.tsx:334
+#: src/pages/RoutineEditor.tsx:331
 msgid "When to run"
 msgstr "Cuándo ejecutar"
 

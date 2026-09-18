@@ -56,6 +56,7 @@ describe("BUILTIN_AGENT_TOOL_NAMES", () => {
       "scratchpad_add",
       "scratchpad_update",
       "scratchpad_list",
+      "post_to_team_room",
     ]) {
       expect(BUILTIN_AGENT_TOOL_NAMES.has(name)).toBe(true);
     }

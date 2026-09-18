@@ -221,6 +221,21 @@ describe("run tool selection", () => {
       expect(names.includes(name)).toBe(on);
   });
 
+  it.each([false, true])(
+    "shows post_to_team_room only when a team platform is enabled (%s)",
+    (on) => {
+      const names = selectBuiltinToolsForRun({
+        graphicalToolsAllowed: false,
+        groupId: null,
+        trigger: "message",
+        semanticMemoryEnabled: false,
+        messagingChannelRun: false,
+        teamRoomEnabled: on,
+      }).map((tool) => tool.name);
+      expect(names.includes("post_to_team_room")).toBe(on);
+    },
+  );
+
   const toolNames = (
     trigger: string,
     groupId: string | null = null,

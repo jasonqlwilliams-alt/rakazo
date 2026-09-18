@@ -63,6 +63,7 @@ import {
   SmtpEmailProvider,
   SpaceMemoryProviderResolver,
   teamChatProviderId,
+  teamRoomToolConfig,
   toTeamChatInbound,
 } from "@rakazo/adapters";
 import { blockedAuthPaths, createAuth } from "@rakazo/auth";
@@ -377,6 +378,7 @@ export async function createApp(
     jobs,
     events,
     messaging: messaging ? createMessagingContextLoader(prisma) : undefined,
+    teamRoom: teamRoomToolConfig(messagingPlatforms, env),
     web: createWebProvider(),
     cloudAgent,
     research,

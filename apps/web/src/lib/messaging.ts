@@ -1,6 +1,7 @@
 const PROVIDER_LABELS: Record<string, string> = {
   sendblue: "iMessage",
   slack: "Slack",
+  discord: "Discord",
   whatsapp: "WhatsApp",
   telegram: "Telegram",
   lark: "Feishu",

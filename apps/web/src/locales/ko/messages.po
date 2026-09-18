@@ -190,7 +190,7 @@ msgstr "{0} 작업 메뉴"
 msgid "Actions for space"
 msgstr ""
 
-#: src/pages/RoutineEditor.tsx:297
+#: src/pages/RoutineEditor.tsx:294
 msgid "Active"
 msgstr "활성"
 
@@ -221,7 +221,7 @@ msgstr "이 일회성 실행의 시간을 추가하세요."
 msgid "Add a schedule, webhook, GitHub, or message trigger"
 msgstr ""
 
-#: src/pages/RoutineEditor.tsx:482
+#: src/pages/RoutineEditor.tsx:474
 msgid "Add a schedule, webhook, GitHub, or message trigger to run this routine."
 msgstr ""
 
@@ -287,7 +287,7 @@ msgstr "자동 실행에 추가"
 msgid "Add Treg"
 msgstr "Treg 추가"
 
-#: src/pages/RoutineEditor.tsx:418
+#: src/pages/RoutineEditor.tsx:415
 msgid "Add trigger"
 msgstr "트리거 추가"
 
@@ -312,7 +312,7 @@ msgstr "추가 중…"
 msgid "Advanced"
 msgstr "고급 설정"
 
-#: src/pages/RoutineEditor.tsx:643
+#: src/pages/RoutineEditor.tsx:634
 msgid "Advanced..."
 msgstr "고급..."
 
@@ -541,7 +541,7 @@ msgstr ""
 msgid "Automated senders will appear after they post here."
 msgstr ""
 
-#: src/pages/RoutineEditor.tsx:557
+#: src/pages/RoutineEditor.tsx:548
 msgid "Available after the routine is saved"
 msgstr "루틴을 저장한 후 사용할 수 있습니다"
 
@@ -550,7 +550,7 @@ msgid "Avatars"
 msgstr "아바타"
 
 #: src/pages/PluginsOverlay.tsx:540
-#: src/pages/RoutineEditor.tsx:260
+#: src/pages/RoutineEditor.tsx:257
 msgid "Back"
 msgstr "뒤로"
 
@@ -766,7 +766,7 @@ msgstr ""
 #: src/pages/MessagingSettingsOverlay.tsx:361
 #: src/pages/PeerMessagesOverlay.tsx:91
 #: src/pages/PeerMessagesOverlay.tsx:92
-#: src/pages/RoutineEditor.tsx:272
+#: src/pages/RoutineEditor.tsx:269
 #: src/pages/WindowChrome.tsx:19
 msgid "Close"
 msgstr "닫기"
@@ -853,7 +853,7 @@ msgstr "색상"
 msgid "Color {0}"
 msgstr "색상 {0}"
 
-#: src/pages/RoutineEditor.tsx:455
+#: src/pages/RoutineEditor.tsx:447
 msgid "Coming soon"
 msgstr "준비 중"
 
@@ -1405,8 +1405,8 @@ msgstr "새 그룹 만들기"
 msgid "Create new Space"
 msgstr "새 스페이스 만들기"
 
+#: src/pages/RoutineEditor.tsx:121
 #: src/pages/RoutineEditor.tsx:122
-#: src/pages/RoutineEditor.tsx:123
 msgid "Create Routine"
 msgstr "자동 실행 만들기"
 
@@ -1493,7 +1493,7 @@ msgstr "기본 기억 범위"
 #: src/pages/BotContextMenu.tsx:140
 #: src/pages/KnowledgeSection.tsx:449
 #: src/pages/McpServersOverlay.tsx:508
-#: src/pages/RoutineEditor.tsx:301
+#: src/pages/RoutineEditor.tsx:298
 #: src/pages/Shell.tsx:2950
 #: src/pages/Shell.tsx:2981
 #: src/pages/shell/dialogs.tsx:345
@@ -1707,13 +1707,13 @@ msgstr "매"
 msgid "every {intervalAmountSelect} {intervalUnitSelect}"
 msgstr "{intervalAmountSelect} {intervalUnitSelect}마다"
 
-#: src/pages/RoutineEditor.tsx:633
+#: src/pages/RoutineEditor.tsx:624
 #: src/pages/RoutineSchedule.tsx:34
 #: src/pages/RoutineSchedule.tsx:163
 msgid "Every day"
 msgstr "매일"
 
-#: src/pages/RoutineEditor.tsx:631
+#: src/pages/RoutineEditor.tsx:622
 #: src/pages/RoutineSchedule.tsx:32
 #: src/pages/RoutineSchedule.tsx:149
 msgid "Every hour"
@@ -1723,12 +1723,12 @@ msgstr "매시간"
 msgid "Every Monday"
 msgstr "매주 월요일"
 
-#: src/pages/RoutineEditor.tsx:639
+#: src/pages/RoutineEditor.tsx:630
 #: src/pages/RoutineSchedule.tsx:40
 msgid "Every month"
 msgstr "매월"
 
-#: src/pages/RoutineEditor.tsx:637
+#: src/pages/RoutineEditor.tsx:628
 #: src/pages/RoutineSchedule.tsx:38
 msgid "Every week"
 msgstr "매주"
@@ -1856,9 +1856,9 @@ msgstr ""
 msgid "Getting ready"
 msgstr ""
 
-#: src/pages/RoutineEditor.tsx:103
-#: src/pages/RoutineEditor.tsx:470
-#: src/pages/RoutineEditor.tsx:586
+#: src/pages/RoutineEditor.tsx:104
+#: src/pages/RoutineEditor.tsx:462
+#: src/pages/RoutineEditor.tsx:577
 msgid "Git event"
 msgstr "Git 이벤트"
 
@@ -1893,7 +1893,7 @@ msgstr "먼저 전화를 끊은 다음 화면에 표시된 코드를 입력하�
 msgid "Hang up, then enter the code on screen."
 msgstr "전화를 끊은 다음 화면에 표시된 코드를 입력하세요."
 
-#: src/pages/RoutineEditor.tsx:610
+#: src/pages/RoutineEditor.tsx:601
 msgid "header"
 msgstr "header"
 
@@ -1973,7 +1973,7 @@ msgstr "입력값"
 msgid "Instance API key"
 msgstr "인스턴스 API 키"
 
-#: src/pages/RoutineEditor.tsx:321
+#: src/pages/RoutineEditor.tsx:318
 msgid "Instruction"
 msgstr "실행할 내용"
 
@@ -1994,7 +1994,7 @@ msgstr "앱·도구 연동"
 msgid "Interrupt"
 msgstr "끼어들기"
 
-#: src/pages/RoutineEditor.tsx:641
+#: src/pages/RoutineEditor.tsx:632
 #: src/pages/RoutineSchedule.tsx:42
 msgid "Interval"
 msgstr "간격"
@@ -2036,7 +2036,7 @@ msgstr "방금"
 msgid "Keep memories"
 msgstr "기억은 유지"
 
-#: src/pages/RoutineEditor.tsx:605
+#: src/pages/RoutineEditor.tsx:596
 msgid "key"
 msgstr "key"
 
@@ -2062,7 +2062,7 @@ msgstr "나가기"
 msgid "Light"
 msgstr "라이트"
 
-#: src/pages/RoutineEditor.tsx:57
+#: src/pages/RoutineEditor.tsx:58
 msgid "Linear issue"
 msgstr "Linear 이슈"
 
@@ -2238,6 +2238,7 @@ msgstr "멘션"
 msgid "Mentions only"
 msgstr ""
 
+#: src/pages/RoutineEditor.tsx:501
 #: src/pages/Shell.tsx:5090
 #: src/pages/Shell.tsx:5217
 msgid "Message"
@@ -2256,11 +2257,6 @@ msgstr "{activeName}에게 메시지 보내기"
 #: src/pages/Shell.tsx:4801
 msgid "Message composer"
 msgstr "메시지 작성기"
-
-#: src/pages/RoutineEditor.tsx:106
-#: src/pages/RoutineEditor.tsx:515
-msgid "Message event"
-msgstr ""
 
 #: src/pages/Shell.tsx:5502
 msgid "Message from {peer}"
@@ -2377,7 +2373,7 @@ msgstr "섹션으로 이동"
 #: src/pages/Auth.tsx:134
 #: src/pages/GroupPanel.tsx:119
 #: src/pages/GroupPanel.tsx:212
-#: src/pages/RoutineEditor.tsx:310
+#: src/pages/RoutineEditor.tsx:307
 #: src/pages/shell/bot-panel.tsx:139
 #: src/pages/shell/bot-panel.tsx:326
 #: src/pages/shell/dialogs.tsx:72
@@ -2393,7 +2389,7 @@ msgstr "Bot 이름"
 msgid "Name this group"
 msgstr "그룹 이름"
 
-#: src/pages/RoutineEditor.tsx:314
+#: src/pages/RoutineEditor.tsx:311
 msgid "Name this routine"
 msgstr "이 루틴의 이름을 정하세요"
 
@@ -2516,7 +2512,7 @@ msgstr ""
 msgid "No results"
 msgstr "검색 결과가 없습니다"
 
-#: src/pages/RoutineEditor.tsx:501
+#: src/pages/RoutineEditor.tsx:493
 msgid "No runs yet"
 msgstr "아직 실행 기록이 없습니다"
 
@@ -2532,7 +2528,7 @@ msgstr ""
 msgid "No tools available."
 msgstr ""
 
-#: src/pages/RoutineEditor.tsx:108
+#: src/pages/RoutineEditor.tsx:107
 msgid "No trigger"
 msgstr "트리거 없음"
 
@@ -2585,7 +2581,7 @@ msgstr "OAuth 연결 실패"
 msgid "OAuth expired"
 msgstr ""
 
-#: src/pages/RoutineEditor.tsx:424
+#: src/pages/RoutineEditor.tsx:421
 msgid "On a schedule"
 msgstr "일정에 따라"
 
@@ -2677,7 +2673,7 @@ msgstr "다른 모델 직접 입력…"
 msgid "output"
 msgstr ""
 
-#: src/pages/RoutineEditor.tsx:59
+#: src/pages/RoutineEditor.tsx:60
 msgid "PagerDuty incident"
 msgstr "PagerDuty 인시던트"
 
@@ -2719,7 +2715,7 @@ msgstr "서버의 OpenAI 호환 주소를 붙여넣으세요. 필요하면 Rakaz
 msgid "Paste your API key"
 msgstr "API 키를 붙여넣으세요"
 
-#: src/pages/RoutineEditor.tsx:100
+#: src/pages/RoutineEditor.tsx:101
 msgid "Paused"
 msgstr "일시 중지됨"
 
@@ -2739,7 +2735,7 @@ msgstr "고정"
 msgid "Playing…"
 msgstr "재생 중…"
 
-#: src/pages/RoutineEditor.tsx:600
+#: src/pages/RoutineEditor.tsx:591
 msgid "POST to"
 msgstr "POST 대상"
 
@@ -2915,7 +2911,7 @@ msgstr "삭제"
 msgid "Remove {0}"
 msgstr "{0} 삭제"
 
-#: src/pages/RoutineEditor.tsx:591
+#: src/pages/RoutineEditor.tsx:582
 msgid "Remove Git event"
 msgstr ""
 
@@ -2924,11 +2920,11 @@ msgstr ""
 msgid "Remove mention {0}"
 msgstr "{0} 멘션 삭제"
 
-#: src/pages/RoutineEditor.tsx:524
+#: src/pages/RoutineEditor.tsx:515
 msgid "Remove message trigger"
 msgstr ""
 
-#: src/pages/RoutineEditor.tsx:353
+#: src/pages/RoutineEditor.tsx:350
 msgid "Remove schedule"
 msgstr "일정 제거"
 
@@ -2937,7 +2933,7 @@ msgstr "일정 제거"
 msgid "Remove skill {0}"
 msgstr "작업 기술 {0} 삭제"
 
-#: src/pages/RoutineEditor.tsx:591
+#: src/pages/RoutineEditor.tsx:582
 msgid "Remove webhook"
 msgstr "웹훅 제거"
 
@@ -3055,26 +3051,26 @@ msgstr "로봇"
 msgid "Room guidance"
 msgstr ""
 
-#: src/pages/RoutineEditor.tsx:620
+#: src/pages/RoutineEditor.tsx:611
 msgid "Rotate key"
 msgstr "key 교체"
 
-#: src/pages/RoutineEditor.tsx:265
+#: src/pages/RoutineEditor.tsx:262
 #: src/pages/Shell.tsx:3569
 #: src/pages/Shell.tsx:3581
 msgid "Routine"
 msgstr "자동 실행"
 
-#: src/pages/RoutineEditor.tsx:116
+#: src/pages/RoutineEditor.tsx:115
 msgid "Routines"
 msgstr "자동 실행"
 
-#: src/pages/RoutineEditor.tsx:400
-#: src/pages/RoutineEditor.tsx:406
+#: src/pages/RoutineEditor.tsx:397
+#: src/pages/RoutineEditor.tsx:403
 msgid "Run at"
 msgstr "실행 시간"
 
-#: src/pages/RoutineEditor.tsx:499
+#: src/pages/RoutineEditor.tsx:491
 msgid "Run history"
 msgstr "실행 기록"
 
@@ -3091,15 +3087,15 @@ msgstr "실행 중"
 msgid "Running"
 msgstr "실행 중"
 
-#: src/pages/RoutineEditor.tsx:172
+#: src/pages/RoutineEditor.tsx:171
 msgid "Running · Stop"
 msgstr "실행 중 · 중지"
 
-#: src/pages/RoutineEditor.tsx:304
+#: src/pages/RoutineEditor.tsx:301
 msgid "Running…"
 msgstr "실행 중…"
 
-#: src/pages/RoutineEditor.tsx:532
+#: src/pages/RoutineEditor.tsx:523
 msgid "Runs when this bot receives a verified message from this provider."
 msgstr ""
 
@@ -3111,7 +3107,7 @@ msgstr ""
 #: src/pages/KnowledgeSection.tsx:422
 #: src/pages/ModelSettingsOverlay.tsx:794
 #: src/pages/ResearchSettingsOverlay.tsx:139
-#: src/pages/RoutineEditor.tsx:489
+#: src/pages/RoutineEditor.tsx:481
 #: src/pages/shell/bot-panel.tsx:550
 msgid "Save"
 msgstr "저장"
@@ -3131,7 +3127,7 @@ msgstr "저장했지만 목록을 새로고침하지 못했습니다."
 msgid "Saved."
 msgstr "저장되었습니다."
 
-#: src/pages/RoutineEditor.tsx:563
+#: src/pages/RoutineEditor.tsx:554
 msgid "Saved. Rotate to reveal."
 msgstr "저장되었습니다. key를 교체하면 표시됩니다."
 
@@ -3147,7 +3143,7 @@ msgstr ""
 #: src/components/teach/SkillDraftCard.tsx:142
 #: src/pages/GroupPanel.tsx:236
 #: src/pages/ModelSettingsOverlay.tsx:792
-#: src/pages/RoutineEditor.tsx:489
+#: src/pages/RoutineEditor.tsx:481
 msgid "Saving…"
 msgstr "저장 중…"
 
@@ -3233,7 +3229,7 @@ msgstr "재설정 링크 보내기"
 msgid "Sending…"
 msgstr "보내는 중…"
 
-#: src/pages/RoutineEditor.tsx:58
+#: src/pages/RoutineEditor.tsx:59
 msgid "Sentry alert"
 msgstr "Sentry 알림"
 
@@ -3351,17 +3347,6 @@ msgstr "건너뛰거나 배포 키"
 #: src/pages/Shell.tsx:1903
 msgid "Skipped {0}"
 msgstr "{0} 건너뜀"
-
-#: src/pages/RoutineEditor.tsx:104
-#: src/pages/RoutineEditor.tsx:442
-#: src/pages/RoutineEditor.tsx:512
-msgid "Slack message"
-msgstr "Slack 메시지"
-
-#: src/pages/RoutineEditor.tsx:435
-#: src/pages/RoutineEditor.tsx:446
-msgid "Slack not enabled"
-msgstr ""
 
 #: src/components/SoftwareUpdateSection.tsx:140
 #: src/components/SoftwareUpdateSection.tsx:235
@@ -3503,13 +3488,11 @@ msgstr "팀 컴퓨터"
 msgid "Team conversations"
 msgstr ""
 
-#: src/pages/RoutineEditor.tsx:56
-#: src/pages/RoutineEditor.tsx:105
-#: src/pages/RoutineEditor.tsx:514
+#: src/pages/RoutineEditor.tsx:57
 msgid "Teams message"
 msgstr "Teams 메시지"
 
-#: src/pages/RoutineEditor.tsx:455
+#: src/pages/RoutineEditor.tsx:447
 msgid "Teams not enabled"
 msgstr ""
 
@@ -3517,7 +3500,7 @@ msgstr ""
 msgid "Test"
 msgstr "시험 실행"
 
-#: src/pages/RoutineEditor.tsx:304
+#: src/pages/RoutineEditor.tsx:301
 msgid "Test run"
 msgstr "테스트 실행"
 
@@ -3767,11 +3750,11 @@ msgstr "API가 다시 작동하기를 기다리는 중…"
 msgid "Waiting…"
 msgstr "기다리는 중…"
 
-#: src/pages/RoutineEditor.tsx:475
+#: src/pages/RoutineEditor.tsx:467
 msgid "Webhook"
 msgstr "웹훅"
 
-#: src/pages/RoutineEditor.tsx:635
+#: src/pages/RoutineEditor.tsx:626
 #: src/pages/RoutineSchedule.tsx:36
 #: src/pages/RoutineSchedule.tsx:155
 msgid "Weekdays"
@@ -3785,7 +3768,7 @@ msgstr "이 Bot의 기억은 어떻게 할까요?"
 msgid "What result will you demonstrate?"
 msgstr "어떤 작업을 직접 보여줄까요?"
 
-#: src/pages/RoutineEditor.tsx:325
+#: src/pages/RoutineEditor.tsx:322
 msgid "What should this routine do each time it runs?"
 msgstr "이 루틴이 실행될 때마다 무엇을 해야 하나요?"
 
@@ -3797,12 +3780,12 @@ msgstr "이 Bot을 언제, 어떤 일에 사용할지 적어주세요"
 msgid "What to return"
 msgstr "완료 후 전달할 결과"
 
-#: src/pages/RoutineEditor.tsx:102
-#: src/pages/RoutineEditor.tsx:586
+#: src/pages/RoutineEditor.tsx:103
+#: src/pages/RoutineEditor.tsx:577
 msgid "When a webhook fires"
 msgstr "웹훅이 실행될 때"
 
-#: src/pages/RoutineEditor.tsx:334
+#: src/pages/RoutineEditor.tsx:331
 msgid "When to run"
 msgstr "실행 시간"
 

@@ -24,6 +24,7 @@ import {
 } from "@rakazo/ui-web";
 import { ChevronLeft, Clock, GitBranch, Globe, MessageSquare, Pause, Plus, X } from "lucide-react";
 import { useId } from "react";
+import { providerLabel } from "../lib/messaging";
 import { RoutineSchedule } from "./RoutineSchedule";
 
 function toDatetimeLocalValue(date: Date): string {
@@ -101,9 +102,7 @@ export function routineTriggerSummary(routine: Routine): string {
   const parts: string[] = [];
   if (routine.webhookEnabled) parts.push(t`When a webhook fires`);
   if (routine.githubEnabled) parts.push(t`Git event`);
-  if (routine.messageProvider === "slack") parts.push(t`Slack message`);
-  else if (routine.messageProvider === "teams") parts.push(t`Teams message`);
-  else if (routine.messageProvider) parts.push(t`Message event`);
+  if (routine.messageProvider) parts.push(messageTriggerLabel(routine.messageProvider));
   for (const cron of routine.crons) parts.push(formatCron(cron));
   return parts.length > 0 ? parts.join(" · ") : t`No trigger`;
 }
@@ -213,8 +212,6 @@ export function RoutineEditor({
 }) {
   const { t } = useLingui();
   const fieldId = useId();
-  const slackAvailable = messageProviders.includes("slack");
-  const slackDisabledReasonId = `${fieldId}-slack-disabled-reason`;
   const hasTriggers =
     draft.schedules.length > 0 ||
     draft.webhookEnabled ||
@@ -432,21 +429,16 @@ export function RoutineEditor({
               </DropdownMenuSubContent>
             </DropdownMenuSub>
 
-            <span className="block" title={slackAvailable ? undefined : t`Slack not enabled`}>
+            {messageProviders.map((provider) => (
               <DropdownMenuItem
-                disabled={draft.messageProvider === "slack" || !slackAvailable}
-                aria-describedby={slackAvailable ? undefined : slackDisabledReasonId}
-                onClick={() => addMessageProvider("slack")}
+                key={provider}
+                disabled={draft.messageProvider === provider}
+                onClick={() => addMessageProvider(provider)}
               >
                 <MessageSquare />
-                <Trans>Slack message</Trans>
+                {messageTriggerLabel(provider)}
               </DropdownMenuItem>
-              {!slackAvailable ? (
-                <span id={slackDisabledReasonId} className="sr-only">
-                  <Trans>Slack not enabled</Trans>
-                </span>
-              ) : null}
-            </span>
+            ))}
 
             {COMING_SOON.map((item) => (
               <span
@@ -505,14 +497,13 @@ export function RoutineEditor({
   );
 }
 
+function messageTriggerLabel(provider: string): string {
+  return `${t`Message`} ${providerLabel(provider)}`;
+}
+
 function MessageTriggerCard({ provider, onRemove }: { provider: string; onRemove: () => void }) {
   const { t } = useLingui();
-  const label =
-    provider === "slack"
-      ? t`Slack message`
-      : provider === "teams"
-        ? t`Teams message`
-        : t`Message event`;
+  const label = messageTriggerLabel(provider);
   return (
     <div className="rounded-xl border border-border p-3">
       <div className="flex items-center gap-2.5 px-0.5">
