@@ -248,6 +248,32 @@ export const builtinAgentTools: ConnectorTool[] = [
     },
   },
   {
+    name: "post_to_team_room",
+    description:
+      "Post to an allowlisted team room by room name or channel id. Optional thread replies in that room. Text is limited to 2,000 characters. Retrying the same call does not double-post. The tool is only present when a team platform is enabled.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        room: {
+          type: "string",
+          maxLength: 128,
+          description: "Allowlisted room name (e.g. projects) or channel id.",
+        },
+        text: {
+          type: "string",
+          maxLength: 2000,
+          description: "Message to post. Longer text is rejected.",
+        },
+        thread: {
+          type: "string",
+          maxLength: 128,
+          description: "Optional in-room thread id to reply in.",
+        },
+      },
+      required: ["room", "text"],
+    },
+  },
+  {
     name: "request_secret",
     description:
       "Collect a credential in a masked field. Supply credential to save a named API credential for this bot and user at one HTTPS origin, or connectionId for a one-use connector code. Existing named credentials are reused unless replace is true. For website logins, CAPTCHA, passkeys, or anything that needs the live desktop, call request_takeover instead.",

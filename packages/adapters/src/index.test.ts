@@ -174,6 +174,7 @@ describe("builtin tools", () => {
         "request_takeover",
         "ask_user",
         "message_user",
+        "post_to_team_room",
         "request_secret",
         "run_subagent",
         "create_space",

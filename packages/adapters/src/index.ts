@@ -109,6 +109,7 @@ export * from "./smtp-email.js";
 export { SupermemoryMemoryProvider } from "./supermemory-memory-provider.js";
 export * from "./teaching-session.js";
 export * from "./team-chat-messaging.js";
+export * from "./team-room-tools.js";
 export * from "./third-party-connector-emulator.js";
 export * from "./voice-factory.js";
 export * from "./wakeup.js";

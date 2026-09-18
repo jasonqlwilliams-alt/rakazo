@@ -190,7 +190,7 @@ msgstr "Действия для {0}"
 msgid "Actions for space"
 msgstr "Действия для пространства"
 
-#: src/pages/RoutineEditor.tsx:297
+#: src/pages/RoutineEditor.tsx:294
 msgid "Active"
 msgstr "Активный"
 
@@ -221,7 +221,7 @@ msgstr "Добавьте время выполнения для разового
 msgid "Add a schedule, webhook, GitHub, or message trigger"
 msgstr "Добавьте расписание, вебхук, GitHub или триггер сообщения."
 
-#: src/pages/RoutineEditor.tsx:482
+#: src/pages/RoutineEditor.tsx:474
 msgid "Add a schedule, webhook, GitHub, or message trigger to run this routine."
 msgstr "Добавьте расписание, вебхук, GitHub или триггер сообщения для запуска этой задачи."
 
@@ -287,7 +287,7 @@ msgstr "Добавить в задачу"
 msgid "Add Treg"
 msgstr "Добавить Treg"
 
-#: src/pages/RoutineEditor.tsx:418
+#: src/pages/RoutineEditor.tsx:415
 msgid "Add trigger"
 msgstr "Добавить триггер"
 
@@ -312,7 +312,7 @@ msgstr "Добавление…"
 msgid "Advanced"
 msgstr "Расширенные"
 
-#: src/pages/RoutineEditor.tsx:643
+#: src/pages/RoutineEditor.tsx:634
 msgid "Advanced..."
 msgstr "Расширенные..."
 
@@ -541,7 +541,7 @@ msgstr "Автоматические отправители"
 msgid "Automated senders will appear after they post here."
 msgstr "Автоматические отправители появятся после публикации здесь."
 
-#: src/pages/RoutineEditor.tsx:557
+#: src/pages/RoutineEditor.tsx:548
 msgid "Available after the routine is saved"
 msgstr "Доступно после сохранения задачи"
 
@@ -550,7 +550,7 @@ msgid "Avatars"
 msgstr "Аватары"
 
 #: src/pages/PluginsOverlay.tsx:540
-#: src/pages/RoutineEditor.tsx:260
+#: src/pages/RoutineEditor.tsx:257
 msgid "Back"
 msgstr "Назад"
 
@@ -766,7 +766,7 @@ msgstr "Секрет клиента"
 #: src/pages/MessagingSettingsOverlay.tsx:361
 #: src/pages/PeerMessagesOverlay.tsx:91
 #: src/pages/PeerMessagesOverlay.tsx:92
-#: src/pages/RoutineEditor.tsx:272
+#: src/pages/RoutineEditor.tsx:269
 #: src/pages/WindowChrome.tsx:19
 msgid "Close"
 msgstr "Закрыть"
@@ -853,7 +853,7 @@ msgstr "Цвет"
 msgid "Color {0}"
 msgstr "Цвет {0}"
 
-#: src/pages/RoutineEditor.tsx:455
+#: src/pages/RoutineEditor.tsx:447
 msgid "Coming soon"
 msgstr "Скоро"
 
@@ -1405,8 +1405,8 @@ msgstr "Создать новую группу"
 msgid "Create new Space"
 msgstr "Создать новое пространство"
 
+#: src/pages/RoutineEditor.tsx:121
 #: src/pages/RoutineEditor.tsx:122
-#: src/pages/RoutineEditor.tsx:123
 msgid "Create Routine"
 msgstr "Создать задачу"
 
@@ -1493,7 +1493,7 @@ msgstr "Область действия по умолчанию"
 #: src/pages/BotContextMenu.tsx:140
 #: src/pages/KnowledgeSection.tsx:449
 #: src/pages/McpServersOverlay.tsx:508
-#: src/pages/RoutineEditor.tsx:301
+#: src/pages/RoutineEditor.tsx:298
 #: src/pages/Shell.tsx:2950
 #: src/pages/Shell.tsx:2981
 #: src/pages/shell/dialogs.tsx:345
@@ -1707,13 +1707,13 @@ msgstr "Каждые"
 msgid "every {intervalAmountSelect} {intervalUnitSelect}"
 msgstr "каждые {intervalAmountSelect} {intervalUnitSelect}"
 
-#: src/pages/RoutineEditor.tsx:633
+#: src/pages/RoutineEditor.tsx:624
 #: src/pages/RoutineSchedule.tsx:34
 #: src/pages/RoutineSchedule.tsx:163
 msgid "Every day"
 msgstr "Каждый день"
 
-#: src/pages/RoutineEditor.tsx:631
+#: src/pages/RoutineEditor.tsx:622
 #: src/pages/RoutineSchedule.tsx:32
 #: src/pages/RoutineSchedule.tsx:149
 msgid "Every hour"
@@ -1723,12 +1723,12 @@ msgstr "Каждый час"
 msgid "Every Monday"
 msgstr "Каждый понедельник"
 
-#: src/pages/RoutineEditor.tsx:639
+#: src/pages/RoutineEditor.tsx:630
 #: src/pages/RoutineSchedule.tsx:40
 msgid "Every month"
 msgstr "Каждый месяц"
 
-#: src/pages/RoutineEditor.tsx:637
+#: src/pages/RoutineEditor.tsx:628
 #: src/pages/RoutineSchedule.tsx:38
 msgid "Every week"
 msgstr "Каждую неделю"
@@ -1856,9 +1856,9 @@ msgstr "Получить учетные данные"
 msgid "Getting ready"
 msgstr "Подготовка"
 
-#: src/pages/RoutineEditor.tsx:103
-#: src/pages/RoutineEditor.tsx:470
-#: src/pages/RoutineEditor.tsx:586
+#: src/pages/RoutineEditor.tsx:104
+#: src/pages/RoutineEditor.tsx:462
+#: src/pages/RoutineEditor.tsx:577
 msgid "Git event"
 msgstr "Git-событие"
 
@@ -1893,7 +1893,7 @@ msgstr "Сначала повесьте трубку, затем введите 
 msgid "Hang up, then enter the code on screen."
 msgstr "Повесьте трубку, затем введите код на экране."
 
-#: src/pages/RoutineEditor.tsx:610
+#: src/pages/RoutineEditor.tsx:601
 msgid "header"
 msgstr "заголовок"
 
@@ -1973,7 +1973,7 @@ msgstr "Входы"
 msgid "Instance API key"
 msgstr "Ключ API экземпляра"
 
-#: src/pages/RoutineEditor.tsx:321
+#: src/pages/RoutineEditor.tsx:318
 msgid "Instruction"
 msgstr "Инструкция"
 
@@ -1994,7 +1994,7 @@ msgstr "Интеграции"
 msgid "Interrupt"
 msgstr "Прерывать"
 
-#: src/pages/RoutineEditor.tsx:641
+#: src/pages/RoutineEditor.tsx:632
 #: src/pages/RoutineSchedule.tsx:42
 msgid "Interval"
 msgstr "Интервал"
@@ -2036,7 +2036,7 @@ msgstr "только что"
 msgid "Keep memories"
 msgstr "Сохранить память"
 
-#: src/pages/RoutineEditor.tsx:605
+#: src/pages/RoutineEditor.tsx:596
 msgid "key"
 msgstr "ключ"
 
@@ -2062,7 +2062,7 @@ msgstr "Выйти"
 msgid "Light"
 msgstr "Светлая"
 
-#: src/pages/RoutineEditor.tsx:57
+#: src/pages/RoutineEditor.tsx:58
 msgid "Linear issue"
 msgstr "Задача Linear"
 
@@ -2238,6 +2238,7 @@ msgstr "Упоминания"
 msgid "Mentions only"
 msgstr "Только упоминания"
 
+#: src/pages/RoutineEditor.tsx:501
 #: src/pages/Shell.tsx:5090
 #: src/pages/Shell.tsx:5217
 msgid "Message"
@@ -2256,11 +2257,6 @@ msgstr "Сообщение {activeName}"
 #: src/pages/Shell.tsx:4801
 msgid "Message composer"
 msgstr "Поле сообщения"
-
-#: src/pages/RoutineEditor.tsx:106
-#: src/pages/RoutineEditor.tsx:515
-msgid "Message event"
-msgstr "Событие сообщения"
 
 #: src/pages/Shell.tsx:5502
 msgid "Message from {peer}"
@@ -2377,7 +2373,7 @@ msgstr "Переместить в"
 #: src/pages/Auth.tsx:134
 #: src/pages/GroupPanel.tsx:119
 #: src/pages/GroupPanel.tsx:212
-#: src/pages/RoutineEditor.tsx:310
+#: src/pages/RoutineEditor.tsx:307
 #: src/pages/shell/bot-panel.tsx:139
 #: src/pages/shell/bot-panel.tsx:326
 #: src/pages/shell/dialogs.tsx:72
@@ -2393,7 +2389,7 @@ msgstr "Назовите этого бота"
 msgid "Name this group"
 msgstr "Назовите эту группу"
 
-#: src/pages/RoutineEditor.tsx:314
+#: src/pages/RoutineEditor.tsx:311
 msgid "Name this routine"
 msgstr "Назовите эту задачу"
 
@@ -2516,7 +2512,7 @@ msgstr "Удаленные MCP-серверы не найдены"
 msgid "No results"
 msgstr "Нет результатов"
 
-#: src/pages/RoutineEditor.tsx:501
+#: src/pages/RoutineEditor.tsx:493
 msgid "No runs yet"
 msgstr "Запусков пока нет"
 
@@ -2532,7 +2528,7 @@ msgstr "Командных диалогов пока нет."
 msgid "No tools available."
 msgstr "Нет доступных инструментов."
 
-#: src/pages/RoutineEditor.tsx:108
+#: src/pages/RoutineEditor.tsx:107
 msgid "No trigger"
 msgstr "Нет триггера"
 
@@ -2585,7 +2581,7 @@ msgstr "Соединение OAuth не удалось"
 msgid "OAuth expired"
 msgstr "Срок действия OAuth истек"
 
-#: src/pages/RoutineEditor.tsx:424
+#: src/pages/RoutineEditor.tsx:421
 msgid "On a schedule"
 msgstr "По расписанию"
 
@@ -2677,7 +2673,7 @@ msgstr "Другая модель…"
 msgid "output"
 msgstr ""
 
-#: src/pages/RoutineEditor.tsx:59
+#: src/pages/RoutineEditor.tsx:60
 msgid "PagerDuty incident"
 msgstr "Инцидент PagerDuty"
 
@@ -2719,7 +2715,7 @@ msgstr "Вставьте OpenAI-совместимый адрес со свое�
 msgid "Paste your API key"
 msgstr "Вставьте свой ключ API"
 
-#: src/pages/RoutineEditor.tsx:100
+#: src/pages/RoutineEditor.tsx:101
 msgid "Paused"
 msgstr "Приостановлено"
 
@@ -2739,7 +2735,7 @@ msgstr "Закрепить"
 msgid "Playing…"
 msgstr "Воспроизведение…"
 
-#: src/pages/RoutineEditor.tsx:600
+#: src/pages/RoutineEditor.tsx:591
 msgid "POST to"
 msgstr "ОТПРАВИТЬ в"
 
@@ -2915,7 +2911,7 @@ msgstr "Удалить"
 msgid "Remove {0}"
 msgstr "Удалить {0}"
 
-#: src/pages/RoutineEditor.tsx:591
+#: src/pages/RoutineEditor.tsx:582
 msgid "Remove Git event"
 msgstr "Удалить событие Git"
 
@@ -2924,11 +2920,11 @@ msgstr "Удалить событие Git"
 msgid "Remove mention {0}"
 msgstr "Удалить упоминание {0}"
 
-#: src/pages/RoutineEditor.tsx:524
+#: src/pages/RoutineEditor.tsx:515
 msgid "Remove message trigger"
 msgstr "Удалить триггер сообщения"
 
-#: src/pages/RoutineEditor.tsx:353
+#: src/pages/RoutineEditor.tsx:350
 msgid "Remove schedule"
 msgstr "Удалить расписание"
 
@@ -2937,7 +2933,7 @@ msgstr "Удалить расписание"
 msgid "Remove skill {0}"
 msgstr "Удалить навык {0}"
 
-#: src/pages/RoutineEditor.tsx:591
+#: src/pages/RoutineEditor.tsx:582
 msgid "Remove webhook"
 msgstr "Удалить вебхук"
 
@@ -3055,26 +3051,26 @@ msgstr "Робот"
 msgid "Room guidance"
 msgstr "Инструкции для комнаты"
 
-#: src/pages/RoutineEditor.tsx:620
+#: src/pages/RoutineEditor.tsx:611
 msgid "Rotate key"
 msgstr "Сменить ключ"
 
-#: src/pages/RoutineEditor.tsx:265
+#: src/pages/RoutineEditor.tsx:262
 #: src/pages/Shell.tsx:3569
 #: src/pages/Shell.tsx:3581
 msgid "Routine"
 msgstr "Задача"
 
-#: src/pages/RoutineEditor.tsx:116
+#: src/pages/RoutineEditor.tsx:115
 msgid "Routines"
 msgstr "Задачи"
 
-#: src/pages/RoutineEditor.tsx:400
-#: src/pages/RoutineEditor.tsx:406
+#: src/pages/RoutineEditor.tsx:397
+#: src/pages/RoutineEditor.tsx:403
 msgid "Run at"
 msgstr "Запустить в"
 
-#: src/pages/RoutineEditor.tsx:499
+#: src/pages/RoutineEditor.tsx:491
 msgid "Run history"
 msgstr "История запуска"
 
@@ -3091,15 +3087,15 @@ msgstr "выполняется"
 msgid "Running"
 msgstr "Выполняется"
 
-#: src/pages/RoutineEditor.tsx:172
+#: src/pages/RoutineEditor.tsx:171
 msgid "Running · Stop"
 msgstr "Выполняется · Остановить"
 
-#: src/pages/RoutineEditor.tsx:304
+#: src/pages/RoutineEditor.tsx:301
 msgid "Running…"
 msgstr "Выполняется…"
 
-#: src/pages/RoutineEditor.tsx:532
+#: src/pages/RoutineEditor.tsx:523
 msgid "Runs when this bot receives a verified message from this provider."
 msgstr "Запускается, когда этот бот получает проверенное сообщение от этого провайдера."
 
@@ -3111,7 +3107,7 @@ msgstr "Запускается, когда этот бот получает пр
 #: src/pages/KnowledgeSection.tsx:422
 #: src/pages/ModelSettingsOverlay.tsx:794
 #: src/pages/ResearchSettingsOverlay.tsx:139
-#: src/pages/RoutineEditor.tsx:489
+#: src/pages/RoutineEditor.tsx:481
 #: src/pages/shell/bot-panel.tsx:550
 msgid "Save"
 msgstr "Сохранить"
@@ -3131,7 +3127,7 @@ msgstr "Сохранено, но обновить список не удалос
 msgid "Saved."
 msgstr "Сохранено."
 
-#: src/pages/RoutineEditor.tsx:563
+#: src/pages/RoutineEditor.tsx:554
 msgid "Saved. Rotate to reveal."
 msgstr "Сохранено. Поверните, чтобы раскрыть."
 
@@ -3147,7 +3143,7 @@ msgstr "Сохранение..."
 #: src/components/teach/SkillDraftCard.tsx:142
 #: src/pages/GroupPanel.tsx:236
 #: src/pages/ModelSettingsOverlay.tsx:792
-#: src/pages/RoutineEditor.tsx:489
+#: src/pages/RoutineEditor.tsx:481
 msgid "Saving…"
 msgstr "Сохранение…"
 
@@ -3233,7 +3229,7 @@ msgstr "Отправить ссылку для сброса"
 msgid "Sending…"
 msgstr "Отправка…"
 
-#: src/pages/RoutineEditor.tsx:58
+#: src/pages/RoutineEditor.tsx:59
 msgid "Sentry alert"
 msgstr "Оповещение Sentry"
 
@@ -3351,17 +3347,6 @@ msgstr "Пропустить или добавить ключ"
 #: src/pages/Shell.tsx:1903
 msgid "Skipped {0}"
 msgstr "Пропущен {0}"
-
-#: src/pages/RoutineEditor.tsx:104
-#: src/pages/RoutineEditor.tsx:442
-#: src/pages/RoutineEditor.tsx:512
-msgid "Slack message"
-msgstr "Сообщение Slack"
-
-#: src/pages/RoutineEditor.tsx:435
-#: src/pages/RoutineEditor.tsx:446
-msgid "Slack not enabled"
-msgstr "Slack не включен"
 
 #: src/components/SoftwareUpdateSection.tsx:140
 #: src/components/SoftwareUpdateSection.tsx:235
@@ -3503,13 +3488,11 @@ msgstr "Командный компьютер"
 msgid "Team conversations"
 msgstr "Командные диалоги"
 
-#: src/pages/RoutineEditor.tsx:56
-#: src/pages/RoutineEditor.tsx:105
-#: src/pages/RoutineEditor.tsx:514
+#: src/pages/RoutineEditor.tsx:57
 msgid "Teams message"
 msgstr "Сообщение Teams"
 
-#: src/pages/RoutineEditor.tsx:455
+#: src/pages/RoutineEditor.tsx:447
 msgid "Teams not enabled"
 msgstr "Teams не настроен"
 
@@ -3517,7 +3500,7 @@ msgstr "Teams не настроен"
 msgid "Test"
 msgstr "Тест"
 
-#: src/pages/RoutineEditor.tsx:304
+#: src/pages/RoutineEditor.tsx:301
 msgid "Test run"
 msgstr "Тестовый запуск"
 
@@ -3767,11 +3750,11 @@ msgstr "Ждём возвращения API…"
 msgid "Waiting…"
 msgstr "Ожидание…"
 
-#: src/pages/RoutineEditor.tsx:475
+#: src/pages/RoutineEditor.tsx:467
 msgid "Webhook"
 msgstr "Вебхук"
 
-#: src/pages/RoutineEditor.tsx:635
+#: src/pages/RoutineEditor.tsx:626
 #: src/pages/RoutineSchedule.tsx:36
 #: src/pages/RoutineSchedule.tsx:155
 msgid "Weekdays"
@@ -3785,7 +3768,7 @@ msgstr "Что делать с его памятью?"
 msgid "What result will you demonstrate?"
 msgstr "Какой результат вы продемонстрируете?"
 
-#: src/pages/RoutineEditor.tsx:325
+#: src/pages/RoutineEditor.tsx:322
 msgid "What should this routine do each time it runs?"
 msgstr "Что должна делать эта задача при каждом запуске?"
 
@@ -3797,12 +3780,12 @@ msgstr "Для чего нужен этот бот"
 msgid "What to return"
 msgstr "Что вернуть"
 
-#: src/pages/RoutineEditor.tsx:102
-#: src/pages/RoutineEditor.tsx:586
+#: src/pages/RoutineEditor.tsx:103
+#: src/pages/RoutineEditor.tsx:577
 msgid "When a webhook fires"
 msgstr "Когда срабатывает вебхук"
 
-#: src/pages/RoutineEditor.tsx:334
+#: src/pages/RoutineEditor.tsx:331
 msgid "When to run"
 msgstr "Когда запускать"
 

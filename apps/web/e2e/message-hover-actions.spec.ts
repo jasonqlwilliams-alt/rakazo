@@ -174,10 +174,14 @@ test("message hover shows beside-bubble actions; reply links to parent", async (
   expect(rowBox).not.toBeNull();
   expect(Math.abs(timeBox!.x - rowBox!.x)).toBeLessThan(2);
   await toolbar.getByRole("button", { name: "More" }).click();
-  await expect(page.getByRole("menu").locator("time")).toHaveCount(0);
+  const moreMenu = page.getByRole("menu");
+  const moreTrigger = toolbar.getByRole("button", { name: "More" });
+  await expect(moreMenu.getByRole("menuitem", { name: "Copy" })).toBeVisible();
+  await expect(moreMenu.locator("time")).toHaveCount(0);
   // Escape closes More and restores focus to the trigger so the rail stays up.
-  await page.keyboard.press("Escape");
-  await expect(toolbar.getByRole("button", { name: "More" })).toBeFocused();
+  await moreMenu.press("Escape");
+  await expect(moreTrigger).toHaveAttribute("aria-expanded", "false");
+  await expect(moreTrigger).toBeFocused();
   await captureScreenshot(page, testInfo, "message-user-actions-hover-desktop");
   // Default transcript shot: rail at rest (no hover pin, mouse clear).
   await expectRailAtRest(page, parentRow);

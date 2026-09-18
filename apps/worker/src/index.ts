@@ -44,6 +44,7 @@ import {
   resolveSandboxProvider,
   ScriptedAgentRuntime,
   SpaceMemoryProviderResolver,
+  teamRoomToolConfig,
 } from "@rakazo/adapters";
 import { resolveEncryptionKey, resolveSupervisorToken } from "@rakazo/core";
 import { createDb, createThreadEvents } from "@rakazo/db";
@@ -113,7 +114,8 @@ async function main() {
   // Telegram or open a Discord Gateway — that would steal the single inbound
   // slot away from the API process, which is the one with the inbound sink
   // actually wired up.
-  const messagingPlatforms = messagingPlatformsFromEnv(messagingEnvFromProcess(process.env));
+  const messagingEnv = messagingEnvFromProcess(process.env);
+  const messagingPlatforms = messagingPlatformsFromEnv(messagingEnv);
   const messaging = isMessagingSurfaceEnabled(messagingPlatforms, {
     deploymentModelKey,
     openSignup: process.env.MESSAGING_OPEN_SIGNUP === "true",
@@ -182,6 +184,7 @@ async function main() {
     jobs,
     events,
     messaging: messaging ? createMessagingContextLoader(prisma) : undefined,
+    teamRoom: teamRoomToolConfig(messagingPlatforms, messagingEnv),
     web: createWebProvider(),
     cloudAgent,
     research,

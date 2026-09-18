@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import type { Routine } from "@rakazo/contracts";
 import { activeBotId, captureScreenshot, completeOnboarding, rpc, signup } from "./helpers";
 
-test("Slack message trigger uses the mounted messaging provider and persists", async ({
+test("message trigger lists the mounted messaging provider and persists", async ({
   page,
 }, testInfo) => {
   await page.route("**/rpc/messaging/status", (route) =>
@@ -25,10 +25,11 @@ test("Slack message trigger uses the mounted messaging provider and persists", a
     .getByPlaceholder("What should this routine do each time it runs?")
     .fill("Review the verified message event");
   await page.getByRole("button", { name: "Add trigger" }).click();
-  await page.getByRole("menuitem", { name: "Slack message", exact: true }).click();
+  await expect(page.getByRole("menuitem", { name: "Slack message", exact: true })).toHaveCount(0);
+  await page.getByRole("menuitem", { name: "Message Slack", exact: true }).click();
 
   const panel = page.getByTestId("side-panel");
-  await expect(panel.getByText("Slack message", { exact: true })).toBeVisible();
+  await expect(panel.getByText("Message Slack", { exact: true })).toBeVisible();
   await expect(
     panel.getByText("Runs when this bot receives a verified message from this provider."),
   ).toBeVisible();

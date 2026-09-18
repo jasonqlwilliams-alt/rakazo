@@ -294,6 +294,8 @@ import {
 } from "./skill-tools.js";
 import { type TakeoverResumeCheckpoint, takeoverResumeFromRelease } from "./takeover-resume.js";
 import { getActiveTeachingSession, parsePlaybook } from "./teaching-session.js";
+import type { TeamRoomToolConfig } from "./team-room-tools.js";
+import { postToTeamRoom, selectTeamRoomTools, validPostToTeamRoomArgs } from "./team-room-tools.js";
 import {
   attachWorkspaceFileToThread,
   currentTurnFilesInstruction,
@@ -672,6 +674,8 @@ export interface ExecutorDeps {
   jobs: JobPublisher;
   /** Messaging surface; absent means zero identity queries and no chat prompts. */
   messaging?: { hasIdentity(botId: string): Promise<boolean> };
+  /** Team-room posting. Absent when no Slack/Discord platform is mounted. */
+  teamRoom?: TeamRoomToolConfig | null;
   listConnectedPluginSlugs?: (userId: string) => Promise<string[]>;
   /** Builtin web_search / web_fetch. Defaults to keyless HTTP when omitted. */
   web?: WebProvider;
@@ -1634,6 +1638,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
             semanticMemoryEnabled,
             cloudAgentEnabled: cloudAgentsEnabled(cloudAgent, run.spaceId),
             researchEnabled,
+            teamRoomEnabled: Boolean(deps.teamRoom),
             messagingChannelRun,
           }),
           // Cross-owner agent connections only exist for chat-linked bots.
@@ -1859,6 +1864,11 @@ export function createRunExecutor(deps: ExecutorDeps) {
           }
           if (name.startsWith("research_") && !validResearchArgs(name, args)) {
             return { error: "Invalid research arguments. The brief is bounded to 8 KiB." };
+          }
+          if (name === "post_to_team_room" && !validPostToTeamRoomArgs(args)) {
+            return {
+              error: "Invalid team-room arguments. Text is limited to 2,000 characters.",
+            };
           }
           let effectRequest: unknown = args;
           if (connectorCall.route && deps.connector?.resolveCall) {
@@ -3490,6 +3500,21 @@ export function createRunExecutor(deps: ExecutorDeps) {
             if (!result.ok) return finish({ error: result.error });
             return finish(result);
           }
+          if (name === "post_to_team_room") {
+            if (!deps.teamRoom) return finish({ error: "No team platform is enabled." });
+            const result = await postToTeamRoom(
+              { prisma: deps.prisma, jobs: deps.jobs, teamRoom: deps.teamRoom },
+              {
+                room: args.room,
+                text:
+                  typeof args.text === "string" ? redactSecrets(args.text, runSecrets) : args.text,
+                thread: args.thread,
+                deliveryKey: executionId,
+              },
+            );
+            if (!result.ok) return finish({ error: result.error });
+            return finish({ ok: true });
+          }
           if (name === "handoff_to_bot") {
             if (!thread.groupId) return finish({ error: "handoff_to_bot is only for group chats" });
             const result = await handoffToGroupBot(deps, run, thread.groupId, {
@@ -4477,31 +4502,35 @@ export function selectBuiltinToolsForRun(options: {
   semanticMemoryEnabled: boolean;
   cloudAgentEnabled?: boolean;
   researchEnabled?: boolean;
+  teamRoomEnabled?: boolean;
   messagingChannelRun: boolean;
 }) {
-  return selectResearchTools(
-    selectCloudAgentTools(
-      selectMemoryTools(
-        filterBuiltinToolsForRun(
-          filterBuiltinToolsForThread(
-            filterPageBrowserTools(
-              filterImageReturningComputerTools(builtinAgentTools, options.graphicalToolsAllowed),
-              options.pageBrowserAllowed ?? options.graphicalToolsAllowed,
+  return selectTeamRoomTools(
+    selectResearchTools(
+      selectCloudAgentTools(
+        selectMemoryTools(
+          filterBuiltinToolsForRun(
+            filterBuiltinToolsForThread(
+              filterPageBrowserTools(
+                filterImageReturningComputerTools(builtinAgentTools, options.graphicalToolsAllowed),
+                options.pageBrowserAllowed ?? options.graphicalToolsAllowed,
+              ),
+              options.groupId,
             ),
-            options.groupId,
+            options.trigger,
           ),
-          options.trigger,
+          options.semanticMemoryEnabled,
         ),
-        options.semanticMemoryEnabled,
+        Boolean(options.cloudAgentEnabled),
       ),
-      Boolean(options.cloudAgentEnabled),
+      Boolean(options.researchEnabled),
+    ).filter(
+      (tool) =>
+        !options.messagingChannelRun ||
+        (!["remember", "save_memory", "recall_memory", "forget_memory"].includes(tool.name) &&
+          !tool.name.startsWith("scratchpad_")),
     ),
-    Boolean(options.researchEnabled),
-  ).filter(
-    (tool) =>
-      !options.messagingChannelRun ||
-      (!["remember", "save_memory", "recall_memory", "forget_memory"].includes(tool.name) &&
-        !tool.name.startsWith("scratchpad_")),
+    Boolean(options.teamRoomEnabled),
   );
 }
 

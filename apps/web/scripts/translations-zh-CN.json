@@ -705,7 +705,6 @@
   "Send <0>{linkCode}</0> to the line from your chat app within 10 minutes. You'll get a confirmation reply once linked.": "请在 10 分钟内从聊天应用向该线路发送 <0>{linkCode}</0>。关联成功后你会收到确认回复。",
   "Sentry alert": "Sentry 告警",
   "Show password": "显示密码",
-  "Slack message": "Slack 消息",
   "Software update": "软件更新",
   "Submitted": "已提交",
   "Teams message": "Teams 消息",
