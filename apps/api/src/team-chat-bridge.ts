@@ -122,6 +122,16 @@ export function teamChatAmbientPrompt(input: {
     .join("\n\n");
 }
 
+function teamChatReplyAddress(message: {
+  conversationId: string;
+  replyThreadId: string | null;
+}): Pick<TeamChatSendRequest, "conversationId" | "replyThreadId"> {
+  return {
+    conversationId: message.conversationId,
+    replyThreadId: message.replyThreadId,
+  };
+}
+
 export class TeamChatBridge {
   private target: TargetBot | undefined;
   private timer: ReturnType<typeof setInterval> | undefined;
@@ -258,6 +268,7 @@ export class TeamChatBridge {
         senderName: message.senderName,
         senderIsBot: message.senderIsBot ?? false,
         content: message.content,
+        conversationId: message.conversationId,
         replyThreadId: message.replyThreadId,
         status:
           options?.queueAgent === false
@@ -713,8 +724,7 @@ export class TeamChatBridge {
           : teamChatResponseText(blocks, target.name, true);
       if (content) {
         await this.deps.send({
-          conversationId: origin.externalConversation.conversationId,
-          replyThreadId: origin.replyThreadId,
+          ...teamChatReplyAddress(origin),
           content,
           idempotencyKey: `team-chat-run:${run.id}`,
         });
@@ -737,8 +747,8 @@ export class TeamChatBridge {
       const external = await this.deps.prisma.externalMessage.findUnique({
         where: { runId: parentRunId },
         select: {
+          conversationId: true,
           replyThreadId: true,
-          externalConversation: { select: { conversationId: true } },
         },
       });
       if (external) return external;
@@ -1117,8 +1127,8 @@ export class TeamChatBridge {
     id: string;
     runId: string | null;
     kind: string;
+    conversationId: string;
     replyThreadId: string | null;
-    externalConversation: { conversationId: string };
   }): Promise<void> {
     if (!message.runId) throw new Error("Completed team chat message has no run");
     const response = await this.deps.prisma.message.findFirst({
@@ -1135,8 +1145,7 @@ export class TeamChatBridge {
     const reserved = await this.reserveDelivery(message.id);
     if (!reserved) return;
     await this.sendOnce(message.id, {
-      conversationId: message.externalConversation.conversationId,
-      replyThreadId: message.replyThreadId,
+      ...teamChatReplyAddress(message),
       content,
       idempotencyKey: `external-message:${message.id}`,
     });
@@ -1145,8 +1154,8 @@ export class TeamChatBridge {
   private async deliverFailure(message: {
     id: string;
     kind: string;
+    conversationId: string;
     replyThreadId: string | null;
-    externalConversation: { conversationId: string };
   }): Promise<void> {
     if (message.kind === "ambient") {
       await this.markDelivered(message.id, "silent-failure");
@@ -1155,8 +1164,7 @@ export class TeamChatBridge {
     const reserved = await this.reserveDelivery(message.id);
     if (!reserved) return;
     await this.sendOnce(message.id, {
-      conversationId: message.externalConversation.conversationId,
-      replyThreadId: message.replyThreadId,
+      ...teamChatReplyAddress(message),
       content: `${this.target?.name ?? "The agent"} could not complete that request. Open Rakazo for details.`,
       idempotencyKey: `external-message:${message.id}:failure`,
     });
