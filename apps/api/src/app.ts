@@ -88,6 +88,7 @@ import { MarkdownMemoryStore } from "@rakazo/memory";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { type AppEnv, loadEnv } from "./env.js";
+import { inboundMcpRedactionSecrets, mountInboundMcpRoutes } from "./inbound-mcp.js";
 import { mountLocalSettings } from "./local-settings.js";
 import {
   createMessagingInboundHandler,
@@ -792,6 +793,17 @@ export async function createApp(
     })();
   }
 
+  mountInboundMcpRoutes(app, {
+    token: env.inboundMcpToken,
+    prisma,
+    health: () => ({
+      ok: true,
+      runtime: env.agentRuntime,
+      sandbox: env.sandboxProvider,
+      revision: env.gitSha ?? null,
+    }),
+    redact: inboundMcpRedactionSecrets(env),
+  });
   app.get("/health", (c) =>
     c.json({
       ok: true,

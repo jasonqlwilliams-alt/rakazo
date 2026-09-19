@@ -217,4 +217,45 @@ describe("loadEnv", () => {
     expect(env.discordRespondToChannelIds).toBe("channel-1");
     expect(loadEnv(base).discordBotToken).toBeUndefined();
   });
+
+  it("loads an optional inbound MCP bearer that is distinct from other secrets", () => {
+    expect(loadEnv(base).inboundMcpToken).toBeUndefined();
+    expect(
+      loadEnv({
+        ...base,
+        RAKAZO_INBOUND_MCP_TOKEN: " inbound-mcp-token-value-32chars-aa ",
+      }).inboundMcpToken,
+    ).toBe("inbound-mcp-token-value-32chars-aa");
+    expect(() => loadEnv({ ...base, RAKAZO_INBOUND_MCP_TOKEN: "too-short" })).toThrow(
+      /RAKAZO_INBOUND_MCP_TOKEN/,
+    );
+    expect(() =>
+      loadEnv({
+        ...base,
+        BETTER_AUTH_SECRET: "shared-secret-value-32chars-aaaaaa",
+        RAKAZO_INBOUND_MCP_TOKEN: "shared-secret-value-32chars-aaaaaa",
+      }),
+    ).toThrow(/RAKAZO_INBOUND_MCP_TOKEN/);
+    expect(loadEnv(base).mcpToken).toBeUndefined();
+    expect(
+      loadEnv({
+        ...base,
+        RAKAZO_MCP_TOKEN: " outbound-mcp-token-value-32chars ",
+      }).mcpToken,
+    ).toBe("outbound-mcp-token-value-32chars");
+    expect(() =>
+      loadEnv({
+        ...base,
+        RAKAZO_MCP_TOKEN: "outbound-mcp-token-value-32chars",
+        RAKAZO_INBOUND_MCP_TOKEN: "outbound-mcp-token-value-32chars",
+      }),
+    ).toThrow(/RAKAZO_MCP_TOKEN/);
+    expect(() =>
+      loadEnv({
+        ...base,
+        ENCRYPTION_KEY: "shared-secret-value-32chars-aaaaaa",
+        RAKAZO_INBOUND_MCP_TOKEN: "shared-secret-value-32chars-aaaaaa",
+      }),
+    ).toThrow(/RAKAZO_INBOUND_MCP_TOKEN/);
+  });
 });
