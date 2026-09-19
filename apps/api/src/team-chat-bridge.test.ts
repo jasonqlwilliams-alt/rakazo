@@ -1565,6 +1565,7 @@ describe("team chat bridge", () => {
             attempts: 0,
             runId: null,
             threadMessageId: null,
+            conversationId: create.conversationId,
             replyThreadId: create.replyThreadId ?? null,
             kind: create.kind ?? "mention",
             senderId: create.senderId,

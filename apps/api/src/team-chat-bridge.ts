@@ -123,12 +123,11 @@ export function teamChatAmbientPrompt(input: {
 }
 
 function teamChatReplyAddress(message: {
-  conversationId?: string | null;
+  conversationId: string;
   replyThreadId: string | null;
-  externalConversation: { conversationId: string };
 }): Pick<TeamChatSendRequest, "conversationId" | "replyThreadId"> {
   return {
-    conversationId: message.conversationId ?? message.externalConversation.conversationId,
+    conversationId: message.conversationId,
     replyThreadId: message.replyThreadId,
   };
 }
@@ -750,7 +749,6 @@ export class TeamChatBridge {
         select: {
           conversationId: true,
           replyThreadId: true,
-          externalConversation: { select: { conversationId: true } },
         },
       });
       if (external) return external;
@@ -1129,9 +1127,8 @@ export class TeamChatBridge {
     id: string;
     runId: string | null;
     kind: string;
-    conversationId?: string | null;
+    conversationId: string;
     replyThreadId: string | null;
-    externalConversation: { conversationId: string };
   }): Promise<void> {
     if (!message.runId) throw new Error("Completed team chat message has no run");
     const response = await this.deps.prisma.message.findFirst({
@@ -1157,9 +1154,8 @@ export class TeamChatBridge {
   private async deliverFailure(message: {
     id: string;
     kind: string;
-    conversationId?: string | null;
+    conversationId: string;
     replyThreadId: string | null;
-    externalConversation: { conversationId: string };
   }): Promise<void> {
     if (message.kind === "ambient") {
       await this.markDelivered(message.id, "silent-failure");
