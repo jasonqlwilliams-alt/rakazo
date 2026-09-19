@@ -1753,6 +1753,241 @@ describe("team chat bridge", () => {
     expect(records[0]).toMatchObject({ status: "delivered" });
   });
 
+  it("replies to each interleaved root message in its own thread", async () => {
+    const records: Array<Record<string, unknown>> = [];
+    const runStatusById = new Map<string, string>();
+    const sent: TeamChatSendRequest[] = [];
+    let promptRuns = 0;
+    const conversation = {
+      id: "conversation-1",
+      provider: "slack",
+      workspaceId: "T-1",
+      externalKey: "C-1",
+      conversationId: "slack:C-1",
+      spaceId: "space-1",
+      botId: "bot-1",
+      userId: "owner-1",
+      displayName: "Leadership",
+      participantNames: ["Ada"],
+      teamChatAmbientEnabled: null,
+      teamChatRules: null,
+      automatedSenderPolicies: {},
+      thread: { id: "thread-1" },
+    };
+    const sendUserMessage = vi.fn(async (input: { createRun?: boolean }) => {
+      if (input.createRun === false) {
+        return { messageId: "message-visible", seq: 1, taskId: null, runId: null };
+      }
+      promptRuns += 1;
+      const runId = `run-${promptRuns}`;
+      runStatusById.set(runId, "running");
+      return {
+        messageId: `message-prompt-${promptRuns}`,
+        seq: 2,
+        taskId: `task-${promptRuns}`,
+        runId,
+      };
+    });
+    const prisma = {
+      bot: {
+        findFirst: vi.fn(async () => ({
+          id: "bot-1",
+          spaceId: "space-1",
+          userId: "owner-1",
+          name: "Arthur",
+          modelProvider: null,
+          modelId: null,
+          teamChatAmbientEnabled: false,
+          teamChatRules: "",
+        })),
+      },
+      externalConversation: {
+        upsert: vi.fn(
+          async ({
+            create,
+            update,
+          }: {
+            create: { conversationId: string };
+            update: { conversationId: string };
+          }) => {
+            conversation.conversationId = update.conversationId ?? create.conversationId;
+            return conversation;
+          },
+        ),
+      },
+      externalMessage: {
+        upsert: vi.fn(async ({ create }: { create: Record<string, unknown> }) => {
+          const record = {
+            id: `external-${records.length + 1}`,
+            status: create.status ?? "received",
+            attempts: 0,
+            runId: null,
+            threadMessageId: null,
+            conversationId: create.conversationId ?? null,
+            replyThreadId: create.replyThreadId ?? null,
+            kind: create.kind ?? "mention",
+            senderId: create.senderId,
+            senderName: create.senderName,
+            senderIsBot: create.senderIsBot ?? false,
+            content: create.content,
+            providerEventId: create.providerEventId,
+            batchContext: null,
+            nextAttemptAt: null,
+            createdAt: new Date(records.length),
+            externalConversationId: conversation.id,
+            externalConversation: conversation,
+          };
+          records.push(record);
+          return record;
+        }),
+        findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
+          if (where.threadMessageId === null) {
+            return records
+              .filter((r) => r.threadMessageId === null)
+              .map((r) => ({ ...r, externalConversation: conversation }));
+          }
+          if (where.status === "received") {
+            return records
+              .filter((r) => r.status === "received")
+              .map((r) => ({ ...r, externalConversation: conversation }));
+          }
+          if (
+            typeof where.status === "object" &&
+            where.status &&
+            "in" in (where.status as object)
+          ) {
+            const statuses = (where.status as { in: string[] }).in;
+            return records
+              .filter((r) => statuses.includes(String(r.status)))
+              .map((r) => {
+                const runId = typeof r.runId === "string" ? r.runId : null;
+                return {
+                  ...r,
+                  externalConversation: conversation,
+                  run: runId
+                    ? { id: runId, status: runStatusById.get(runId) ?? "running", error: null }
+                    : null,
+                };
+              });
+          }
+          if (where.status === "observed") return [];
+          return [];
+        }),
+        update: vi.fn(
+          async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
+            const record = records.find((r) => r.id === where.id);
+            Object.assign(record ?? {}, data);
+            return record;
+          },
+        ),
+        updateMany: vi.fn(
+          async ({
+            where,
+            data,
+          }: {
+            where: Record<string, unknown>;
+            data: Record<string, unknown>;
+          }) => {
+            let count = 0;
+            for (const record of records) {
+              if (where.id && record.id !== where.id) continue;
+              if (where.status && record.status !== where.status) continue;
+              if (
+                "providerReplyHandle" in where &&
+                where.providerReplyHandle === null &&
+                record.providerReplyHandle
+              ) {
+                continue;
+              }
+              Object.assign(record, data);
+              count += 1;
+            }
+            return { count };
+          },
+        ),
+        findUnique: vi.fn(async ({ where }: { where: { id: string } }) => {
+          return records.find((record) => record.id === where.id) ?? null;
+        }),
+        findFirst: vi.fn(async ({ where }: { where?: Record<string, unknown> } = {}) => {
+          if (!where) return null;
+          return (
+            records.find((record) => {
+              if (where.id && record.id !== where.id) return false;
+              if (where.status && record.status !== where.status) return false;
+              return true;
+            }) ?? null
+          );
+        }),
+      },
+      run: { findMany: vi.fn(async () => []) },
+      message: {
+        findUnique: vi.fn(async () => null),
+        findFirst: vi.fn(async ({ where }: { where?: { runId?: string } } = {}) => {
+          const text =
+            where?.runId === "run-1" ? "Reply to the first root." : "Reply to the second root.";
+          return { blocks: [{ kind: "text", text }] };
+        }),
+      },
+    } as unknown as PrismaClient;
+
+    const bridge = new TeamChatBridge({
+      prisma,
+      events: { sendUserMessage },
+      jobs: { enqueue: vi.fn(async () => undefined) },
+      send: vi.fn(async (request: TeamChatSendRequest) => {
+        sent.push(request);
+        return { handle: `reply-${sent.length}` };
+      }),
+      providerId: "slack",
+      botId: "bot-1",
+      reconcileIntervalMs: 60_000,
+    });
+
+    const first: TeamChatInboundMessage = {
+      eventId: "Ev-A",
+      workspaceId: "T-1",
+      kind: "mention",
+      conversationKey: "C-1",
+      conversationId: "slack:C-1:100.1",
+      replyThreadId: "100.1",
+      senderId: "U-1",
+      senderName: "Ada",
+      content: "First root",
+    };
+    const second: TeamChatInboundMessage = {
+      eventId: "Ev-B",
+      workspaceId: "T-1",
+      kind: "mention",
+      conversationKey: "C-1",
+      conversationId: "slack:C-1:200.2",
+      replyThreadId: "200.2",
+      senderId: "U-2",
+      senderName: "Grace",
+      content: "Second root",
+    };
+
+    await bridge.start();
+    await bridge.receive(first);
+    await bridge.receive(second);
+    expect(sent).toEqual([]);
+    for (const runId of runStatusById.keys()) runStatusById.set(runId, "completed");
+    await bridge.reconcileOnce();
+    await bridge.stop();
+
+    expect(sent).toEqual([
+      expect.objectContaining({
+        conversationId: "slack:C-1:100.1",
+        replyThreadId: "100.1",
+        content: "Reply to the first root.",
+      }),
+      expect.objectContaining({
+        conversationId: "slack:C-1:200.2",
+        replyThreadId: "200.2",
+        content: "Reply to the second root.",
+      }),
+    ]);
+  });
+
   it("repairs previously observed messages that do not have transcript rows", async () => {
     const conversation = {
       id: "conversation-legacy",

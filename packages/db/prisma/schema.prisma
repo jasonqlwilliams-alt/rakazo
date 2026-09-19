@@ -1352,6 +1352,7 @@ model ExternalMessage {
   senderName             String
   senderIsBot            Boolean               @default(false)
   content                String
+  conversationId         String
   replyThreadId          String?
   batchContext           String?
   engagementReason       String?
