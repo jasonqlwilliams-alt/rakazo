@@ -263,7 +263,8 @@ export class ComposioConnector implements ComposioProvider {
     for (const [toolkit, ids] of accountIdsByToolkit) {
       connectedAccounts[toolkit] = [...ids].sort();
     }
-    const key = executeSessionKey(canonicalToolkits, connectedAccounts);
+    const liveConnectedAccounts = await this.liveConnectedAccounts(connectedAccounts);
+    const key = executeSessionKey(canonicalToolkits, liveConnectedAccounts);
     if (!key) return this.sessionFor(userId);
     const composio = this.sdk();
     const existing = this.executeSessions.get(userId);
@@ -277,12 +278,14 @@ export class ComposioConnector implements ComposioProvider {
     // Non-multi-account sessions cap connectedAccounts at one id per toolkit.
     // requireExplicitSelection would also break single-account / no-auth
     // execute paths that do not pass an account parameter.
-    const needsMultiAccount = Object.values(connectedAccounts).some((ids) => ids.length >= 2);
+    const needsMultiAccount = Object.values(liveConnectedAccounts).some((ids) => ids.length >= 2);
     const session = await composio.create(userId, {
       manageConnections: false,
       sandbox: { enable: false },
       toolkits: canonicalToolkits,
-      ...(Object.keys(connectedAccounts).length > 0 ? { connectedAccounts } : {}),
+      ...(Object.keys(liveConnectedAccounts).length > 0
+        ? { connectedAccounts: liveConnectedAccounts }
+        : {}),
       ...(needsMultiAccount
         ? {
             multiAccount: {
@@ -465,6 +468,34 @@ export class ComposioConnector implements ComposioProvider {
   async connectedAccountId(userId: string, slug: string): Promise<string | undefined> {
     const ids = await this.listConnectedAccountIds(userId, slug);
     return ids[0];
+  }
+
+  private async liveConnectedAccounts(
+    connectedAccounts: Record<string, string[]>,
+  ): Promise<Record<string, string[]>> {
+    const live: Record<string, string[]> = {};
+    for (const [toolkit, ids] of Object.entries(connectedAccounts)) {
+      const kept = (
+        await Promise.all(
+          ids.map(async (id) => ((await this.connectedAccountIsLive(id)) ? id : undefined)),
+        )
+      ).filter((id): id is string => Boolean(id));
+      if (kept.length > 0) live[toolkit] = kept;
+    }
+    return live;
+  }
+
+  private async connectedAccountIsLive(id: string): Promise<boolean> {
+    try {
+      const account = await this.sdk().connectedAccounts.get(id);
+      if (account?.id) return true;
+    } catch (error) {
+      if (!isComposioNotFoundError(error)) throw error;
+    }
+    getLogger().warn("composio connected account missing; skipping", {
+      "composio.connected_account_id": id,
+    });
+    return false;
   }
 
   async listConnectedAccountIds(

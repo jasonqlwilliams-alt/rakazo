@@ -75,6 +75,35 @@ vi.mock("@composio/core", () => ({
     };
 
     async create(userId: string, config: Record<string, unknown>) {
+      const connectedAccounts = config.connectedAccounts;
+      if (connectedAccounts && typeof connectedAccounts === "object") {
+        for (const ids of Object.values(connectedAccounts as Record<string, unknown>)) {
+          if (!Array.isArray(ids)) continue;
+          for (const id of ids) {
+            if (typeof id !== "string") continue;
+            let account: { id?: string } | undefined;
+            try {
+              account = await composioSdkState.connectedAccounts.get(id);
+            } catch (error) {
+              const status =
+                error && typeof error === "object"
+                  ? (error as { status?: unknown }).status
+                  : undefined;
+              if (status === 404) {
+                throw Object.assign(new Error("Could not find connected account(s)"), {
+                  status: 404,
+                });
+              }
+              throw error;
+            }
+            if (!account?.id) {
+              throw Object.assign(new Error("Could not find connected account(s)"), {
+                status: 404,
+              });
+            }
+          }
+        }
+      }
       composioSdkState.created.push({ userId, config });
       const toolkits = Array.isArray(config.toolkits) ? config.toolkits : [];
       if (toolkits.length === 0) {
@@ -352,6 +381,69 @@ describe("composio tool mapping", () => {
         connectedAccounts: { GMAIL: ["ca-work"] },
       },
     });
+  });
+
+  it("skips a missing connected account and keeps tools for remaining accounts", async () => {
+    composioSdkState.created.length = 0;
+    composioSdkState.sessions.clear();
+    composioToolkitDirectory.invalidate();
+    const originalGet = composioSdkState.connectedAccounts.get;
+    composioSdkState.connectedAccounts.get = async (id: string) => {
+      if (id === "ca-dead") {
+        throw Object.assign(new Error("Could not find connected account(s)"), { status: 404 });
+      }
+      return originalGet(id);
+    };
+    const sink = createTestSink();
+    installLogger(createLogger({ service: "rakazo-api", sinks: [sink] }));
+
+    try {
+      const connector = new ComposioConnector();
+      await expect(
+        connector.discoverTools({
+          operationId: "composio-dead-account",
+          traceId: "composio-dead-account",
+          spaceId: "workspace",
+          userId: "user-1",
+          signal: new AbortController().signal,
+          connectedConnections: [
+            {
+              id: "connection-dead",
+              connectorId: "composio",
+              externalId: "github",
+              displayName: "Revoked",
+              providerRef: "ca-dead",
+            },
+            {
+              id: "connection-live",
+              connectorId: "composio",
+              externalId: "GITHUB",
+              displayName: "Live",
+              providerRef: "ca-live",
+            },
+          ],
+        }),
+      ).resolves.toContainEqual(expect.objectContaining({ name: "GITHUB_GET_REPOS" }));
+
+      expect(composioSdkState.created.at(-1)).toEqual({
+        userId: "user-1",
+        config: {
+          manageConnections: false,
+          sandbox: { enable: false },
+          toolkits: ["GITHUB"],
+          connectedAccounts: { GITHUB: ["ca-live"] },
+        },
+      });
+      expect(sink.events).toContainEqual(
+        expect.objectContaining({
+          level: "warn",
+          message: expect.stringMatching(/connected account/i),
+        }),
+      );
+    } finally {
+      composioSdkState.connectedAccounts.get = originalGet;
+      installLogger(createLogger({ service: "rakazo-api", level: "off", sinks: [] }));
+    }
   });
 
   it("omits connectedAccounts and multiAccount for legacy slug-only refs", async () => {
