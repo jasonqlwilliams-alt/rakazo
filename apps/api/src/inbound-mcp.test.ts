@@ -315,7 +315,8 @@ describe("inbound MCP scrubbing", () => {
 
   it("scrubs deployment, messaging, and outbound MCP secrets from env", () => {
     const env = loadEnv({
-      DATABASE_URL: "postgres://rakazo:rakazo@127.0.0.1:5433/rakazo",
+      DATABASE_URL: "postgres://rakazo:db-pass-aaaa@127.0.0.1:5433/rakazo",
+      REALTIME_DATABASE_URL: "postgres://rakazo:rt-pass-bbbb@127.0.0.1:5433/rakazo_rt",
       NODE_ENV: "test",
       OPENROUTER_API_KEY: "sk-or-v1-deployment-model-key-aaaa",
       WHATSAPP_VERIFY_TOKEN: "whatsapp-verify-token-value-aaaa",
@@ -330,10 +331,14 @@ describe("inbound MCP scrubbing", () => {
       env.larkVerificationToken,
       env.sendbluePhoneNumber,
       env.mcpToken,
+      env.databaseUrl,
+      env.realtimeDatabaseUrl,
     ].join(" ");
     expect(text).toContain("sk-or-v1-deployment-model-key-aaaa");
+    expect(text).toContain("db-pass-aaaa");
+    expect(text).toContain("rt-pass-bbbb");
     expect(scrubInboundMcpText(text, inboundMcpRedactionSecrets(env))).toBe(
-      "[redacted] [redacted] [redacted] [redacted] [redacted]",
+      "[redacted] [redacted] [redacted] [redacted] [redacted] [redacted] [redacted]",
     );
   });
 });

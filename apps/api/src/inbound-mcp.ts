@@ -129,6 +129,8 @@ export function inboundMcpRedactionSecrets(env: AppEnv): string[] {
     env.sendblueApiSecret,
     env.sendblueSigningSecret,
     env.sendbluePhoneNumber,
+    env.databaseUrl,
+    env.realtimeDatabaseUrl,
     env.smtpUrl,
     env.slackBotToken,
     env.slackSigningSecret,
