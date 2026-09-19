@@ -236,6 +236,13 @@ describe("loadEnv", () => {
         RAKAZO_INBOUND_MCP_TOKEN: "shared-secret-value-32chars-aaaaaa",
       }),
     ).toThrow(/RAKAZO_INBOUND_MCP_TOKEN/);
+    expect(loadEnv(base).mcpToken).toBeUndefined();
+    expect(
+      loadEnv({
+        ...base,
+        RAKAZO_MCP_TOKEN: " outbound-mcp-token-value-32chars ",
+      }).mcpToken,
+    ).toBe("outbound-mcp-token-value-32chars");
     expect(() =>
       loadEnv({
         ...base,
@@ -243,5 +250,12 @@ describe("loadEnv", () => {
         RAKAZO_INBOUND_MCP_TOKEN: "outbound-mcp-token-value-32chars",
       }),
     ).toThrow(/RAKAZO_MCP_TOKEN/);
+    expect(() =>
+      loadEnv({
+        ...base,
+        ENCRYPTION_KEY: "shared-secret-value-32chars-aaaaaa",
+        RAKAZO_INBOUND_MCP_TOKEN: "shared-secret-value-32chars-aaaaaa",
+      }),
+    ).toThrow(/RAKAZO_INBOUND_MCP_TOKEN/);
   });
 });

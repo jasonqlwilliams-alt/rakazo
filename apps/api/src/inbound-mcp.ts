@@ -110,8 +110,10 @@ function readOnlyAnnotations() {
 export function inboundMcpRedactionSecrets(env: AppEnv): string[] {
   return uniqueNonempty([
     env.inboundMcpToken,
+    env.mcpToken,
     env.authSecret,
     env.encryptionKey,
+    env.deploymentModelKey,
     env.sandboxSupervisorToken,
     env.screenProxySecret,
     env.desktopStackToken,
@@ -126,15 +128,18 @@ export function inboundMcpRedactionSecrets(env: AppEnv): string[] {
     env.sendblueApiKeyId,
     env.sendblueApiSecret,
     env.sendblueSigningSecret,
+    env.sendbluePhoneNumber,
     env.smtpUrl,
     env.slackBotToken,
     env.slackSigningSecret,
     env.discordBotToken,
     env.whatsappAccessToken,
     env.whatsappAppSecret,
+    env.whatsappVerifyToken,
     env.telegramBotToken,
     env.telegramWebhookSecret,
     env.larkAppSecret,
+    env.larkVerificationToken,
     env.larkEncryptKey,
   ]);
 }

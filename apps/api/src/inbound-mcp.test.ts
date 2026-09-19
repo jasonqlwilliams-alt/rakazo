@@ -1,9 +1,11 @@
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 import type { InboundMcpDeps } from "./inbound-mcp.js";
+import { loadEnv } from "./env.js";
 import {
   INBOUND_MCP_PATH,
   INBOUND_MCP_TOOL_NAMES,
+  inboundMcpRedactionSecrets,
   mountInboundMcpRoutes,
   scrubInboundMcpText,
 } from "./inbound-mcp.js";
@@ -308,6 +310,30 @@ describe("inbound MCP scrubbing", () => {
   it("redacts emails, E.164 numbers, and known secrets", () => {
     expect(scrubInboundMcpText(`token ${SECRET} mail a@b.co +15551234567`, [SECRET])).toBe(
       "token [redacted] mail [redacted] [redacted]",
+    );
+  });
+
+  it("scrubs deployment, messaging, and outbound MCP secrets from env", () => {
+    const env = loadEnv({
+      DATABASE_URL: "postgres://rakazo:rakazo@127.0.0.1:5433/rakazo",
+      NODE_ENV: "test",
+      OPENROUTER_API_KEY: "sk-or-v1-deployment-model-key-aaaa",
+      WHATSAPP_VERIFY_TOKEN: "whatsapp-verify-token-value-aaaa",
+      LARK_VERIFICATION_TOKEN: "lark-verification-token-value-aaaa",
+      SENDBLUE_PHONE_NUMBER: "sendblue-phone-not-e164-aaaa",
+      RAKAZO_MCP_TOKEN: "outbound-mcp-token-value-32chars",
+      RAKAZO_INBOUND_MCP_TOKEN: "inbound-mcp-token-value-32chars-aa",
+    });
+    const text = [
+      env.deploymentModelKey,
+      env.whatsappVerifyToken,
+      env.larkVerificationToken,
+      env.sendbluePhoneNumber,
+      env.mcpToken,
+    ].join(" ");
+    expect(text).toContain("sk-or-v1-deployment-model-key-aaaa");
+    expect(scrubInboundMcpText(text, inboundMcpRedactionSecrets(env))).toBe(
+      "[redacted] [redacted] [redacted] [redacted] [redacted]",
     );
   });
 });

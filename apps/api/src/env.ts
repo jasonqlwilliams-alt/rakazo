@@ -96,6 +96,8 @@ export interface AppEnv {
    * secrets and from RAKAZO_MCP_TOKEN (outbound Continuum). Empty disables /mcp.
    */
   inboundMcpToken: string | undefined;
+  /** Outbound Continuum MCP token (RAKAZO_MCP_TOKEN); never the /mcp bearer. */
+  mcpToken: string | undefined;
   /** Current application image tag; used for compose manual-upgrade command selection. */
   imageTag: string | undefined;
 }
@@ -186,6 +188,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     updaterUrl,
     updaterToken,
     inboundMcpToken: resolveInboundMcpToken(source),
+    mcpToken: optional(source.RAKAZO_MCP_TOKEN),
     imageTag: optional(source.RAKAZO_IMAGE_TAG),
   };
 }
@@ -198,6 +201,7 @@ function resolveInboundMcpToken(source: NodeJS.ProcessEnv): string | undefined {
   }
   const conflicts = [
     source.BETTER_AUTH_SECRET,
+    source.ENCRYPTION_KEY,
     source.SANDBOX_SUPERVISOR_TOKEN,
     source.SCREEN_PROXY_SECRET,
     source.RAKAZO_UPDATER_TOKEN,
