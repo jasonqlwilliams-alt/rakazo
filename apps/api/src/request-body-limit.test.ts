@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 import {
   MAX_AUTH_REQUEST_BYTES,
+  MAX_MCP_REQUEST_BYTES,
   MAX_RPC_REQUEST_BYTES,
   mountApiRequestBodyLimits,
   requestBodyLimit,
@@ -19,6 +20,7 @@ describe("API request body limits", () => {
   it("keeps the RPC allowance above the largest supported attachment envelope", () => {
     expect(MAX_RPC_REQUEST_BYTES).toBeGreaterThan(ATTACHMENT_MAX_BASE64_LENGTH);
     expect(MAX_AUTH_REQUEST_BYTES).toBeLessThan(MAX_RPC_REQUEST_BYTES);
+    expect(MAX_MCP_REQUEST_BYTES).toBe(MAX_AUTH_REQUEST_BYTES);
   });
 
   it("mounts the limits on Auth and RPC without intercepting independently bounded routes", async () => {
@@ -26,6 +28,7 @@ describe("API request body limits", () => {
     const app = new Hono();
     mountApiRequestBodyLimits(app);
     app.post("/api/auth/sign-in/email", async (c) => c.json(await parse(c.req.raw)));
+    app.post("/mcp", async (c) => c.json(await parse(c.req.raw)));
     app.post("/rpc/test", async (c) => c.json(await parse(c.req.raw)));
     app.post("/api/voice/speak", async (c) => c.json(await parse(c.req.raw)));
 
@@ -39,10 +42,12 @@ describe("API request body limits", () => {
         body: "{}",
       });
     const auth = await request("/api/auth/sign-in/email", MAX_AUTH_REQUEST_BYTES + 1);
+    const mcp = await request("/mcp", MAX_MCP_REQUEST_BYTES + 1);
     const rpc = await request("/rpc/test", MAX_RPC_REQUEST_BYTES + 1);
     const voice = await request("/api/voice/speak", MAX_RPC_REQUEST_BYTES + 1);
 
     expect(auth.status).toBe(413);
+    expect(mcp.status).toBe(413);
     expect(rpc.status).toBe(413);
     expect(voice.status).toBe(200);
     expect(parse).toHaveBeenCalledOnce();

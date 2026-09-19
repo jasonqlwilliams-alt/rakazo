@@ -91,6 +91,11 @@ export interface AppEnv {
   updaterUrl: string | undefined;
   /** Bearer shared with the updater; never sent to the browser. */
   updaterToken: string | undefined;
+  /**
+   * Optional inbound Streamable HTTP MCP bearer. Distinct from per-bot webhook
+   * secrets and from RAKAZO_MCP_TOKEN (outbound Continuum). Empty disables /mcp.
+   */
+  inboundMcpToken: string | undefined;
   /** Current application image tag; used for compose manual-upgrade command selection. */
   imageTag: string | undefined;
 }
@@ -180,8 +185,31 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     gitSha: optional(source.GIT_SHA) ?? optional(source.RAKAZO_GIT_SHA),
     updaterUrl,
     updaterToken,
+    inboundMcpToken: resolveInboundMcpToken(source),
     imageTag: optional(source.RAKAZO_IMAGE_TAG),
   };
+}
+
+function resolveInboundMcpToken(source: NodeJS.ProcessEnv): string | undefined {
+  const value = optional(source.RAKAZO_INBOUND_MCP_TOKEN);
+  if (!value) return undefined;
+  if (value.length < 32) {
+    throw new Error("RAKAZO_INBOUND_MCP_TOKEN must be at least 32 characters.");
+  }
+  const conflicts = [
+    source.BETTER_AUTH_SECRET,
+    source.SANDBOX_SUPERVISOR_TOKEN,
+    source.SCREEN_PROXY_SECRET,
+    source.RAKAZO_UPDATER_TOKEN,
+    source.RAKAZO_DESKTOP_STACK_TOKEN,
+    source.RAKAZO_MCP_TOKEN,
+  ];
+  if (conflicts.some((candidate) => candidate && candidate.trim() === value)) {
+    throw new Error(
+      "RAKAZO_INBOUND_MCP_TOKEN must differ from other Rakazo secrets and from RAKAZO_MCP_TOKEN.",
+    );
+  }
+  return value;
 }
 
 function required(source: NodeJS.ProcessEnv, key: string): string {

@@ -74,6 +74,7 @@ From `.env.images.example` (images installer). Leave blank if unused:
 | `E2B_API_KEY` / `DAYTONA_API_KEY` / `BOX_API_KEY` | Remote computers when `SANDBOX_PROVIDER` is not `docker` |
 | `SMTP_URL` / `EMAIL_FROM` | Password-recovery email |
 | Messaging tokens (Slack, Discord, Telegram, …) | Only if you enable those surfaces |
+| `RAKAZO_INBOUND_MCP_TOKEN` | Optional read-only inbound MCP at `POST /mcp` (local Claude/Cowork). Dedicated Bearer, ≥32 chars, distinct from other Rakazo secrets and from `RAKAZO_MCP_TOKEN`. Leave blank to keep `/mcp` closed. |
 
 Blank optional keys are normal for a minimal published-images boot. Pipedream
 Connect keys appear only in source/Compose `.env.example`, not the images
