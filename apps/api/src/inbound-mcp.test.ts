@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
-import type { InboundMcpDeps } from "./inbound-mcp.js";
 import { loadEnv } from "./env.js";
+import type { InboundMcpDeps } from "./inbound-mcp.js";
 import {
   INBOUND_MCP_PATH,
   INBOUND_MCP_TOOL_NAMES,
