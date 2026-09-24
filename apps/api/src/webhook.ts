@@ -168,7 +168,7 @@ export function mountWebhookHttpRoutes(app: Hono, deps: WebhookDeps) {
       c.req.raw.signal,
     );
     const status = webhookOutcomeHttpStatus(outcome.status);
-    return c.json({ ...delivered, ...outcome, ok: status !== 502 }, status);
+    return c.json({ ...delivered, ...outcome, ok: status === 200 }, status);
   });
 
   app.get("/api/v1/bots/:botId/webhook/runs/:runId", async (c) => {

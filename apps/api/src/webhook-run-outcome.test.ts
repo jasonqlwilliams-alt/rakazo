@@ -171,7 +171,7 @@ describe("webhook delivery outcome", () => {
     const res = await product.deliver("?wait=5");
 
     expect(res.status).toBe(202);
-    expect(await res.json()).toMatchObject({ ok: true, runId: "run-1", status: "waiting_input" });
+    expect(await res.json()).toMatchObject({ ok: false, runId: "run-1", status: "waiting_input" });
   });
 
   it("answers 202 with the run's current status when the wait ends first", async () => {
@@ -186,7 +186,7 @@ describe("webhook delivery outcome", () => {
 
     expect(Date.now() - started).toBeGreaterThanOrEqual(900);
     expect(res.status).toBe(202);
-    expect(await res.json()).toMatchObject({ ok: true, runId: "run-1", status: "running" });
+    expect(await res.json()).toMatchObject({ ok: false, runId: "run-1", status: "running" });
   });
 
   it("follows a delivery the busy run hands to a follow-up run", async () => {

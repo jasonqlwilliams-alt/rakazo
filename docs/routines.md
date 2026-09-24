@@ -93,9 +93,11 @@ A webhook `200` means the delivery was accepted and its run queued, not that the
 run succeeded. A caller that needs the outcome can add `?wait=<seconds>` (at most
 60): the response is `200` once the run completes, `502` with the failure when it
 fails or is cancelled, and `202` with the current `status` when the wait ends or
-the run needs the owner. With the same bearer, `GET
-/api/v1/bots/:botId/webhook/runs/:runId` reads a run's `status` and failure
-`error` later.
+the run needs the owner. In wait-mode responses `ok` is true only for `200`; every
+`202` outcome and the `502` failure carry `ok: false`, and without `?wait` the
+`ok` of the acceptance receipt means only that the delivery was queued. With the
+same bearer, `GET /api/v1/bots/:botId/webhook/runs/:runId` reads a run's `status`
+and failure `error` later.
 
 Webhook-triggered runs may inspect state unattended, but side effects need
 the owner's approval. A routine owner can opt a webhook-enabled routine in to
