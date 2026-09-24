@@ -243,6 +243,70 @@ describe.skipIf(!databaseAvailable)("offline Pi product journey", () => {
     }
   }, 30_000);
 
+  it("lets a webhook caller see that the run behind its accepted delivery failed", async () => {
+    const fixtureKey = "offline-product-fixture-key";
+    const failure = "This account is out of credit.";
+    const model = await startModelEmulator({
+      apiKey: fixtureKey,
+      steps: [
+        { expect() {}, response: { type: "error", status: 402, message: failure } },
+        { expect() {}, response: { type: "error", status: 402, message: failure } },
+        { expect() {}, response: { type: "text", text: "Handled." } },
+      ],
+    });
+    await withOfflineProduct(model, fixtureKey, async ({ handles, cookie, bot }) => {
+      const hook = await rpc<{ secret: string; path: string }>(
+        handles.app,
+        cookie,
+        "bots/rotateWebhookSecret",
+        { botId: bot.id },
+      );
+      const authorization = `Bearer ${hook.secret}`;
+      const deliver = (query = "") =>
+        handles.app.request(`${hook.path}${query}`, {
+          method: "POST",
+          headers: { authorization, "content-type": "application/json" },
+          body: JSON.stringify({ event: "alert", text: "Needs attention." }),
+        });
+
+      // Default delivery still acknowledges acceptance, before the run has done anything.
+      const accepted = await deliver();
+      expect(accepted.status).toBe(200);
+      const receipt = (await accepted.json()) as { ok: boolean; runId: string };
+      expect(receipt.ok).toBe(true);
+      await expect
+        .poll(
+          async () =>
+            (await handles.prisma.run.findUnique({ where: { id: receipt.runId } }))?.status,
+          { timeout: 15_000, interval: 100 },
+        )
+        .toBe("failed");
+
+      const status = await handles.app.request(`${hook.path}/runs/${receipt.runId}`, {
+        headers: { authorization },
+      });
+      expect(status.status).toBe(200);
+      expect(await status.json()).toEqual({
+        runId: receipt.runId,
+        status: "failed",
+        error: expect.stringContaining(failure),
+      });
+
+      const waited = await deliver("?wait=15");
+      expect(waited.status).toBe(502);
+      expect(await waited.json()).toMatchObject({
+        ok: false,
+        status: "failed",
+        error: expect.stringContaining(failure),
+      });
+
+      const handled = await deliver("?wait=15");
+      expect(handled.status).toBe(200);
+      expect(await handled.json()).toMatchObject({ ok: true, status: "completed", error: null });
+      model.assertComplete();
+    });
+  }, 30_000);
+
   it.each(["exhausted", "unauthorized"] as const)(
     "persists a failure receipt after a mid-stream replay is %s without publishing discarded text",
     async (failure) => {

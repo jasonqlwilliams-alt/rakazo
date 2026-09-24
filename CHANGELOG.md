@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Bot webhook callers can wait for the run's outcome (`?wait=<seconds>`), so a failed run returns an error instead of `200`, and can read a run's status later with the same bearer.
 - Optional read-only inbound MCP at `POST /mcp` for local Claude Cowork (`RAKAZO_INBOUND_MCP_TOKEN`).
 - Voice mode: spoken replies, hold-to-talk dictation, and half-duplex calls with ElevenLabs, OpenAI, Cartesia, or Fish Audio.
 - Desktop owners using Docker can opt into running bot shell commands directly on their computer. This grants access under the owner's OS account; see [computer providers](docs/self-host.md#choosing-a-computer-provider).
