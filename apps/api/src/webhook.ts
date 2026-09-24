@@ -71,6 +71,22 @@ function webhookOutcomeHttpStatus(status: string): 200 | 202 | 502 {
 }
 
 /**
+ * The run currently bound to a delivery: a steered delivery is handed off between runs through its
+ * steering row, so follow the message when it is parked and fall back to the first run otherwise.
+ */
+async function webhookDeliveryRunId(
+  prisma: PrismaClient,
+  botId: string,
+  delivery: { messageId: string; runId: string | null },
+): Promise<string | null> {
+  const steering = await prisma.steeringMessage.findUnique({
+    where: { messageId_botId: { messageId: delivery.messageId, botId } },
+    select: { runId: true },
+  });
+  return steering ? steering.runId : delivery.runId;
+}
+
+/**
  * Poll the run answering a delivered message until it stops working on its own or the wait ends.
  * A delivery that arrives while the bot is busy steers the active run, and that run can hand the
  * message to a follow-up run, so follow the message rather than the first run id.
@@ -84,11 +100,7 @@ async function waitForWebhookDelivery(
 ): Promise<WebhookRunOutcome> {
   const deadline = Date.now() + waitMs;
   for (;;) {
-    const steering = await prisma.steeringMessage.findUnique({
-      where: { messageId_botId: { messageId: delivery.messageId, botId } },
-      select: { runId: true },
-    });
-    const runId = steering ? steering.runId : delivery.runId;
+    const runId = await webhookDeliveryRunId(prisma, botId, delivery);
     const run = runId
       ? await prisma.run.findFirst({
           where: { id: runId, botId },
@@ -176,10 +188,17 @@ export function mountWebhookHttpRoutes(app: Hono, deps: WebhookDeps) {
     if (!target || !hasValidBearerToken(c.req.header("authorization"), target.expected)) {
       return c.json({ error: "Unauthorized" }, 401);
     }
-    const run = await deps.prisma.run.findFirst({
-      where: { id: c.req.param("runId"), botId: target.bot.id, spaceId: target.bot.spaceId },
-      select: { id: true, status: true, error: true },
-    });
+    const firstRunId = c.req.param("runId");
+    const messageId = c.req.query("messageId");
+    const runId = messageId
+      ? await webhookDeliveryRunId(deps.prisma, target.bot.id, { messageId, runId: firstRunId })
+      : firstRunId;
+    const run = runId
+      ? await deps.prisma.run.findFirst({
+          where: { id: runId, botId: target.bot.id, spaceId: target.bot.spaceId },
+          select: { id: true, status: true, error: true },
+        })
+      : null;
     if (!run) return c.json({ error: "Not found" }, 404);
     return c.json(webhookRunOutcome(run));
   });

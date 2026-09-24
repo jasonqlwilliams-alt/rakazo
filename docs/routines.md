@@ -95,9 +95,12 @@ run succeeded. A caller that needs the outcome can add `?wait=<seconds>` (at mos
 fails or is cancelled, and `202` with the current `status` when the wait ends or
 the run needs the owner. In wait-mode responses `ok` is true only for `200`; every
 `202` outcome and the `502` failure carry `ok: false`, and without `?wait` the
-`ok` of the acceptance receipt means only that the delivery was queued. With the
-same bearer, `GET /api/v1/bots/:botId/webhook/runs/:runId` reads a run's `status`
-and failure `error` later.
+`ok` of the acceptance receipt means only that the delivery was queued. Every
+wait-mode response carries the delivery's `messageId`. With the same bearer,
+`GET /api/v1/bots/:botId/webhook/runs/:runId` reads a run's `status` and failure
+`error` later; a delivery that lands while the bot is busy can move to a
+continuation run, so poll by the delivery (`?messageId=<id>` on the same path
+follows the hand-off chain) rather than by the first `runId`.
 
 Webhook-triggered runs may inspect state unattended, but side effects need
 the owner's approval. A routine owner can opt a webhook-enabled routine in to

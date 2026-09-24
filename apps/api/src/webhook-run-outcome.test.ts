@@ -100,8 +100,15 @@ function createProduct(options: { busyRunId?: string; onEnqueue?: (run: Run) => 
       headers: { authorization, "content-type": "application/json" },
       body: JSON.stringify({ event: "alert", text: "Needs attention." }),
     });
-  const readRun = (runId: string, botId = "bot-1", authorization = `Bearer ${SECRET}`) =>
-    app.request(`/api/v1/bots/${botId}/webhook/runs/${runId}`, { headers: { authorization } });
+  const readRun = (
+    runId: string,
+    botId = "bot-1",
+    authorization = `Bearer ${SECRET}`,
+    messageId?: string,
+  ) =>
+    app.request(`/api/v1/bots/${botId}/webhook/runs/${runId}${messageId ? `?messageId=${messageId}` : ""}`, {
+      headers: { authorization },
+    });
 
   return { runs, steering, addRun, sendUserMessage, enqueue, deliver, readRun };
 }
@@ -171,7 +178,12 @@ describe("webhook delivery outcome", () => {
     const res = await product.deliver("?wait=5");
 
     expect(res.status).toBe(202);
-    expect(await res.json()).toMatchObject({ ok: false, runId: "run-1", status: "waiting_input" });
+    expect(await res.json()).toMatchObject({
+      ok: false,
+      messageId: "msg-1",
+      runId: "run-1",
+      status: "waiting_input",
+    });
   });
 
   it("answers 202 with the run's current status when the wait ends first", async () => {
@@ -186,7 +198,12 @@ describe("webhook delivery outcome", () => {
 
     expect(Date.now() - started).toBeGreaterThanOrEqual(900);
     expect(res.status).toBe(202);
-    expect(await res.json()).toMatchObject({ ok: false, runId: "run-1", status: "running" });
+    expect(await res.json()).toMatchObject({
+      ok: false,
+      messageId: "msg-1",
+      runId: "run-1",
+      status: "running",
+    });
   });
 
   it("follows a delivery the busy run hands to a follow-up run", async () => {
@@ -246,6 +263,47 @@ describe("webhook run status read", () => {
     expect((await product.readRun("run-1", "bot-1", "Bearer wrong-secret")).status).toBe(401);
     expect((await product.readRun("run-1", "bot-1", "")).status).toBe(401);
     expect((await product.readRun("run-1", "missing-bot")).status).toBe(401);
+  });
+
+  it("reads a delivery's outcome by message after it hands off to a continuation run", async () => {
+    const product = createProduct({ busyRunId: "run-busy" });
+
+    // The wait expires while the busy run owns the delivery, so the 202 carries the delivery id.
+    const res = await product.deliver("?wait=1");
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { messageId: string; runId: string };
+    expect(body.messageId).toBe("msg-1");
+
+    // The busy run finalizes without claiming the delivery, so a continuation takes over and fails.
+    product.runs.get("run-busy")!.status = "completed";
+    product.addRun("run-follow-up", "running");
+    product.steering.set("msg-1", { runId: "run-follow-up" });
+    Object.assign(product.runs.get("run-follow-up")!, { status: "failed", error: FAILURE });
+
+    // Reading by the first run id reports the busy run's own terminal state, not the delivery's.
+    expect(await (await product.readRun(body.runId)).json()).toMatchObject({
+      runId: "run-busy",
+      status: "completed",
+    });
+
+    // Reading by the delivery follows the hand-off chain to the run that actually owns it.
+    const read = await product.readRun(body.runId, "bot-1", `Bearer ${SECRET}`, body.messageId);
+    expect(read.status).toBe(200);
+    expect(await read.json()).toMatchObject({
+      runId: "run-follow-up",
+      status: "failed",
+      error: FAILURE,
+    });
+  });
+
+  it("keeps a delivery-keyed read scoped to the bot", async () => {
+    const product = createProduct();
+    product.addRun("run-other", "failed", "bot-2");
+    product.steering.set("msg-1", { runId: "run-other" });
+
+    const res = await product.readRun("run-1", "bot-1", `Bearer ${SECRET}`, "msg-1");
+
+    expect(res.status).toBe(404);
   });
 
   it("only reads the bot's own runs", async () => {
