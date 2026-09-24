@@ -106,9 +106,12 @@ function createProduct(options: { busyRunId?: string; onEnqueue?: (run: Run) => 
     authorization = `Bearer ${SECRET}`,
     messageId?: string,
   ) =>
-    app.request(`/api/v1/bots/${botId}/webhook/runs/${runId}${messageId ? `?messageId=${messageId}` : ""}`, {
-      headers: { authorization },
-    });
+    app.request(
+      `/api/v1/bots/${botId}/webhook/runs/${runId}${messageId ? `?messageId=${messageId}` : ""}`,
+      {
+        headers: { authorization },
+      },
+    );
 
   return { runs, steering, addRun, sendUserMessage, enqueue, deliver, readRun };
 }
