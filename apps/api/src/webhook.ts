@@ -1,4 +1,6 @@
-import { hasValidBearerToken } from "@rakazo/core";
+import { setTimeout as delay } from "node:timers/promises";
+import { hasValidBearerToken, runFailureError } from "@rakazo/core";
+import type { PrismaClient } from "@rakazo/db";
 import type { Hono } from "hono";
 import { mountGithubWebhookRoute } from "./github-webhook.js";
 import { readBoundedBody } from "./http-body.js";
@@ -27,8 +29,93 @@ export {
   type WebhookTarget,
 } from "./webhook-inbound.js";
 
+/** Longest a delivery may hold its request open for the run's outcome (`?wait=<seconds>`). */
+export const WEBHOOK_MAX_WAIT_SECONDS = 60;
+const WEBHOOK_WAIT_POLL_MS = 500;
+/** A run in these states is still working on its own; any other state answers the caller. */
+const WORKING_RUN_STATUSES = new Set(["queued", "leased", "running"]);
+
 export function webhookPath(botId: string): string {
   return `/api/v1/bots/${botId}/webhook`;
+}
+
+/** Seconds a delivery asked to wait: undefined when it did not ask, null when the value is invalid. */
+export function webhookWaitSeconds(value: string | undefined): number | null | undefined {
+  if (value === undefined) return undefined;
+  if (!/^\d+$/.test(value) || Number(value) < 1) return null;
+  return Math.min(Number(value), WEBHOOK_MAX_WAIT_SECONDS);
+}
+
+type WebhookRunOutcome = { runId: string | null; status: string; error: string | null };
+
+function webhookRunOutcome(run: {
+  id: string;
+  status: string;
+  error: string | null;
+}): WebhookRunOutcome {
+  return {
+    runId: run.id,
+    status: run.status,
+    error:
+      run.status === "failed"
+        ? runFailureError({ type: "run.failed", payload: { error: run.error } })
+        : null,
+  };
+}
+
+/** 200 once the run completed, 502 when it failed or was cancelled, 202 while it has not finished. */
+function webhookOutcomeHttpStatus(status: string): 200 | 202 | 502 {
+  if (status === "completed") return 200;
+  if (status === "failed" || status === "cancelled") return 502;
+  return 202;
+}
+
+/**
+ * The run currently bound to a delivery: a steered delivery is handed off between runs through its
+ * steering row, so follow the message when it is parked and fall back to the first run otherwise.
+ */
+async function webhookDeliveryRunId(
+  prisma: PrismaClient,
+  botId: string,
+  delivery: { messageId: string; runId: string | null },
+): Promise<string | null> {
+  const steering = await prisma.steeringMessage.findUnique({
+    where: { messageId_botId: { messageId: delivery.messageId, botId } },
+    select: { runId: true },
+  });
+  return steering ? steering.runId : delivery.runId;
+}
+
+/**
+ * Poll the run answering a delivered message until it stops working on its own or the wait ends.
+ * A delivery that arrives while the bot is busy steers the active run, and that run can hand the
+ * message to a follow-up run, so follow the message rather than the first run id.
+ */
+async function waitForWebhookDelivery(
+  prisma: PrismaClient,
+  botId: string,
+  delivery: { messageId: string; runId: string | null },
+  waitMs: number,
+  signal: AbortSignal,
+): Promise<WebhookRunOutcome> {
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    const runId = await webhookDeliveryRunId(prisma, botId, delivery);
+    const run = runId
+      ? await prisma.run.findFirst({
+          where: { id: runId, botId },
+          select: { id: true, status: true, error: true },
+        })
+      : null;
+    const outcome = run ? webhookRunOutcome(run) : { runId, status: "queued", error: null };
+    const remaining = deadline - Date.now();
+    if (!WORKING_RUN_STATUSES.has(outcome.status) || remaining <= 0 || signal.aborted) {
+      return outcome;
+    }
+    await delay(Math.min(WEBHOOK_WAIT_POLL_MS, remaining), undefined, { signal }).catch(
+      () => undefined,
+    );
+  }
 }
 
 export function mountWebhookHttpRoutes(app: Hono, deps: WebhookDeps) {
@@ -46,6 +133,11 @@ export function mountWebhookHttpRoutes(app: Hono, deps: WebhookDeps) {
     // Same 401 for missing bot, missing secret, and bad bearer so bot ids are not enumerable.
     if (!target || !hasValidBearerToken(c.req.header("authorization"), target.expected)) {
       return unauthorized();
+    }
+
+    const wait = webhookWaitSeconds(c.req.query("wait"));
+    if (wait === null) {
+      return c.json({ error: "Invalid wait" }, 400);
     }
 
     const payload = parseWebhookPayload(raw, c.req.header("content-type"));
@@ -70,15 +162,45 @@ export function mountWebhookHttpRoutes(app: Hono, deps: WebhookDeps) {
       (typeof payload.event_id === "string" ? payload.event_id.trim() : "") ||
       undefined;
 
-    return c.json(
-      await deliverWebhookEvent(deps, target, {
-        prompt: eventPrompt,
-        routines: webhookRoutines,
-        source: "webhook",
-        idempotencyKey,
-        routineId: webhookRoutines.length === 1 ? webhookRoutines[0]!.id : undefined,
-      }),
+    const delivered = await deliverWebhookEvent(deps, target, {
+      prompt: eventPrompt,
+      routines: webhookRoutines,
+      source: "webhook",
+      idempotencyKey,
+      routineId: webhookRoutines.length === 1 ? webhookRoutines[0]!.id : undefined,
+    });
+    // Without a wait the 200 only means the delivery was accepted and its run queued.
+    if (wait === undefined) return c.json(delivered);
+
+    const outcome = await waitForWebhookDelivery(
+      deps.prisma,
+      target.bot.id,
+      delivered,
+      wait * 1000,
+      c.req.raw.signal,
     );
+    const status = webhookOutcomeHttpStatus(outcome.status);
+    return c.json({ ...delivered, ...outcome, ok: status === 200 }, status);
+  });
+
+  app.get("/api/v1/bots/:botId/webhook/runs/:runId", async (c) => {
+    const target = await loadWebhookTarget(deps, c.req.param("botId"));
+    if (!target || !hasValidBearerToken(c.req.header("authorization"), target.expected)) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+    const firstRunId = c.req.param("runId");
+    const messageId = c.req.query("messageId");
+    const runId = messageId
+      ? await webhookDeliveryRunId(deps.prisma, target.bot.id, { messageId, runId: firstRunId })
+      : firstRunId;
+    const run = runId
+      ? await deps.prisma.run.findFirst({
+          where: { id: runId, botId: target.bot.id, spaceId: target.bot.spaceId },
+          select: { id: true, status: true, error: true },
+        })
+      : null;
+    if (!run) return c.json({ error: "Not found" }, 404);
+    return c.json(webhookRunOutcome(run));
   });
 
   mountGithubWebhookRoute(app, deps);
