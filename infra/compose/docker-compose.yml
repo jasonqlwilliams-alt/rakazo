@@ -69,6 +69,7 @@ services:
       - ../../.env
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-rakazo}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-rakazo}
+      RAKAZO_DATABASE_ENVIRONMENT: production
       API_HOST: "0.0.0.0"
       DATA_DIR: /data
       SANDBOX_SUPERVISOR_URL: http://supervisor:7091

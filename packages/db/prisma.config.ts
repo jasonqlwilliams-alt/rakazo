@@ -3,11 +3,15 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config } from "dotenv";
 import { defineConfig } from "prisma/config";
+import { guardPrismaCommand } from "./src/database-guard.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const rootEnv = path.resolve(here, "../../.env");
 if (existsSync(rootEnv)) config({ path: rootEnv });
 config();
+
+// No fallback URL: a command without DATABASE_URL must fail, not guess a database.
+await guardPrismaCommand(process.argv.slice(2), process.env);
 
 export default defineConfig({
   schema: "prisma/schema.prisma",
@@ -15,6 +19,6 @@ export default defineConfig({
     path: "prisma/migrations",
   },
   datasource: {
-    url: process.env.DATABASE_URL ?? "postgres://rakazo:rakazo@127.0.0.1:5433/rakazo",
+    url: process.env.DATABASE_URL,
   },
 });

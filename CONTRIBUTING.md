@@ -25,6 +25,11 @@ required secrets, and startup commands.
 
 CI runs `pnpm lint`, `pnpm check`, production builds (including Electron preload smoke), `pnpm test`, `pnpm test:integration`, and `pnpm test:e2e` on every PR.
 
+To run one Postgres suite without Testcontainers, set `VERIFY_DATABASE=1` and a `DATABASE_URL`
+whose database name has `test` as its own word, such as `rakazo_test`. The test setup refuses any
+other name before it connects, refuses a database marked as production, and creates and migrates
+the test database when it is missing.
+
 ## Adding a UI language
 
 The web and Electron-hosted UI use Lingui catalogs. To add a locale, register it in

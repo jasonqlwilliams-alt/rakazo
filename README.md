@@ -92,8 +92,8 @@ cd rakazo
 cp .env.example .env
 ```
 
-Set `POSTGRES_PASSWORD` (for example `openssl rand -hex 16`), then put the same value in
-`DATABASE_URL`. Set `BETTER_AUTH_SECRET`, `ENCRYPTION_KEY`, and `SCREEN_PROXY_SECRET` to
+Set `POSTGRES_PASSWORD` (for example `openssl rand -hex 16`), then uncomment `DATABASE_URL` and
+put the same value in it. Set `BETTER_AUTH_SECRET`, `ENCRYPTION_KEY`, and `SCREEN_PROXY_SECRET` to
 independent long random values. Docker sandboxes also need a dedicated
 `SANDBOX_SUPERVISOR_TOKEN`. You can also set `OPENROUTER_API_KEY`, or connect a supported
 model provider during onboarding.

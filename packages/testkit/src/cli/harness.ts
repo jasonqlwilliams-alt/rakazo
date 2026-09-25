@@ -109,6 +109,7 @@ async function main() {
         "packages/adapters/src/cloud-agent.postgres.test.ts",
         "packages/adapters/src/research.postgres.test.ts",
         "packages/testkit/src/research-pi-offline.postgres.test.ts",
+        "packages/testkit/src/test-database.postgres.test.ts",
       ];
       // Each app reconciles all durable work in its database, including intentionally
       // unfinished fixture runs. Clone the pristine migrated schema so one suite
@@ -130,7 +131,7 @@ async function main() {
           throw new Error("Isolated integration database operation failed");
       };
       for (const [index, suite] of suites.entries()) {
-        const database = `integration_${index}`;
+        const database = `integration_${index}_test`;
         await databaseCommand(`CREATE DATABASE "${database}" TEMPLATE "${template}"`);
         const suiteUrl = new URL(databaseUrl);
         suiteUrl.pathname = `/${database}`;
