@@ -1,7 +1,11 @@
 import type { Actor } from "@rakazo/contracts";
 import type { PrismaClient } from "@rakazo/db";
 import { describe, expect, it, vi } from "vitest";
-import { selectConfiguredModel, validateConnectedModelChoice } from "./model-selection.js";
+import {
+  savedModelChoiceError,
+  selectConfiguredModel,
+  validateConnectedModelChoice,
+} from "./model-selection.js";
 
 type SelectionInput = Parameters<typeof selectConfiguredModel>[0];
 
@@ -189,5 +193,37 @@ describe("connected model validation", () => {
     await expect(
       validateConnectedModelChoice(disconnectedPrisma, actor, "anthropic", "claude-opus-4-6"),
     ).resolves.toBe("Connect that model provider first");
+  });
+
+  it("accepts a saved id newer than the catalog only when a catalog family can run it", async () => {
+    const savedModels = new Set(["grok-4.8", "grok-mystery"]);
+    const prisma = {
+      spaceModelPreference: {
+        findFirst: async (args: { where: { modelId?: string } }) =>
+          args.where.modelId && savedModels.has(args.where.modelId) ? { id: "saved" } : null,
+      },
+      userModelCredential: { findFirst: async () => credential("xai", "grok-4.8") },
+    } as unknown as PrismaClient;
+    await expect(
+      validateConnectedModelChoice(prisma, actor, "xai", "grok-4.8"),
+    ).resolves.toBeUndefined();
+    // Resolvable but never saved: a bot or tool cannot pick an arbitrary id.
+    await expect(validateConnectedModelChoice(prisma, actor, "xai", "grok-4.9")).resolves.toBe(
+      "Unknown model for that provider",
+    );
+    // Saved but with no catalog family to borrow settings from.
+    await expect(validateConnectedModelChoice(prisma, actor, "xai", "grok-mystery")).resolves.toBe(
+      "Unknown model for that provider",
+    );
+  });
+
+  it("decides which ids can be saved for a provider", () => {
+    expect(savedModelChoiceError("xai", "grok-4.7")).toBeUndefined();
+    expect(savedModelChoiceError("xai", "grok-4.8")).toBeUndefined();
+    expect(savedModelChoiceError("anthropic", "claude-opus-6")).toBeUndefined();
+    expect(savedModelChoiceError("xai", "claude-opus-6")).toBe("Unknown model for that provider");
+    expect(savedModelChoiceError("xai", "grok")).toBe("Unknown model for that provider");
+    expect(savedModelChoiceError("xai", "  ")).toBe("Enter a model id");
+    expect(savedModelChoiceError("openai-compatible", "anything-goes")).toBeUndefined();
   });
 });

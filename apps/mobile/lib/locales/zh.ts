@@ -470,6 +470,8 @@ export const ZH_MESSAGES: Record<string, string> = {
   "Updating…": "正在更新…",
   Usage: "用量",
   "Use a custom server": "使用自定义服务器",
+  "Other model id": "其他模型 ID",
+  "Use a listed model": "使用列表中的模型",
   "Use a found model": "使用找到的模型",
   "Use an http or https URL": "请使用 http 或 https 地址",
   "Use default server": "使用默认服务器",

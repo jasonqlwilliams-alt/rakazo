@@ -31,6 +31,7 @@ import { getLogger } from "@rakazo/logging";
 import { isToolPauseResult } from "./approval-effect.js";
 import { builtinAgentTools, SUBAGENT_EXCLUDED_TOOL_NAMES } from "./builtin-tools.js";
 import { DEFAULT_OPENROUTER_MODEL_ID } from "./deployment-model.js";
+import { resolveProviderModel } from "./model-family.js";
 import {
   normalizeOpenAiToolParameters,
   openAiToolParametersNeedNormalization,
@@ -165,14 +166,8 @@ export class PiAgentRuntime implements AgentRuntime {
     const work = (async () => {
       try {
         const selectedModel = resolveRuntimeModel(request.model);
-        if (!selectedModel.model) {
-          queue.push({
-            type: "text",
-            text: `Unknown model ${selectedModel.provider}/${selectedModel.modelId}`,
-          });
-          queue.push({ type: "done" });
-          return;
-        }
+        // Fail the run: a reply would read as the bot answering and mark the turn done.
+        if (!selectedModel.model) throw new Error(unknownModelMessage(selectedModel));
         const { models, model, apiKey } = selectedModel;
         const toolDefs = request.tools.length ? request.tools : builtinAgentTools;
         const nestedAgents = new Set<Agent>();
@@ -510,6 +505,10 @@ function resolveRuntimeModel(modelConfig: AgentRunRequest["model"]): {
   ) {
     model = configuredOpenRouterModel(modelId);
   }
+  // A newer id than Pi's catalog knows borrows its closest same-family sibling's settings.
+  if (!model && provider !== OPENAI_COMPATIBLE_PROVIDER_ID) {
+    model = resolveProviderModel(models, provider, modelId);
+  }
   const apiKey = modelConfig.oauth
     ? undefined
     : modelConfig.provider === OPENAI_COMPATIBLE_PROVIDER_ID
@@ -519,6 +518,10 @@ function resolveRuntimeModel(modelConfig: AgentRunRequest["model"]): {
         (modelConfig.apiKey ??
         (provider === "openrouter" ? process.env.OPENROUTER_API_KEY : undefined));
   return { provider, modelId, models, model, apiKey };
+}
+
+function unknownModelMessage(selected: { provider: string; modelId: string }) {
+  return `Unknown model ${selected.provider}/${selected.modelId}: this Rakazo version has no model of that family to run it with`;
 }
 
 export function modelsForRequest(
@@ -1008,7 +1011,7 @@ async function executeSubagent(host: ToolHost, executionId: string, args: Record
 
   const selectedModel = resolveRuntimeModel(requestModel);
   if (!selectedModel.model) {
-    const message = `Unknown model ${selectedModel.provider}/${selectedModel.modelId}`;
+    const message = unknownModelMessage(selectedModel);
     host.queue.push({ type: "subagent", agentId, name, task, status: "failed", result: message });
     host.subagentGate.release();
     return `Subagent failed: ${message}`;

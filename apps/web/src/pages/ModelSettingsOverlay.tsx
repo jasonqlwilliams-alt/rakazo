@@ -12,7 +12,7 @@ import {
   parseModelMaxImagesPerPrompt,
   parseModelMaxTokens,
 } from "@rakazo/contracts";
-import { createModelProbe, initialModelProbeState } from "@rakazo/core";
+import { createModelProbe, initialModelProbeState, unlistedSavedModelId } from "@rakazo/core";
 import {
   Button,
   Dialog,
@@ -58,6 +58,7 @@ export function ModelSettingsOverlay({
   const [provider, setProvider] = useState("");
   const [providerQuery, setProviderQuery] = useState("");
   const [modelId, setModelId] = useState("");
+  const [customModel, setCustomModel] = useState(false);
   const [apiKey, setApiKey] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [reasoning, setReasoning] = useState(false);
@@ -111,6 +112,11 @@ export function ModelSettingsOverlay({
         ? provider
         : (nextMe.defaultProvider ?? nextCatalog[0]?.provider ?? "");
     const nextCredential = nextCredentials.find((entry) => entry.provider === nextProvider);
+    const nextCustomModelId = unlistedSavedModelId(
+      nextCatalog,
+      nextProvider,
+      nextCredential?.modelId,
+    );
     const nextModel =
       nextProvider === OPENAI_COMPATIBLE_PROVIDER_ID
         ? (nextCredential?.modelId ??
@@ -121,6 +127,7 @@ export function ModelSettingsOverlay({
           nextCatalog.find(
             (entry) => entry.provider === nextProvider && entry.id === nextMe.defaultModel,
           )?.id ??
+          nextCustomModelId ??
           nextCatalog.find((entry) => entry.provider === nextProvider)?.id ??
           "");
     setCatalog(nextCatalog);
@@ -130,6 +137,7 @@ export function ModelSettingsOverlay({
       resetOpenAiCompatibleProbe();
       setProvider(nextProvider);
       setModelId(nextModel);
+      setCustomModel(nextCustomModelId !== undefined && nextModel === nextCustomModelId);
       if (nextProvider === OPENAI_COMPATIBLE_PROVIDER_ID) {
         setBaseUrl(nextCredential?.baseUrl ?? "");
         setReasoning(nextCredential?.reasoning ?? false);
@@ -179,15 +187,17 @@ export function ModelSettingsOverlay({
   }, [groups, providerQuery]);
   const modelsForProvider = catalog.filter((entry) => entry.provider === provider);
   const selected = modelsForProvider.find((entry) => entry.id === modelId) ?? modelsForProvider[0];
-  selectedLabelRef.current = selected?.label;
   const isOpenAiCompatible = provider === OPENAI_COMPATIBLE_PROVIDER_ID;
+  const isCustomModel = customModel && !isOpenAiCompatible;
+  const typedModelId = isOpenAiCompatible || isCustomModel;
+  const activeModelId = typedModelId ? modelId.trim() : selected?.id;
+  const activeLabel = isCustomModel ? modelId.trim() : selected?.label;
+  selectedLabelRef.current = activeLabel;
   const credential = credentials.find((entry) => entry.provider === provider);
   const currentEntry = catalog.find(
     (entry) => entry.provider === me?.defaultProvider && entry.id === me?.defaultModel,
   );
-  const isActive =
-    me?.defaultProvider === selected?.provider &&
-    me?.defaultModel === (isOpenAiCompatible ? modelId.trim() : selected?.id);
+  const isActive = me?.defaultProvider === selected?.provider && me?.defaultModel === activeModelId;
   const acceptsKey = selected?.auth !== "oauth";
   const subscriptionSignIn = selected?.signIn !== undefined;
   const busy = pending !== null || oauthPending;
@@ -216,6 +226,7 @@ export function ModelSettingsOverlay({
     selectionRevisionRef.current += 1;
     const nextCredential = credentials.find((entry) => entry.provider === nextProvider);
     setProvider(nextProvider);
+    setCustomModel(false);
     setReasoning(nextCredential?.reasoning ?? false);
     setThinkingLevel(nextCredential?.thinkingLevel ?? null);
     setMaxTokens(String(nextCredential?.maxTokens ?? DEFAULT_MODEL_MAX_TOKENS));
@@ -254,17 +265,28 @@ export function ModelSettingsOverlay({
     });
   }
 
+  function toggleCustomModel() {
+    cancelOAuthAttempt();
+    selectionRevisionRef.current += 1;
+    setCustomModel(!isCustomModel);
+    setModelId(
+      isCustomModel
+        ? (modelsForProvider[0]?.id ?? "")
+        : (unlistedSavedModelId(catalog, provider, credential?.modelId) ?? ""),
+    );
+    setError(null);
+    setNotice(null);
+  }
+
   async function setModelDefault() {
-    if (!selected || !credential) return;
-    const activeModelId = isOpenAiCompatible ? modelId.trim() : selected.id;
-    if (isOpenAiCompatible && !activeModelId) return;
+    if (!selected || !credential || !activeModelId) return;
     setError(null);
     setNotice(null);
     setPending("default");
     try {
       await rpc.models.setDefault({ provider: selected.provider, modelId: activeModelId });
       await refresh();
-      setNotice(isOpenAiCompatible ? t`Model updated.` : t`Now using ${selected.label}.`);
+      setNotice(isOpenAiCompatible ? t`Model updated.` : t`Now using ${activeLabel}.`);
     } catch (err) {
       setError(err instanceof Error ? err.message : t`Could not change the default model`);
     } finally {
@@ -274,8 +296,9 @@ export function ModelSettingsOverlay({
 
   async function connectKey() {
     if (!selected) return;
+    if (!activeModelId) return;
     if (isOpenAiCompatible) {
-      if (!effectiveBaseUrl || !modelId.trim()) return;
+      if (!effectiveBaseUrl) return;
     } else if (!apiKey.trim()) {
       return;
     }
@@ -326,14 +349,14 @@ export function ModelSettingsOverlay({
           : {
               provider: selected.provider,
               apiKey: apiKey.trim(),
-              modelId: selected.id,
+              modelId: activeModelId,
               label: selected.providerName ?? selected.provider,
             },
       );
       setApiKey("");
       await refresh();
       detailScrollRef.current?.scrollTo({ top: 0 });
-      setNotice(isOpenAiCompatible ? t`Saved.` : t`Connected and using ${selected.label}.`);
+      setNotice(isOpenAiCompatible ? t`Saved.` : t`Connected and using ${activeLabel}.`);
     } catch (err) {
       setError(err instanceof Error ? err.message : t`Could not connect this provider`);
     } finally {
@@ -347,11 +370,11 @@ export function ModelSettingsOverlay({
   }
 
   function beginSelectedSubscriptionSignIn() {
-    if (!selected) return;
+    if (!selected || !activeModelId) return;
     setNotice(null);
     void startSubscriptionSignIn({
       provider: selected.provider,
-      modelId: selected.id,
+      modelId: activeModelId,
       label: selected.providerName ?? selected.provider,
     });
   }
@@ -609,17 +632,48 @@ export function ModelSettingsOverlay({
                     <span>
                       <Trans>Model</Trans>
                     </span>
-                    <ModelPicker
-                      options={modelsForProvider}
-                      value={selected.id}
-                      onChange={(nextModelId) => {
-                        cancelOAuthAttempt();
-                        selectionRevisionRef.current += 1;
-                        setModelId(nextModelId);
-                        setError(null);
-                        setNotice(null);
-                      }}
-                    />
+                    {isCustomModel ? (
+                      <Input
+                        value={modelId}
+                        onChange={(event) => {
+                          cancelOAuthAttempt();
+                          selectionRevisionRef.current += 1;
+                          setModelId(event.target.value);
+                          setError(null);
+                          setNotice(null);
+                        }}
+                        aria-label={t`Model id`}
+                        placeholder="exact-model-id"
+                        autoComplete="off"
+                        spellCheck={false}
+                        className="mt-2 h-10 text-foreground"
+                      />
+                    ) : (
+                      <ModelPicker
+                        options={modelsForProvider}
+                        value={selected.id}
+                        onChange={(nextModelId) => {
+                          cancelOAuthAttempt();
+                          selectionRevisionRef.current += 1;
+                          setModelId(nextModelId);
+                          setError(null);
+                          setNotice(null);
+                        }}
+                      />
+                    )}
+                    <Button
+                      type="button"
+                      variant="link"
+                      className="mt-2 h-auto px-0 text-[13px] text-muted-foreground underline"
+                      disabled={busy}
+                      onClick={toggleCustomModel}
+                    >
+                      {isCustomModel ? (
+                        <Trans>Use a listed model</Trans>
+                      ) : (
+                        <Trans>Other model id</Trans>
+                      )}
+                    </Button>
                   </>
                 )}
               </div>
@@ -724,7 +778,7 @@ export function ModelSettingsOverlay({
                       type="button"
                       variant="outline"
                       size="sm"
-                      disabled={busy}
+                      disabled={busy || !activeModelId}
                       onClick={() => beginSelectedSubscriptionSignIn()}
                     >
                       {oauthPending ? (
@@ -784,6 +838,7 @@ export function ModelSettingsOverlay({
                     size="sm"
                     disabled={
                       busy ||
+                      !activeModelId ||
                       (isOpenAiCompatible ? !openAiCompatibleReady : apiKey.trim().length < 8)
                     }
                     onClick={() => void connectKey()}
@@ -817,7 +872,7 @@ export function ModelSettingsOverlay({
                     variant="secondary"
                     className="rounded-full"
                     size="sm"
-                    disabled={busy || (isOpenAiCompatible && !modelId.trim())}
+                    disabled={busy || !activeModelId}
                     onClick={() => void setModelDefault()}
                   >
                     {pending === "default" ? (

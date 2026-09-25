@@ -1,0 +1,93 @@
+name: pi model library update
+
+# Weekly pull request that moves Pi (Rakazo's model library and catalog) to its
+# newest release, so new models reach the picker without someone noticing first.
+# It only opens a pull request; a maintainer reviews and merges it.
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: pi-bump
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    name: Update Pi
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # A pull request pushed with the default token does not start CI. Set the
+      # PI_BUMP_TOKEN secret (contents and pull-requests write) to have CI run on it.
+      - uses: actions/checkout@v5
+        with:
+          token: ${{ secrets.PI_BUMP_TOKEN || github.token }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: node scripts/pi-bump.mjs models > "$RUNNER_TEMP/models-before.txt"
+      - id: bump
+        run: node scripts/pi-bump.mjs >> "$GITHUB_OUTPUT"
+      - if: steps.bump.outputs.changed == 'true'
+        run: pnpm install --no-frozen-lockfile
+      - if: steps.bump.outputs.changed == 'true'
+        run: |
+          node scripts/pi-bump.mjs models > "$RUNNER_TEMP/models-after.txt"
+          LC_ALL=C comm -13 "$RUNNER_TEMP/models-before.txt" "$RUNNER_TEMP/models-after.txt" > "$RUNNER_TEMP/models-added.txt"
+      - if: steps.bump.outputs.changed == 'true'
+        run: pnpm lint
+      - if: steps.bump.outputs.changed == 'true'
+        run: pnpm db:generate
+        env:
+          DATABASE_URL: postgres://rakazo:rakazo@127.0.0.1:5433/rakazo
+      - if: steps.bump.outputs.changed == 'true'
+        run: pnpm check
+      - if: steps.bump.outputs.changed == 'true'
+        run: pnpm test
+      - if: steps.bump.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.PI_BUMP_TOKEN || github.token }}
+          BASE: ${{ github.event.repository.default_branch }}
+          PREVIOUS: ${{ steps.bump.outputs.previous }}
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          branch="deps/pi-$VERSION"
+          if [ -n "$(gh pr list --head "$branch" --state open --json number --jq '.[].number')" ]; then
+            echo "A pull request for Pi $VERSION is already open."
+            exit 0
+          fi
+          added="$RUNNER_TEMP/models-added.txt"
+          {
+            echo "## Why"
+            echo
+            echo "Pi $VERSION is out. Rakazo's model picker and catalog come from Pi, so new models only appear after this update."
+            echo
+            echo "## What changed"
+            echo
+            echo "- \`@earendil-works/pi-ai\` and \`@earendil-works/pi-agent-core\` $PREVIOUS -> $VERSION, and the lockfile."
+            if [ -s "$added" ]; then
+              echo "- New catalog models:"
+              while read -r model; do echo "  - \`$model\`"; done < "$added"
+            else
+              echo "- No new catalog models."
+            fi
+            echo
+            echo "## How it was tested"
+            echo
+            echo "The weekly workflow ran lint, typecheck, and the offline unit suite on this update before opening the pull request."
+          } > "$RUNNER_TEMP/body.md"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -am "chore(deps): update Pi to $VERSION"
+          git push --force origin "$branch"
+          gh pr create --base "$BASE" --head "$branch" \
+            --title "chore(deps): update Pi to $VERSION" --body-file "$RUNNER_TEMP/body.md"

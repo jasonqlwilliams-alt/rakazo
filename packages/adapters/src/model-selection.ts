@@ -5,7 +5,7 @@ import {
   findModelCredential,
   type PrismaClient,
 } from "@rakazo/db";
-import { listPiCatalog, scriptedCatalogEntry } from "./pi-models.js";
+import { listPiCatalog, resolveCatalogEntry, scriptedCatalogEntry } from "./pi-models.js";
 import { OPENAI_COMPATIBLE_PROVIDER_ID } from "./pi-openai-compatible-provider.js";
 
 type ModelCredential = Awaited<ReturnType<typeof findDefaultModelCredential>>;
@@ -14,6 +14,17 @@ export function isCatalogModelChoice(provider: string, modelId: string) {
   return [...listPiCatalog(), scriptedCatalogEntry].some(
     (item) => item.provider === provider && item.id === modelId,
   );
+}
+
+/**
+ * Why a model id cannot be saved for a provider, if it cannot. Catalog providers take a listed id
+ * or a newer id of a listed family; openai-compatible connections take any non-empty id.
+ */
+export function savedModelChoiceError(provider: string, modelId: string): string | undefined {
+  if (!modelId.trim()) return "Enter a model id";
+  if (provider === OPENAI_COMPATIBLE_PROVIDER_ID) return undefined;
+  if (resolveCatalogEntry(provider, modelId)) return undefined;
+  return "Unknown model for that provider";
 }
 
 export async function validateConnectedModelChoice(
@@ -25,10 +36,9 @@ export async function validateConnectedModelChoice(
   const credential = await findModelCredential(prisma, actor, provider);
   if (!credential) return "Connect that model provider first";
   if (isCatalogModelChoice(provider, modelId)) return undefined;
-  // Free-form saved IDs only resolve at runtime for openai-compatible connections.
-  if (provider !== OPENAI_COMPATIBLE_PROVIDER_ID) {
-    return "Unknown model for that provider";
-  }
+  // An id outside the catalog must also be the one this user saved for the provider.
+  const unsavable = savedModelChoiceError(provider, modelId);
+  if (unsavable) return unsavable;
   const savedChoice = await prisma.spaceModelPreference.findFirst({
     where: {
       spaceId: actor.spaceId,

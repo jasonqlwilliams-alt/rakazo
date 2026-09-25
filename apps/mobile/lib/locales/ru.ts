@@ -487,6 +487,8 @@ export const RU_MESSAGES: Record<string, string> = {
   "Updating…": "Обновление…",
   Usage: "Использование",
   "Use a custom server": "Использовать собственный сервер",
+  "Other model id": "Другой ID модели",
+  "Use a listed model": "Выбрать модель из списка",
   "Use a found model": "Использовать найденную модель",
   "Use an http or https URL": "Используйте URL-адрес http или https.",
   "Use default server": "Использовать сервер по умолчанию",

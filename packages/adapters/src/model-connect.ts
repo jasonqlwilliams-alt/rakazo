@@ -1,7 +1,9 @@
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import type { ModelConnectInput, ModelCredential, ThinkingLevel } from "@rakazo/contracts";
 import { OPENAI_COMPATIBLE_PROVIDER_ID as CONTRACT_OPENAI_COMPAT } from "@rakazo/contracts";
+import { isCatalogModelChoice } from "./model-selection.js";
 import { modelIdSupportsImages, updateModelImageCapabilities } from "./model-vision.js";
+import { resolveCatalogEntry } from "./pi-models.js";
 import { parseModelSecret, type StoredModelSecret, serializeModelSecret } from "./pi-oauth.js";
 import {
   OPENAI_COMPATIBLE_PROVIDER_ID,
@@ -101,7 +103,16 @@ export function modelCredentialDto(
     isDefault: row.isDefault,
     ...(row.defaultModel ? { modelId: row.defaultModel } : {}),
   };
-  if (row.provider !== CONTRACT_OPENAI_COMPAT) return credential;
+  if (row.provider !== CONTRACT_OPENAI_COMPAT) {
+    // A saved id newer than the catalog has no catalog entry, so it reports its family's levels.
+    const custom =
+      row.defaultModel && !isCatalogModelChoice(row.provider, row.defaultModel)
+        ? resolveCatalogEntry(row.provider, row.defaultModel)
+        : undefined;
+    return custom?.thinkingLevels
+      ? { ...credential, thinkingLevels: custom.thinkingLevels }
+      : credential;
+  }
   const compatibleCredential = {
     ...credential,
     supportsImages: row.supportsImages ?? false,

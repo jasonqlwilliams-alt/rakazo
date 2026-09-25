@@ -1,6 +1,7 @@
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import type { ModelOAuthSignInMode, ThinkingLevel } from "@rakazo/contracts";
+import { closestFamilyModel } from "./model-family.js";
 import { LOCAL_PROVIDER_ID, registerLocalProvider } from "./pi-local-provider.js";
 import { SUBSCRIPTION_SIGN_IN_PROVIDERS } from "./pi-oauth.js";
 import {
@@ -32,6 +33,20 @@ export function listPiCatalog(): PiCatalogEntry[] {
 }
 
 let cachedCatalog: PiCatalogEntry[] | undefined;
+
+/**
+ * The catalog entry for a provider model: the listed one, or for an id newer than the catalog, its
+ * closest same-family sibling's entry under the new id. Matches how the runtime resolves the id.
+ */
+export function resolveCatalogEntry(provider: string, modelId: string): PiCatalogEntry | undefined {
+  const providerEntries = [...listPiCatalog(), scriptedCatalogEntry].filter(
+    (entry) => entry.provider === provider,
+  );
+  const exact = providerEntries.find((entry) => entry.id === modelId);
+  if (exact || provider === OPENAI_COMPATIBLE_PROVIDER_ID) return exact;
+  const sibling = closestFamilyModel(providerEntries, modelId);
+  return sibling ? { ...sibling, id: modelId, label: modelId } : undefined;
+}
 
 function buildPiCatalog(): PiCatalogEntry[] {
   const models = registerOpenAiCompatibleCatalog(registerLocalProvider(builtinModels()));

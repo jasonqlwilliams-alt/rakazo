@@ -288,6 +288,21 @@ advanced settings; mobile inherits the same backend policy. Rakazo sends standar
 model-specific translation. Leave **Supports thinking** off when the server lacks standard effort
 support. Existing token limits still apply; effort is not a separate reasoning-token budget.
 
+### Models newer than the catalog
+
+The model list for built-in providers comes from Pi (`@earendil-works/pi-ai`). To use a model that
+shipped after your Rakazo release, choose the provider in **Settings → Models**, pick **Other model
+id**, and enter the provider's exact id (for example `grok-4.8`). Rakazo runs it with the API,
+reasoning levels, limits, and pricing of the closest listed model in the same family (`grok-4.7`
+here), so a new family or a changed context window may need the next Pi update. An id with no listed
+family is rejected when saved, and a run that cannot resolve its model fails instead of replying.
+
+The `pi model library update` workflow opens a pull request each week when Pi publishes a newer
+release. It only opens the pull request; merge it and redeploy to get the new catalog. With the
+default workflow token, the repository must allow GitHub Actions to create pull requests, and those
+pull requests do not start CI. Add a `PI_BUMP_TOKEN` repository secret with contents and
+pull-request write access to open them as that token instead and run CI.
+
 Do not commit `.env`. Never put `COMPOSIO_API_KEY`, OpenRouter keys, or provider tokens in git, logs, or chat.
 
 Optional messaging platforms (iMessage, Slack, Discord, WhatsApp, Telegram, Feishu/Lark) mount when their env credentials are set — see `.env.example`. Discord inbound is a Gateway WebSocket started by the API process only (the worker must not open one); turn on the Message Content intent for the bot. Discord needs `DISCORD_BOT_TOKEN`, `DISCORD_APPLICATION_ID`, and `DISCORD_RESPOND_TO_CHANNEL_IDS` (the only channels the bot answers) together; a partial `DISCORD_*` set fails at startup. With `TEAM_CHAT_BOT_ID`, set Slack or Discord, not both; startup fails otherwise. Point a Feishu/Lark bot event subscription at `/api/v1/messaging/webhook/lark` (webhook/HTTP inbound only; do not enable long connection). Group chats work only on iMessage, Slack, and Discord.

@@ -840,3 +840,54 @@ describe("interrupted computer reservation release", () => {
     expect(order).toEqual(["operation", "computer"]);
   });
 });
+
+describe("saved model ids", () => {
+  function modelDeps() {
+    const upsert = vi.fn().mockResolvedValue({});
+    const tx = {
+      userModelCredential: {
+        findFirst: vi.fn().mockResolvedValue({ id: "credential-xai", provider: "xai" }),
+      },
+      spaceModelPreference: { updateMany: vi.fn().mockResolvedValue({}), upsert },
+    };
+    const prisma = {
+      $transaction: vi.fn(async (run: (client: typeof tx) => Promise<unknown>) => run(tx)),
+    } as unknown as PrismaClient;
+    const deps = { prisma, env: { sandboxProvider: "fake" } } as unknown as RouterDeps;
+    const actor = {
+      spaceId: "workspace-1",
+      userId: "user-1",
+      email: "user@rakazo.test",
+      isDeploymentOwner: true,
+    } satisfies Actor;
+    const handler = new RPCHandler(createRouter(deps));
+    const setDefault = async (modelId: string) => {
+      const { response } = await handler.handle(
+        new Request("http://127.0.0.1/rpc/models/setDefault", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ json: { provider: "xai", modelId } }),
+        }),
+        { prefix: "/rpc", context: { actor } },
+      );
+      return response!;
+    };
+    return { setDefault, upsert };
+  }
+
+  it("saves a newer id of a catalog family and refuses one no family can run", async () => {
+    const { setDefault, upsert } = modelDeps();
+
+    expect((await setDefault("grok-4.8")).status).toBe(200);
+    expect(upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ update: { modelId: "grok-4.8", isDefault: true } }),
+    );
+
+    const refused = await setDefault("grok-mystery");
+    expect(refused.status).toBe(400);
+    await expect(refused.json()).resolves.toMatchObject({
+      json: { message: "Unknown model for that provider" },
+    });
+    expect(upsert).toHaveBeenCalledOnce();
+  });
+});
