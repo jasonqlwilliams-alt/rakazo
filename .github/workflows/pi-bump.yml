@@ -4,6 +4,7 @@ name: pi model library update
 # newest release, so new models reach the picker without someone noticing first.
 # It only opens a pull request; a maintainer reviews and merges it. When a check
 # fails on the new release, the pull request opens as a draft with the failure.
+# Closing a release's pull request skips that release; a newer one opens its own.
 on:
   schedule:
     - cron: "17 6 * * 1"
@@ -121,8 +122,8 @@ jobs:
             exit 1
           fi
           branch="deps/pi-$VERSION"
-          if [ -n "$(gh pr list --head "$branch" --state open --json number --jq '.[].number')" ]; then
-            echo "A pull request for Pi $VERSION is already open."
+          if [ -n "$(gh pr list --head "$branch" --state all --json number --jq '.[].number')" ]; then
+            echo "Pi $VERSION already has a pull request."
             exit 0
           fi
           git apply --index "$RUNNER_TEMP/pi-bump/update.patch"

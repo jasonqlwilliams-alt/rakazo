@@ -301,7 +301,8 @@ The local model server takes only the ids in `RAKAZO_LOCAL_MODELS`.
 The `pi model library update` workflow opens a pull request each week when Pi publishes a newer
 release. It only opens the pull request; merge it and redeploy to get the new catalog. If install,
 lint, typecheck, or the unit suite fails on the new release, the pull request opens as a draft with
-the failing step and the end of its log. With the default workflow token, the repository must allow
+the failing step and the end of its log. Closing a release's pull request skips that release; a
+newer release opens its own. With the default workflow token, the repository must allow
 GitHub Actions to create pull requests, and those pull requests do not start CI. Add a
 `PI_BUMP_TOKEN` repository secret with contents and pull-request write access to open them as that
 token instead and run CI.
