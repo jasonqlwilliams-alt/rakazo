@@ -1,6 +1,7 @@
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import type { ModelOAuthSignInMode, ThinkingLevel } from "@rakazo/contracts";
+import { acceptsNewerModelIds } from "@rakazo/core";
 import { closestFamilyModel } from "./model-family.js";
 import { LOCAL_PROVIDER_ID, registerLocalProvider } from "./pi-local-provider.js";
 import { SUBSCRIPTION_SIGN_IN_PROVIDERS } from "./pi-oauth.js";
@@ -43,7 +44,7 @@ export function resolveCatalogEntry(provider: string, modelId: string): PiCatalo
     (entry) => entry.provider === provider,
   );
   const exact = providerEntries.find((entry) => entry.id === modelId);
-  if (exact || provider === OPENAI_COMPATIBLE_PROVIDER_ID) return exact;
+  if (exact || !acceptsNewerModelIds(provider)) return exact;
   const sibling = closestFamilyModel(providerEntries, modelId);
   return sibling ? { ...sibling, id: modelId, label: modelId } : undefined;
 }

@@ -27,6 +27,7 @@ import type {
   ConnectorTool,
 } from "@rakazo/adapter-kit";
 import { DEFAULT_MEMORY_PATH, resolveMemoryPath } from "@rakazo/adapter-kit";
+import { acceptsNewerModelIds } from "@rakazo/core";
 import { getLogger } from "@rakazo/logging";
 import { isToolPauseResult } from "./approval-effect.js";
 import { builtinAgentTools, SUBAGENT_EXCLUDED_TOOL_NAMES } from "./builtin-tools.js";
@@ -506,7 +507,7 @@ function resolveRuntimeModel(modelConfig: AgentRunRequest["model"]): {
     model = configuredOpenRouterModel(modelId);
   }
   // A newer id than Pi's catalog knows borrows its closest same-family sibling's settings.
-  if (!model && provider !== OPENAI_COMPATIBLE_PROVIDER_ID) {
+  if (!model && acceptsNewerModelIds(provider)) {
     model = resolveProviderModel(models, provider, modelId);
   }
   const apiKey = modelConfig.oauth

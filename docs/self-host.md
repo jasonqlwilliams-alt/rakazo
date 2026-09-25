@@ -296,6 +296,7 @@ id**, and enter the provider's exact id (for example `grok-4.8`). Rakazo runs it
 reasoning levels, limits, and pricing of the closest listed model in the same family (`grok-4.7`
 here), so a new family or a changed context window may need the next Pi update. An id with no listed
 family is rejected when saved, and a run that cannot resolve its model fails instead of replying.
+The local model server takes only the ids in `RAKAZO_LOCAL_MODELS`.
 
 The `pi model library update` workflow opens a pull request each week when Pi publishes a newer
 release. It only opens the pull request; merge it and redeploy to get the new catalog. If install,

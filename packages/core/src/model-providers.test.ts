@@ -103,6 +103,7 @@ describe("unlistedSavedModelId", () => {
     expect(unlistedSavedModelId(catalog, "xai", "grok-4.7")).toBeUndefined();
     expect(unlistedSavedModelId(catalog, "xai", undefined)).toBeUndefined();
     expect(unlistedSavedModelId(catalog, "openai-compatible", "local-model")).toBeUndefined();
+    expect(unlistedSavedModelId(catalog, "local", "qwen3:32b")).toBeUndefined();
   });
 });
 

@@ -12,6 +12,7 @@ import {
   parseModelMaxTokens,
 } from "@rakazo/contracts";
 import {
+  acceptsNewerModelIds,
   createModelProbe,
   featuredModelProviders,
   initialModelProbeState,
@@ -208,7 +209,7 @@ export default function Models() {
   const modelsForProvider = catalog.filter((entry) => entry.provider === provider);
   const selected = modelsForProvider.find((entry) => entry.id === modelId) ?? modelsForProvider[0];
   const isOpenAiCompatible = provider === OPENAI_COMPATIBLE_PROVIDER_ID;
-  const isCustomModel = customModel && !isOpenAiCompatible;
+  const isCustomModel = customModel && acceptsNewerModelIds(provider);
   const activeModelId = isOpenAiCompatible || isCustomModel ? modelId.trim() : selected?.id;
   const activeLabel = (isCustomModel ? modelId.trim() : selected?.label) ?? "";
   const credential = credentials.find((entry) => entry.provider === provider);
@@ -802,7 +803,7 @@ export default function Models() {
                 ))}
               </View>
             )}
-            {!isOpenAiCompatible ? (
+            {acceptsNewerModelIds(provider) ? (
               <Pressable accessibilityRole="button" disabled={busy} onPress={toggleCustomModel}>
                 <Text style={styles.helpLabel}>
                   {isCustomModel ? t("Use a listed model") : t("Other model id")}

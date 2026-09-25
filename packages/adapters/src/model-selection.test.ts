@@ -1,6 +1,6 @@
 import type { Actor } from "@rakazo/contracts";
 import type { PrismaClient } from "@rakazo/db";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   savedModelChoiceError,
   selectConfiguredModel,
@@ -225,5 +225,31 @@ describe("connected model validation", () => {
     expect(savedModelChoiceError("xai", "grok")).toBe("Unknown model for that provider");
     expect(savedModelChoiceError("xai", "  ")).toBe("Enter a model id");
     expect(savedModelChoiceError("openai-compatible", "anything-goes")).toBeUndefined();
+  });
+});
+
+describe("the operator's local model list", () => {
+  const env = ["RAKAZO_LOCAL_MODELS", "RAKAZO_LOCAL_VISION_MODELS"] as const;
+  const saved = env.map((key) => [key, process.env[key]] as const);
+
+  afterEach(() => {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    vi.resetModules();
+  });
+
+  it("refuses an unlisted id of a listed local family", async () => {
+    process.env.RAKAZO_LOCAL_MODELS = "qwen3:4b";
+    process.env.RAKAZO_LOCAL_VISION_MODELS = "qwen3:4b";
+    vi.resetModules();
+    const { savedModelChoiceError } = await import("./model-selection.js");
+    const { modelAcceptsImageInput } = await import("./model-vision.js");
+
+    expect(savedModelChoiceError("local", "qwen3:4b")).toBeUndefined();
+    expect(savedModelChoiceError("local", "qwen3:32b")).toBe("Unknown model for that provider");
+    expect(modelAcceptsImageInput("local", "qwen3:4b")).toBe(true);
+    expect(modelAcceptsImageInput("local", "qwen3:32b")).toBe(false);
   });
 });

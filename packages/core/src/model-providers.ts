@@ -1,5 +1,5 @@
 import type { ModelCatalogEntry } from "@rakazo/contracts";
-import { OPENAI_COMPATIBLE_PROVIDER_ID } from "@rakazo/contracts";
+import { LOCAL_PROVIDER_ID, OPENAI_COMPATIBLE_PROVIDER_ID } from "@rakazo/contracts";
 
 export const POPULAR_MODEL_PROVIDER_IDS = [
   "openrouter",
@@ -45,15 +45,21 @@ export function selectedProviderOutsideSearchResults(
 }
 
 /**
- * A catalog provider's saved model id that its catalog does not list: a newer model someone typed
- * in. OpenAI-compatible connections always hold a typed id, so they never count.
+ * Whether a provider takes an id newer than its catalog (Settings → Models → Other model id), run
+ * with its closest listed sibling's settings. An OpenAI-compatible connection takes any id on its
+ * own terms, and the operator's local model list stays closed.
  */
+export function acceptsNewerModelIds(provider: string) {
+  return provider !== OPENAI_COMPATIBLE_PROVIDER_ID && provider !== LOCAL_PROVIDER_ID;
+}
+
+/** A saved id its provider's catalog does not list, when the provider takes newer ids. */
 export function unlistedSavedModelId(
   catalog: readonly Pick<ModelCatalogEntry, "provider" | "id">[],
   provider: string,
   savedModelId: string | null | undefined,
 ): string | undefined {
-  if (!savedModelId || provider === OPENAI_COMPATIBLE_PROVIDER_ID) return undefined;
+  if (!savedModelId || !acceptsNewerModelIds(provider)) return undefined;
   const listed = catalog.some((entry) => entry.provider === provider && entry.id === savedModelId);
   return listed ? undefined : savedModelId;
 }

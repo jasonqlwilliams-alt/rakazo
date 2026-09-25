@@ -12,7 +12,12 @@ import {
   parseModelMaxImagesPerPrompt,
   parseModelMaxTokens,
 } from "@rakazo/contracts";
-import { createModelProbe, initialModelProbeState, unlistedSavedModelId } from "@rakazo/core";
+import {
+  acceptsNewerModelIds,
+  createModelProbe,
+  initialModelProbeState,
+  unlistedSavedModelId,
+} from "@rakazo/core";
 import {
   Button,
   Dialog,
@@ -188,7 +193,7 @@ export function ModelSettingsOverlay({
   const modelsForProvider = catalog.filter((entry) => entry.provider === provider);
   const selected = modelsForProvider.find((entry) => entry.id === modelId) ?? modelsForProvider[0];
   const isOpenAiCompatible = provider === OPENAI_COMPATIBLE_PROVIDER_ID;
-  const isCustomModel = customModel && !isOpenAiCompatible;
+  const isCustomModel = customModel && acceptsNewerModelIds(provider);
   const typedModelId = isOpenAiCompatible || isCustomModel;
   const activeModelId = typedModelId ? modelId.trim() : selected?.id;
   const activeLabel = isCustomModel ? modelId.trim() : selected?.label;
@@ -661,19 +666,21 @@ export function ModelSettingsOverlay({
                         }}
                       />
                     )}
-                    <Button
-                      type="button"
-                      variant="link"
-                      className="mt-2 h-auto px-0 text-[13px] text-muted-foreground underline"
-                      disabled={busy}
-                      onClick={toggleCustomModel}
-                    >
-                      {isCustomModel ? (
-                        <Trans>Use a listed model</Trans>
-                      ) : (
-                        <Trans>Other model id</Trans>
-                      )}
-                    </Button>
+                    {acceptsNewerModelIds(provider) ? (
+                      <Button
+                        type="button"
+                        variant="link"
+                        className="mt-2 h-auto px-0 text-[13px] text-muted-foreground underline"
+                        disabled={busy}
+                        onClick={toggleCustomModel}
+                      >
+                        {isCustomModel ? (
+                          <Trans>Use a listed model</Trans>
+                        ) : (
+                          <Trans>Other model id</Trans>
+                        )}
+                      </Button>
+                    ) : null}
                   </>
                 )}
               </div>

@@ -18,7 +18,8 @@ export function isCatalogModelChoice(provider: string, modelId: string) {
 
 /**
  * Why a model id cannot be saved for a provider, if it cannot. Catalog providers take a listed id
- * or a newer id of a listed family; openai-compatible connections take any non-empty id.
+ * or a newer id of a listed family, the local server only its listed ids, and openai-compatible
+ * connections any non-empty id.
  */
 export function savedModelChoiceError(provider: string, modelId: string): string | undefined {
   if (!modelId.trim()) return "Enter a model id";

@@ -960,6 +960,9 @@ export type ModelCredential = z.infer<typeof ModelCredentialSchema>;
 
 export const OPENAI_COMPATIBLE_PROVIDER_ID = "openai-compatible";
 
+/** The operator's own model server, serving only the ids in `RAKAZO_LOCAL_MODELS`. */
+export const LOCAL_PROVIDER_ID = "local";
+
 export const ModelConnectInputSchema = z
   .object({
     provider: z.string(),

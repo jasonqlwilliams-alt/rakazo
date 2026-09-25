@@ -120,3 +120,32 @@ describe("model settings with an unlisted model id", () => {
     });
   });
 });
+
+describe("model settings for the operator's local models", () => {
+  it("offers only the listed local models", async () => {
+    rpcMock.models.list.mockResolvedValue([
+      {
+        provider: "local",
+        providerName: "Local (Ollama / LM Studio)",
+        id: "qwen3:4b",
+        label: "qwen3:4b",
+        billing: "Runs on your own hardware.",
+        auth: "api-key" as const,
+        subscription: false,
+      },
+    ]);
+    rpcMock.models.credentials.mockResolvedValue([
+      { id: "c1", provider: "local", label: "Local", hasKey: true, isDefault: true },
+    ]);
+    rpcMock.me.mockResolvedValue({ defaultProvider: "local", defaultModel: "qwen3:4b" });
+    act(() => root.render(<ModelSettingsOverlay onClose={() => undefined} embedded />));
+    await settle();
+
+    expect(container.querySelector('[role="combobox"][aria-label="Model"]')?.textContent).toContain(
+      "qwen3:4b",
+    );
+    const labels = [...container.querySelectorAll("button")].map((element) => element.textContent);
+    expect(labels).not.toContain("Other model id");
+    expect(modelIdInput()).toBeNull();
+  });
+});
