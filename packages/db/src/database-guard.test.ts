@@ -38,6 +38,18 @@ describe("database guard", () => {
   it("reads the Prisma command from CLI arguments", () => {
     expect(prismaCommand(["migrate", "deploy", "--schema", "x"])).toBe("migrate deploy");
     expect(prismaCommand(["db", "push"])).toBe("db push");
+    expect(prismaCommand(["--config", "prisma.config.ts", "migrate", "deploy"])).toBe(
+      "migrate deploy",
+    );
+    expect(prismaCommand(["--config=prisma.config.ts", "migrate", "deploy"])).toBe(
+      "migrate deploy",
+    );
+    expect(prismaCommand(["migrate", "--config", "prisma.config.ts", "deploy"])).toBe(
+      "migrate deploy",
+    );
+    expect(prismaCommand(["--telemetry-information", "x", "migrate", "reset"])).toBe(
+      "migrate reset",
+    );
     expect(prismaCommand(["generate"])).toBe("generate");
     expect(prismaCommand(["--version"])).toBe("");
     expect(prismaCommand([])).toBe("");
@@ -51,8 +63,14 @@ describe("database guard", () => {
   });
 
   it("checks the database before a write command runs", async () => {
-    await expect(
-      guardPrismaCommand(["migrate", "deploy"], { DATABASE_URL: `${UNREACHABLE}/rakazo` }),
-    ).rejects.toThrow(/ECONNREFUSED/);
+    for (const args of [
+      ["migrate", "deploy"],
+      ["--config", "prisma.config.ts", "migrate", "deploy"],
+      ["migrate", "--config", "prisma.config.ts", "deploy"],
+    ]) {
+      await expect(
+        guardPrismaCommand(args, { DATABASE_URL: `${UNREACHABLE}/rakazo` }),
+      ).rejects.toThrow(/ECONNREFUSED/);
+    }
   });
 });

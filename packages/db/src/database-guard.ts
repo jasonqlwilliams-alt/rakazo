@@ -74,14 +74,19 @@ async function withClient<T>(url: string, use: (client: Client) => Promise<T>): 
   }
 }
 
+/** Flags Prisma accepts before or between the command words whose value is the next argument. */
+const VALUE_FLAGS = new Set(["--config", "--telemetry-information"]);
+
 /** The Prisma CLI command in `args`, such as `migrate deploy`, or "" when there is none. */
 export function prismaCommand(args: readonly string[]): string {
-  const [first, second] = args;
-  if (!first || first.startsWith("-")) return "";
-  if ((first === "migrate" || first === "db") && second && !second.startsWith("-")) {
-    return `${first} ${second}`;
+  const words: string[] = [];
+  for (let i = 0; i < args.length && words.length < 2; i++) {
+    const arg = args[i]!;
+    if (VALUE_FLAGS.has(arg)) i++;
+    else if (!arg.startsWith("-")) words.push(arg);
   }
-  return first;
+  const [first = "", second] = words;
+  return (first === "migrate" || first === "db") && second ? `${first} ${second}` : first;
 }
 
 /**

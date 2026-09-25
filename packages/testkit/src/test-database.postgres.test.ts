@@ -151,6 +151,13 @@ describePostgres("database guard against a real server", () => {
         [DATABASE_ENVIRONMENT_VARIABLE]: "production",
       }),
     ).toMatch(/Refusing prisma migrate reset/);
+    for (const args of [
+      ["--config", "prisma.config.ts", "migrate", "deploy"],
+      ["--config=prisma.config.ts", "migrate", "deploy"],
+      ["migrate", "--config", "prisma.config.ts", "deploy"],
+    ]) {
+      expect(prisma(args, { DATABASE_URL: url })).toMatch(/Refusing prisma migrate deploy/);
+    }
     expect(await tableCount("guard_marked_test")).toBe(0);
   });
 
