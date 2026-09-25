@@ -130,20 +130,20 @@ test("saves a model id newer than the catalog and offers it to bots", async ({
   await page.getByRole("button", { name: "Connect API key" }).click();
   await expect(page.getByText("Unknown model for that provider")).toBeVisible();
 
-  await modelIdInput.fill("grok-4.8");
+  await modelIdInput.fill("grok-4.999");
   await page.getByRole("button", { name: "Connect API key" }).click();
-  await expect(page.getByText("Connected and using grok-4.8.")).toBeVisible();
+  await expect(page.getByText("Connected and using grok-4.999.")).toBeVisible();
   await captureScreenshot(page, testInfo, "custom-model-id");
   const credentials = await rpc<
     Array<{ provider: string; modelId?: string; thinkingLevels?: string[] }>
   >(page, "models/credentials", {});
   const xai = credentials.find((entry) => entry.provider === "xai");
-  expect(xai?.modelId).toBe("grok-4.8");
+  expect(xai?.modelId).toBe("grok-4.999");
   expect(xai?.thinkingLevels?.length).toBeGreaterThan(0);
 
   await page.reload();
   await openUserSettings(page, "models");
-  await expect(page.getByLabel("Model id")).toHaveValue("grok-4.8");
+  await expect(page.getByLabel("Model id")).toHaveValue("grok-4.999");
   await page.getByRole("button", { name: "Use a listed model" }).click();
   await expect(page.getByRole("combobox", { name: "Model" })).toHaveText(/Grok/);
 
@@ -154,9 +154,9 @@ test("saves a model id newer than the catalog and offers it to bots", async ({
     (element as HTMLDetailsElement).open = true;
   });
   const model = settings.getByRole("combobox", { name: "Model", exact: true });
-  await expect(model).toContainText("xAI · grok-4.8");
-  await expect(model).toContainText("xAI · Grok 4.7");
-  await model.selectOption("xai::grok-4.8");
+  await expect(model).toContainText("xAI · grok-4.999");
+  await expect(model).toContainText(/xAI · Grok/);
+  await model.selectOption("xai::grok-4.999");
   await expect(settings.getByRole("combobox", { name: "Thinking", exact: true })).toBeVisible();
 });
 

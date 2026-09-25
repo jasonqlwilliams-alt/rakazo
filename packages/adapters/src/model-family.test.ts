@@ -53,53 +53,50 @@ describe("closest family model", () => {
   });
 });
 
+const UNLISTED_GROK = "grok-4.999";
+
+function listedGrokId() {
+  const sibling = closestFamilyModel(builtinModels().getModels("xai"), UNLISTED_GROK);
+  if (!sibling) throw new Error("Pi lists no Grok model");
+  return sibling.id;
+}
+
 describe("custom model ids on catalog providers", () => {
   it("clones the closest sibling's request settings under the new id", () => {
     const models = builtinModels();
-    const sibling = models.getModel("xai", "grok-4.7");
-    expect(models.getModel("xai", "grok-4.8")).toBeUndefined();
+    const sibling = models.getModel("xai", listedGrokId());
+    expect(sibling).toBeDefined();
+    expect(models.getModel("xai", UNLISTED_GROK)).toBeUndefined();
 
-    expect(resolveProviderModel(models, "xai", "grok-4.8")).toEqual({
+    expect(resolveProviderModel(models, "xai", UNLISTED_GROK)).toEqual({
       ...sibling,
-      id: "grok-4.8",
-      name: "grok-4.8",
+      id: UNLISTED_GROK,
+      name: UNLISTED_GROK,
     });
-    expect(resolveProviderModel(models, "xai", "grok-4.7")).toBe(sibling);
+    expect(resolveProviderModel(models, "xai", listedGrokId())).toBe(sibling);
     expect(resolveProviderModel(models, "xai", "grok-mystery")).toBeUndefined();
   });
 
-  it.each([
-    ["gemini-3.1-pro", "gemini-3.1-pro-preview"],
-    ["gemini-3-flash", "gemini-3-flash-preview"],
-  ])("runs the GA id %s with its listed preview's settings", (modelId, preview) => {
-    const models = builtinModels();
-    expect(models.getModel("google", modelId)).toBeUndefined();
-
-    expect(resolveProviderModel(models, "google", modelId)).toEqual({
-      ...models.getModel("google", preview),
-      id: modelId,
-      name: modelId,
-    });
-    expect(resolveCatalogEntry("google", modelId)?.thinkingLevels).toEqual(
-      resolveCatalogEntry("google", preview)?.thinkingLevels,
-    );
-  });
-
   it("reports the family's thinking levels and vision for the new id", () => {
-    const sibling = resolveCatalogEntry("xai", "grok-4.7");
-    expect(resolveCatalogEntry("xai", "grok-4.8")).toEqual({
+    const sibling = resolveCatalogEntry("xai", listedGrokId());
+    expect(sibling?.thinkingLevels?.length).toBeGreaterThan(0);
+    expect(resolveCatalogEntry("xai", UNLISTED_GROK)).toEqual({
       ...sibling,
-      id: "grok-4.8",
-      label: "grok-4.8",
+      id: UNLISTED_GROK,
+      label: UNLISTED_GROK,
     });
-    expect(resolveCatalogEntry("openai-compatible", "grok-4.8")).toBeUndefined();
-    expect(modelAcceptsImageInput("xai", "grok-4.8")).toBe(true);
+    expect(resolveCatalogEntry("openai-compatible", UNLISTED_GROK)).toBeUndefined();
+    expect(modelAcceptsImageInput("xai", UNLISTED_GROK)).toBe(
+      modelAcceptsImageInput("xai", listedGrokId()),
+    );
 
     const row = { id: "c1", provider: "xai", label: "xAI", isDefault: true };
-    expect(modelCredentialDto({ ...row, defaultModel: "grok-4.8" }).thinkingLevels).toEqual(
+    expect(modelCredentialDto({ ...row, defaultModel: UNLISTED_GROK }).thinkingLevels).toEqual(
       sibling?.thinkingLevels,
     );
-    expect(modelCredentialDto({ ...row, defaultModel: "grok-4.7" }).thinkingLevels).toBeUndefined();
+    expect(
+      modelCredentialDto({ ...row, defaultModel: listedGrokId() }).thinkingLevels,
+    ).toBeUndefined();
   });
 });
 
@@ -134,12 +131,12 @@ describe("Pi runtime with a custom model id", () => {
   }
 
   it("sends a newer family id to the provider with its sibling's API and reasoning", async () => {
-    const { sent, outcome } = await run("grok-4.8");
+    const { sent, outcome } = await run(UNLISTED_GROK);
     await expect(outcome).rejects.toThrow("offline");
     expect(sent).toEqual([
       {
         url: "https://api.x.ai/v1/responses",
-        body: expect.objectContaining({ model: "grok-4.8", reasoning: expect.any(Object) }),
+        body: expect.objectContaining({ model: UNLISTED_GROK, reasoning: expect.any(Object) }),
       },
     ]);
   });

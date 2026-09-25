@@ -196,19 +196,19 @@ describe("connected model validation", () => {
   });
 
   it("accepts a saved id newer than the catalog only when a catalog family can run it", async () => {
-    const savedModels = new Set(["grok-4.8", "grok-mystery"]);
+    const savedModels = new Set(["grok-4.999", "grok-mystery"]);
     const prisma = {
       spaceModelPreference: {
         findFirst: async (args: { where: { modelId?: string } }) =>
           args.where.modelId && savedModels.has(args.where.modelId) ? { id: "saved" } : null,
       },
-      userModelCredential: { findFirst: async () => credential("xai", "grok-4.8") },
+      userModelCredential: { findFirst: async () => credential("xai", "grok-4.999") },
     } as unknown as PrismaClient;
     await expect(
-      validateConnectedModelChoice(prisma, actor, "xai", "grok-4.8"),
+      validateConnectedModelChoice(prisma, actor, "xai", "grok-4.999"),
     ).resolves.toBeUndefined();
     // Resolvable but never saved: a bot or tool cannot pick an arbitrary id.
-    await expect(validateConnectedModelChoice(prisma, actor, "xai", "grok-4.9")).resolves.toBe(
+    await expect(validateConnectedModelChoice(prisma, actor, "xai", "grok-4.998")).resolves.toBe(
       "Unknown model for that provider",
     );
     // Saved but with no catalog family to borrow settings from.
@@ -219,7 +219,7 @@ describe("connected model validation", () => {
 
   it("decides which ids can be saved for a provider", () => {
     expect(savedModelChoiceError("xai", "grok-4.7")).toBeUndefined();
-    expect(savedModelChoiceError("xai", "grok-4.8")).toBeUndefined();
+    expect(savedModelChoiceError("xai", "grok-4.999")).toBeUndefined();
     expect(savedModelChoiceError("anthropic", "claude-opus-6")).toBeUndefined();
     expect(savedModelChoiceError("xai", "claude-opus-6")).toBe("Unknown model for that provider");
     expect(savedModelChoiceError("xai", "grok")).toBe("Unknown model for that provider");

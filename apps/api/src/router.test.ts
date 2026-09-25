@@ -878,9 +878,9 @@ describe("saved model ids", () => {
   it("saves a newer id of a catalog family and refuses one no family can run", async () => {
     const { setDefault, upsert } = modelDeps();
 
-    expect((await setDefault("grok-4.8")).status).toBe(200);
+    expect((await setDefault("grok-4.999")).status).toBe(200);
     expect(upsert).toHaveBeenCalledWith(
-      expect.objectContaining({ update: { modelId: "grok-4.8", isDefault: true } }),
+      expect.objectContaining({ update: { modelId: "grok-4.999", isDefault: true } }),
     );
 
     const refused = await setDefault("grok-mystery");
