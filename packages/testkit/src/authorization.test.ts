@@ -691,10 +691,10 @@ describeWithDatabase("API authorization and resource isolation", () => {
     const cookie = await signup(app, `space-provider-copy-${stamp}@rakazo.test`, "Provider Copy");
     const actor = await rpc<Actor>(app, cookie, "me");
     const model = await rpc<ModelCredential>(app, cookie, "models/connect", {
-      provider: "copy-provider",
+      provider: "anthropic",
       apiKey: "fake-copy-model-key",
       label: "Copy provider",
-      modelId: "copy/model",
+      modelId: "claude-sonnet-5",
     });
     const voice = await rpc<{ id: string; voiceId: string }>(app, cookie, "voice/connect", {
       provider: "scripted",
@@ -723,7 +723,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
       }),
     ]);
 
-    expect(modelPreference).toMatchObject({ modelId: "copy/model", isDefault: true });
+    expect(modelPreference).toMatchObject({ modelId: "claude-sonnet-5", isDefault: true });
     expect(voicePreference).toMatchObject({ voiceId: voice.voiceId, isDefault: true });
     await rpc(
       app,
@@ -775,10 +775,10 @@ describeWithDatabase("API authorization and resource isolation", () => {
     };
 
     const connectedA = await rpc<ModelCredential>(app, cookie, "models/connect", {
-      provider: "provider-a",
+      provider: "anthropic",
       apiKey: "fake-provider-a-key",
       label: "Provider A",
-      modelId: "a/one",
+      modelId: "claude-opus-4-5",
     });
     expect(connectedA.isDefault).toBe(true);
     const providerABeforeRotation = await handles.prisma.userModelCredential.findUniqueOrThrow({
@@ -786,10 +786,10 @@ describeWithDatabase("API authorization and resource isolation", () => {
     });
 
     const rotatedA = await rpc<ModelCredential>(app, cookie, "models/connect", {
-      provider: "provider-a",
+      provider: "anthropic",
       apiKey: "fake-provider-a-replacement-key",
       label: "Provider A rotated",
-      modelId: "a/rotated",
+      modelId: "claude-opus-4-6",
     });
     const providerAAfterRotation = await handles.prisma.userModelCredential.findUniqueOrThrow({
       where: { id: connectedA.id },
@@ -804,7 +804,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
     ).resolves.toMatchObject({ userId: actor.userId, spaceId: null, kind: "model" });
     expect(
       await handles.prisma.userModelCredential.count({
-        where: { userId: actor.userId, provider: "provider-a" },
+        where: { userId: actor.userId, provider: "anthropic" },
       }),
     ).toBe(1);
 
@@ -817,37 +817,43 @@ describeWithDatabase("API authorization and resource isolation", () => {
     );
     expect(supportCredentials).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ id: connectedA.id, provider: "provider-a", isDefault: false }),
+        expect.objectContaining({ id: connectedA.id, provider: "anthropic", isDefault: false }),
       ]),
     );
     await rpc(
       app,
       cookie,
       "models/setDefault",
-      { provider: "provider-a", modelId: "a/support" },
+      { provider: "anthropic", modelId: "claude-opus-4-7" },
       support.id,
     );
-    await expectSpaceModelDefault(support.id, "provider-a", "a/support");
-    await expectSpaceModelDefault(actor.spaceId, "provider-a", "a/rotated");
+    await expectSpaceModelDefault(support.id, "anthropic", "claude-opus-4-7");
+    await expectSpaceModelDefault(actor.spaceId, "anthropic", "claude-opus-4-6");
 
     const connectedB = await rpc<ModelCredential>(app, cookie, "models/connect", {
-      provider: "provider-b",
+      provider: "xai",
       apiKey: "fake-provider-b-key",
       label: "Provider B",
-      modelId: "b/one",
+      modelId: "grok-4.6",
     });
     expect(connectedB.isDefault).toBe(true);
-    await expectSpaceModelDefault(actor.spaceId, "provider-b", "b/one");
+    await expectSpaceModelDefault(actor.spaceId, "xai", "grok-4.6");
 
-    await rpc(app, cookie, "models/setDefault", { provider: "provider-a", modelId: "a/two" });
-    await expectSpaceModelDefault(actor.spaceId, "provider-a", "a/two");
+    await rpc(app, cookie, "models/setDefault", {
+      provider: "anthropic",
+      modelId: "claude-opus-4-8",
+    });
+    await expectSpaceModelDefault(actor.spaceId, "anthropic", "claude-opus-4-8");
 
-    await rpc(app, cookie, "models/setDefault", { provider: "provider-b", modelId: "b/two" });
-    await expectSpaceModelDefault(actor.spaceId, "provider-b", "b/two");
+    await rpc(app, cookie, "models/setDefault", { provider: "xai", modelId: "grok-4.7" });
+    await expectSpaceModelDefault(actor.spaceId, "xai", "grok-4.7");
 
-    await rpc(app, cookie, "models/setDefault", { provider: "provider-a", modelId: "a/three" });
-    await expectSpaceModelDefault(actor.spaceId, "provider-a", "a/three");
-    await expectSpaceModelDefault(support.id, "provider-a", "a/support");
+    await rpc(app, cookie, "models/setDefault", {
+      provider: "anthropic",
+      modelId: "claude-opus-5",
+    });
+    await expectSpaceModelDefault(actor.spaceId, "anthropic", "claude-opus-5");
+    await expectSpaceModelDefault(support.id, "anthropic", "claude-opus-4-7");
     const listed = await rpc<ModelCredential[]>(app, cookie, "models/credentials");
     expect(JSON.stringify(listed)).not.toContain("fake-provider-a-key");
     expect(JSON.stringify(listed)).not.toContain("fake-provider-b-key");
@@ -1289,7 +1295,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
     const older = await handles.prisma.userModelCredential.create({
       data: {
         userId: actor.userId,
-        provider: "duplicate-provider",
+        provider: "xai",
         label: "Older",
         secretId: olderSecret.id,
         createdAt: new Date("2026-01-01T00:00:00.000Z"),
@@ -1299,7 +1305,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
     const newer = await handles.prisma.userModelCredential.create({
       data: {
         userId: actor.userId,
-        provider: "duplicate-provider",
+        provider: "xai",
         label: "Newer",
         secretId: newerSecret.id,
         createdAt: new Date("2026-02-01T00:00:00.000Z"),
@@ -1311,14 +1317,14 @@ describeWithDatabase("API authorization and resource isolation", () => {
         spaceId: actor.spaceId,
         userId: actor.userId,
         credentialId: older.id,
-        modelId: "older/model",
+        modelId: "grok-4.6",
         isDefault: true,
       },
     });
 
     await rpc(app, cookie, "models/setDefault", {
-      provider: "duplicate-provider",
-      modelId: "newer/selected",
+      provider: "xai",
+      modelId: "grok-4.7",
     });
 
     const preferences = await handles.prisma.spaceModelPreference.findMany({
@@ -1329,16 +1335,17 @@ describeWithDatabase("API authorization and resource isolation", () => {
     ]);
     expect(preferences.find((row) => row.credentialId === newer.id)).toMatchObject({
       isDefault: true,
-      modelId: "newer/selected",
+      modelId: "grok-4.7",
     });
     expect(preferences.find((row) => row.credentialId === older.id)).toMatchObject({
       isDefault: false,
-      modelId: "older/model",
+      modelId: "grok-4.6",
     });
     const listed = await rpc<ModelCredential[]>(app, cookie, "models/credentials");
-    expect(
-      listed.filter((row) => row.provider === "duplicate-provider").map((row) => row.id),
-    ).toEqual([newer.id, older.id]);
+    expect(listed.filter((row) => row.provider === "xai").map((row) => row.id)).toEqual([
+      newer.id,
+      older.id,
+    ]);
   });
 
   it("restricts deployment settings to the deployment owner", async () => {

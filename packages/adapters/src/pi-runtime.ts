@@ -495,9 +495,6 @@ function resolveRuntimeModel(modelConfig: AgentRunRequest["model"]): {
       : modelConfig.id.trim();
   const models = modelsForRequest({ model: modelConfig }, provider);
   let model = models.getModel(provider, modelId);
-  if (!model && provider !== "openrouter" && provider !== OPENAI_COMPATIBLE_PROVIDER_ID) {
-    model = models.getModel("openrouter", modelId);
-  }
   if (
     !model &&
     provider === "openrouter" &&
@@ -509,6 +506,9 @@ function resolveRuntimeModel(modelConfig: AgentRunRequest["model"]): {
   // A newer id than Pi's catalog knows borrows its closest same-family sibling's settings.
   if (!model && acceptsNewerModelIds(provider)) {
     model = resolveProviderModel(models, provider, modelId);
+  }
+  if (!model && provider !== "openrouter" && provider !== OPENAI_COMPATIBLE_PROVIDER_ID) {
+    model = models.getModel("openrouter", modelId);
   }
   const apiKey = modelConfig.oauth
     ? undefined
@@ -522,7 +522,10 @@ function resolveRuntimeModel(modelConfig: AgentRunRequest["model"]): {
 }
 
 function unknownModelMessage(selected: { provider: string; modelId: string }) {
-  return `Unknown model ${selected.provider}/${selected.modelId}: this Rakazo version has no model of that family to run it with`;
+  const message = `Unknown model ${selected.provider}/${selected.modelId}`;
+  return acceptsNewerModelIds(selected.provider)
+    ? `${message}: this Rakazo version has no model of that family to run it with`
+    : message;
 }
 
 export function modelsForRequest(

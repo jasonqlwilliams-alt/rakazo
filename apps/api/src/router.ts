@@ -916,7 +916,6 @@ export function createRouter(deps: RouterDeps) {
         return { ok: true as const };
       }),
       setDefault: authed.models.setDefault.handler(async ({ context, input }) => {
-        assertSavableModelChoice(input.provider, input.modelId);
         await withSerializableRetry(() =>
           deps.prisma.$transaction(
             async (tx) => {
@@ -929,6 +928,7 @@ export function createRouter(deps: RouterDeps) {
                   message: `No model credential is connected for ${input.provider}.`,
                 });
               }
+              assertSavableModelChoice(input.provider, input.modelId);
               await selectSpaceModelPreference(tx, context.actor, credential.id, input.modelId);
             },
             { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },

@@ -92,16 +92,15 @@ export function modelAcceptsImageInput(
   if (acceptsImages && resolved.provider === OPENAI_COMPATIBLE_PROVIDER_ID) return true;
 
   const models = catalogModels();
-  let model = models.getModel(resolved.provider, resolved.id);
+  let model = acceptsNewerModelIds(resolved.provider)
+    ? resolveProviderModel(models, resolved.provider, resolved.id)
+    : models.getModel(resolved.provider, resolved.id);
   if (
     !model &&
     resolved.provider !== "openrouter" &&
     resolved.provider !== OPENAI_COMPATIBLE_PROVIDER_ID
   ) {
     model = models.getModel("openrouter", resolved.id);
-  }
-  if (!model && acceptsNewerModelIds(resolved.provider)) {
-    model = resolveProviderModel(models, resolved.provider, resolved.id);
   }
   return Boolean(model?.input.includes("image"));
 }

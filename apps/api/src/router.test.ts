@@ -842,12 +842,15 @@ describe("interrupted computer reservation release", () => {
 });
 
 describe("saved model ids", () => {
-  function modelDeps() {
+  function modelDeps(
+    credential: { id: string; provider: string } | null = {
+      id: "credential-xai",
+      provider: "xai",
+    },
+  ) {
     const upsert = vi.fn().mockResolvedValue({});
     const tx = {
-      userModelCredential: {
-        findFirst: vi.fn().mockResolvedValue({ id: "credential-xai", provider: "xai" }),
-      },
+      userModelCredential: { findFirst: vi.fn().mockResolvedValue(credential) },
       spaceModelPreference: { updateMany: vi.fn().mockResolvedValue({}), upsert },
     };
     const prisma = {
@@ -889,5 +892,16 @@ describe("saved model ids", () => {
       json: { message: "Unknown model for that provider" },
     });
     expect(upsert).toHaveBeenCalledOnce();
+  });
+
+  it("reports a missing connection before judging the model id", async () => {
+    const { setDefault, upsert } = modelDeps(null);
+
+    const missing = await setDefault("grok-mystery");
+    expect(missing.status).toBe(404);
+    await expect(missing.json()).resolves.toMatchObject({
+      json: { message: "No model credential is connected for xai." },
+    });
+    expect(upsert).not.toHaveBeenCalled();
   });
 });

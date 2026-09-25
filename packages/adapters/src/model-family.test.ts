@@ -101,7 +101,7 @@ describe("custom model ids on catalog providers", () => {
 });
 
 describe("Pi runtime with a custom model id", () => {
-  function request(modelId: string): AgentRunRequest {
+  function request(modelId: string, provider: string): AgentRunRequest {
     return {
       botId: "bot",
       threadId: "thread",
@@ -110,11 +110,11 @@ describe("Pi runtime with a custom model id", () => {
       instructions: "Be brief.",
       history: [],
       tools: [],
-      model: { provider: "xai", id: modelId, apiKey: "test-key" },
+      model: { provider, id: modelId, apiKey: "test-key" },
     };
   }
 
-  async function run(modelId: string) {
+  async function run(modelId: string, provider = "xai") {
     const sent: Array<{ url: string; body: { model?: string; reasoning?: unknown } }> = [];
     vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
       sent.push({
@@ -125,7 +125,9 @@ describe("Pi runtime with a custom model id", () => {
     });
     const events: AgentRuntimeEvent[] = [];
     const outcome = (async () => {
-      for await (const event of new PiAgentRuntime().run(request(modelId))) events.push(event);
+      for await (const event of new PiAgentRuntime().run(request(modelId, provider))) {
+        events.push(event);
+      }
     })();
     return { sent, events, outcome };
   }
@@ -147,4 +149,39 @@ describe("Pi runtime with a custom model id", () => {
     expect(sent).toEqual([]);
     expect(events.filter((event) => event.type === "text" || event.type === "done")).toEqual([]);
   });
+
+  it("keeps a family id on its own provider when OpenRouter lists the same id", async () => {
+    const { provider, modelId, sibling } = familyIdOpenRouterAlsoLists();
+    const { sent, outcome } = await run(modelId, provider);
+    await expect(outcome).rejects.toThrow("offline");
+    expect(sent.length).toBeGreaterThan(0);
+    for (const { url, body } of sent) {
+      expect(url.startsWith(sibling.baseUrl)).toBe(true);
+      expect(body.model).toBe(modelId);
+    }
+    expect(modelAcceptsImageInput(provider, modelId)).toBe(
+      modelAcceptsImageInput(provider, sibling.id),
+    );
+  });
+
+  it("names no family when the provider's list is not a release catalog", async () => {
+    const { sent, outcome } = await run("qwen3:32b", "local");
+    await expect(outcome).rejects.toThrow(/^Unknown model local\/qwen3:32b$/);
+    expect(sent).toEqual([]);
+  });
 });
+
+function familyIdOpenRouterAlsoLists() {
+  const models = builtinModels();
+  const openRouterIds = models.getModels("openrouter").map((model) => model.id);
+  for (const provider of models.getProviders()) {
+    if (provider.id === "openrouter") continue;
+    const listed = provider.getModels();
+    for (const modelId of openRouterIds) {
+      if (listed.some((model) => model.id === modelId)) continue;
+      const sibling = closestFamilyModel(listed, modelId);
+      if (sibling?.api === "openai-completions") return { provider: provider.id, modelId, sibling };
+    }
+  }
+  throw new Error("Pi lists no family id that OpenRouter also lists");
+}
