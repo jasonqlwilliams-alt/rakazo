@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Connect Slack, WhatsApp Business Cloud, or Telegram DMs to a bot from Messaging settings, alongside iMessage/SMS. Each app can use a different bot.
 - Model picker includes Grok 4.6 (xAI) and Ox Alpha Free / GLM-5.3 (OpenCode Go).
+- The Compose `api` service marks its database as production when it first migrates it. Prisma commands from any other checkout then refuse to write to that database, and never reset it. Postgres tests only run against a database with `test` in its name, and `.env.example` no longer sets a default `DATABASE_URL`.
 
 ### Added
 

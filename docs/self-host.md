@@ -153,11 +153,13 @@ inside Compose. Official Postgres images set user, password, and database only o
 init, so an existing `pgdata` volume keeps its original identity: keep those values in `.env`, or
 change them in place with `ALTER ROLE` / rename. Recreate the volume only after a backup (or when
 the data is disposable); `docker compose down -v` deletes all Postgres state. For host-side clients
-(`pnpm db:migrate`, GUI tools),
+such as GUI tools,
 add `infra/compose/docker-compose.postgres-host.yml` so Postgres is published on loopback
 `127.0.0.1:5433`, or use
 `docker compose --env-file .env -f infra/compose/docker-compose.yml exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'`.
-Do not publish Postgres on a public interface.
+Do not publish Postgres on a public interface. The `api` service marks the database as production
+when it first applies migrations; after that, Prisma commands from a checkout refuse to write to it
+and never reset it. Restart the `api` service to apply new migrations.
 
 The Docker supervisor is not published as its own image and is not exposed on the host. It runs from
 the app image, stays on the internal Compose network, and holds the Docker socket because access to

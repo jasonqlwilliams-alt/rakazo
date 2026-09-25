@@ -53,6 +53,9 @@ services:
       NODE_ENV: production
       API_HOST: "0.0.0.0"
       DATABASE_URL: postgres://${POSTGRES_USER:-rakazo}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-rakazo}
+      # This service owns the database: its migrations mark it as production, and Prisma
+      # commands from any other checkout then refuse to write to it. Set nowhere else.
+      RAKAZO_DATABASE_ENVIRONMENT: production
       DATA_DIR: /data
       SANDBOX_PROVIDER: ${SANDBOX_PROVIDER:-e2b}
       CLOUD_AGENT_PROVIDER: ${CLOUD_AGENT_PROVIDER:-none}

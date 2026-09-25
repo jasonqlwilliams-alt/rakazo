@@ -11,6 +11,7 @@ import {
   ThirdPartyConnectorEmulator,
 } from "@rakazo/adapters";
 import { createThreadMessage, type PrismaClient } from "@rakazo/db";
+import { assertTestDatabaseUrl } from "@rakazo/db/database-guard";
 import { sessionCookieHeader } from "../index.js";
 import { runProcess } from "./process.js";
 
@@ -156,6 +157,7 @@ function configureEnvironment() {
   if (!process.env.DATABASE_URL) {
     throw new Error("DATABASE_URL is required for the isolated mobile screenshot fixture");
   }
+  assertTestDatabaseUrl(process.env.DATABASE_URL, "DATABASE_URL");
   Object.assign(process.env, {
     NODE_ENV: "test",
     WAKEUP_DRIVER: "memory",

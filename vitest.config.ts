@@ -3,6 +3,7 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     environment: "node",
+    globalSetup: ["./packages/testkit/src/test-database.ts"],
     setupFiles: ["./packages/testkit/src/pin-test-env.ts"],
     include: [
       ".agents/skills/pr-watch/*.test.ts",

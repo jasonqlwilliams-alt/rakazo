@@ -8,6 +8,11 @@
       "types": "./src/index.ts",
       "development": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./database-guard": {
+      "types": "./src/database-guard.ts",
+      "development": "./src/database-guard.ts",
+      "default": "./src/database-guard.ts"
     }
   },
   "scripts": {
