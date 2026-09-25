@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Use a model newer than the built-in catalog with Settings → Models → Other model id, and get a weekly pull request that updates the catalog; see [models newer than the catalog](docs/self-host.md#models-newer-than-the-catalog).
 - Bot webhook callers can wait for the run's outcome (`?wait=<seconds>`), so a failed run returns an error instead of `200`, and can read a run's status later with the same bearer.
 - Optional read-only inbound MCP at `POST /mcp` for local Claude Cowork (`RAKAZO_INBOUND_MCP_TOKEN`).
 - Voice mode: spoken replies, hold-to-talk dictation, and half-duplex calls with ElevenLabs, OpenAI, Cartesia, or Fish Audio.
