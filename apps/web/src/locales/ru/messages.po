@@ -18,7 +18,7 @@ msgid " (unread)"
 msgstr " (непрочитано)"
 
 #. placeholder {0}: group.entries.length
-#: src/pages/ModelSettingsOverlay.tsx:438
+#: src/pages/ModelSettingsOverlay.tsx:461
 msgid "{0, plural, one {# model} other {# models}}"
 msgstr "{0, plural, one {# модель} few {# модели} many {# моделей} other {# модели}}"
 
@@ -163,7 +163,7 @@ msgstr "Токен доступа (необязательно)"
 msgid "Account"
 msgstr "Аккаунт"
 
-#: src/pages/shell/bot-panel.tsx:494
+#: src/pages/shell/bot-panel.tsx:458
 msgid "Account default"
 msgstr "Учетная запись по умолчанию"
 
@@ -194,7 +194,7 @@ msgstr "Действия для пространства"
 msgid "Active"
 msgstr "Активный"
 
-#: src/pages/ModelSettingsOverlay.tsx:393
+#: src/pages/ModelSettingsOverlay.tsx:416
 msgid "Active model"
 msgstr "Активная модель"
 
@@ -304,11 +304,11 @@ msgstr "Добавление…"
 
 #: src/pages/AccountSettingsOverlay.tsx:166
 #: src/pages/McpServersOverlay.tsx:342
-#: src/pages/ModelSettingsOverlay.tsx:559
+#: src/pages/ModelSettingsOverlay.tsx:582
 #: src/pages/Onboarding.tsx:498
 #: src/pages/PluginsOverlay.tsx:836
 #: src/pages/RoutineSchedule.tsx:44
-#: src/pages/shell/bot-panel.tsx:385
+#: src/pages/shell/bot-panel.tsx:349
 msgid "Advanced"
 msgstr "Расширенные"
 
@@ -404,9 +404,9 @@ msgstr "API вернулся, но обновление не завершило�
 #: src/components/AskCard.tsx:44
 #: src/components/integrations/IntegrationSetup.tsx:194
 #: src/lib/localized-provider-hint.ts:9
-#: src/pages/ModelSettingsOverlay.tsx:745
-#: src/pages/ModelSettingsOverlay.tsx:748
-#: src/pages/ModelSettingsOverlay.tsx:767
+#: src/pages/ModelSettingsOverlay.tsx:799
+#: src/pages/ModelSettingsOverlay.tsx:802
+#: src/pages/ModelSettingsOverlay.tsx:821
 #: src/pages/Onboarding.tsx:632
 #: src/pages/Onboarding.tsx:635
 #: src/pages/Onboarding.tsx:649
@@ -515,7 +515,7 @@ msgstr "Вложение"
 msgid "auth"
 msgstr ""
 
-#: src/pages/ModelSettingsOverlay.tsx:678
+#: src/pages/ModelSettingsOverlay.tsx:732
 #: src/pages/Onboarding.tsx:581
 msgid "Authorization code or callback URL"
 msgstr "Код авторизации или URL обратного вызова"
@@ -646,7 +646,7 @@ msgstr "Не удаётся связаться с сервером."
 msgid "Cancel"
 msgstr "Отмена"
 
-#: src/pages/shell/bot-panel.tsx:125
+#: src/pages/shell/bot-panel.tsx:126
 msgid "Cancel new bot"
 msgstr "Отменить создание бота"
 
@@ -732,7 +732,7 @@ msgstr "Выбрать бота…"
 msgid "Choose a new password"
 msgstr "Выберите новый пароль"
 
-#: src/pages/ModelSettingsOverlay.tsx:364
+#: src/pages/ModelSettingsOverlay.tsx:387
 msgid "Choose which connected model Rakazo uses."
 msgstr "Выберите, какую подключенную модель использует Rakazo."
 
@@ -746,7 +746,7 @@ msgid "Clear {0}’s conversation?"
 msgstr "Очистить диалог {0}?"
 
 #: src/pages/BotContextMenu.tsx:132
-#: src/pages/shell/bot-panel.tsx:561
+#: src/pages/shell/bot-panel.tsx:525
 msgid "Clear conversation"
 msgstr "Очистить диалог"
 
@@ -800,7 +800,7 @@ msgstr "Закрыть настройки памяти"
 msgid "Close messaging settings"
 msgstr "Закрыть настройки обмена сообщениями"
 
-#: src/pages/ModelSettingsOverlay.tsx:380
+#: src/pages/ModelSettingsOverlay.tsx:403
 #: src/pages/SettingsOverlay.tsx:116
 msgid "Close model settings"
 msgstr "Закрыть настройки модели"
@@ -843,13 +843,13 @@ msgstr "Код"
 msgid "Collapse {0}"
 msgstr "Свернуть {0}"
 
-#: src/pages/shell/bot-panel.tsx:357
-#: src/pages/shell/bot-panel.tsx:358
+#: src/pages/shell/bot-panel.tsx:321
+#: src/pages/shell/bot-panel.tsx:322
 msgid "Color"
 msgstr "Цвет"
 
 #. placeholder {0}: index + 1
-#: src/pages/shell/bot-panel.tsx:369
+#: src/pages/shell/bot-panel.tsx:333
 msgid "Color {0}"
 msgstr "Цвет {0}"
 
@@ -871,7 +871,7 @@ msgstr ""
 
 #: src/pages/SettingsOverlay.tsx:106
 #: src/pages/Shell.tsx:5791
-#: src/pages/shell/bot-panel.tsx:58
+#: src/pages/shell/bot-panel.tsx:59
 msgid "Computer"
 msgstr "Компьютер"
 
@@ -899,7 +899,7 @@ msgstr "Компьютеры"
 msgid "Computers are off. Set SANDBOX_PROVIDER=docker with SANDBOX_SUPERVISOR_TOKEN, or set SANDBOX_PROVIDER to e2b, daytona, or box with its API key. Recreate the stack after changing .env."
 msgstr "Компьютеры выключены. Установите SANDBOX_PROVIDER=docker с помощью SANDBOX_SUPERVISOR_TOKEN или установите для SANDBOX_PROVIDER значение e2b, Daytona или Box с его ключом API. Воссоздайте стек после изменения .env."
 
-#: src/pages/ModelSettingsOverlay.tsx:400
+#: src/pages/ModelSettingsOverlay.tsx:423
 msgid "Configured by deployment"
 msgstr "Настраивается путем развертывания"
 
@@ -931,7 +931,7 @@ msgstr "Подключить"
 msgid "Connect a model"
 msgstr "Подключить модель"
 
-#: src/pages/ModelSettingsOverlay.tsx:798
+#: src/pages/ModelSettingsOverlay.tsx:853
 msgid "Connect API key"
 msgstr "Подключить API-ключ"
 
@@ -947,7 +947,7 @@ msgstr "Подключите MCP-сервер «{name}»"
 msgid "Connect OAuth"
 msgstr "Подключить OAuth"
 
-#: src/pages/ModelSettingsOverlay.tsx:648
+#: src/pages/ModelSettingsOverlay.tsx:702
 msgid "Connect this provider to use it as your personal model."
 msgstr "Подключите этого провайдера, чтобы использовать его в качестве своей личной модели."
 
@@ -959,14 +959,14 @@ msgstr "Подключить Treg"
 #: src/components/integrations/IntegrationSetup.tsx:267
 #: src/pages/McpOAuthCallback.tsx:54
 #: src/pages/MemorySettingsOverlay.tsx:191
-#: src/pages/ModelSettingsOverlay.tsx:445
+#: src/pages/ModelSettingsOverlay.tsx:468
 #: src/pages/shell/message-cards.tsx:187
 #: src/pages/VoiceSettingsOverlay.tsx:202
 msgid "Connected"
 msgstr "Подключено"
 
 #. placeholder {0}: credential.label
-#: src/pages/ModelSettingsOverlay.tsx:639
+#: src/pages/ModelSettingsOverlay.tsx:693
 msgid "Connected · {0}"
 msgstr "Подключено · {0}"
 
@@ -975,12 +975,14 @@ msgstr "Подключено · {0}"
 msgid "Connected {0}."
 msgstr "Подключено: {0}."
 
-#. placeholder {0}: selected.label
 #. placeholder {0}: selectedLabelRef.current ?? "this model"
-#: src/pages/ModelSettingsOverlay.tsx:96
-#: src/pages/ModelSettingsOverlay.tsx:336
+#: src/pages/ModelSettingsOverlay.tsx:97
 msgid "Connected and using {0}."
 msgstr "Подключено и используется {0}."
+
+#: src/pages/ModelSettingsOverlay.tsx:359
+msgid "Connected and using {activeLabel}."
+msgstr "Подключено, используется {activeLabel}."
 
 #: src/pages/shell/message-cards.tsx:374
 msgid "Connected. Its tools are available from your next message."
@@ -1001,7 +1003,7 @@ msgstr "Подключение…"
 msgid "Connection to {0} is still pending. You can close this and check again."
 msgstr "Соединение с {0} все еще не завершено. Вы можете закрыть это и проверить еще раз."
 
-#: src/pages/ModelSettingsOverlay.tsx:590
+#: src/pages/ModelSettingsOverlay.tsx:613
 #: src/pages/Onboarding.tsx:519
 msgid "Context limit"
 msgstr ""
@@ -1043,7 +1045,7 @@ msgstr "Не удалось авторизовать это приложение
 msgid "Could not change password"
 msgstr "Не удалось изменить пароль"
 
-#: src/pages/ModelSettingsOverlay.tsx:269
+#: src/pages/ModelSettingsOverlay.tsx:291
 msgid "Could not change the default model"
 msgstr "Не удалось изменить модель по умолчанию."
 
@@ -1077,7 +1079,7 @@ msgstr "Не удалось подключиться"
 msgid "Could not connect {0}"
 msgstr "Не удалось подключить {0}"
 
-#: src/pages/ModelSettingsOverlay.tsx:338
+#: src/pages/ModelSettingsOverlay.tsx:361
 msgid "Could not connect this provider"
 msgstr "Не удалось подключить этого провайдера"
 
@@ -1094,7 +1096,7 @@ msgstr "Не удалось подключиться к экрану компь�
 msgid "Could not continue"
 msgstr "Не удалось продолжить"
 
-#: src/pages/shell/bot-panel.tsx:113
+#: src/pages/shell/bot-panel.tsx:114
 msgid "Could not create bot"
 msgstr "Не удалось создать бота"
 
@@ -1189,7 +1191,7 @@ msgstr "Не удалось загрузить интеграции"
 msgid "Could not load MCP servers"
 msgstr "Не удалось загрузить серверы MCP."
 
-#: src/pages/ModelSettingsOverlay.tsx:148
+#: src/pages/ModelSettingsOverlay.tsx:156
 msgid "Could not load model settings"
 msgstr "Не удалось загрузить настройки модели."
 
@@ -1227,7 +1229,7 @@ msgstr "Не удалось воспроизвести тестовый клип
 msgid "Could not reach the server"
 msgstr "Не удалось связаться с сервером"
 
-#: src/pages/ModelSettingsOverlay.tsx:253
+#: src/pages/ModelSettingsOverlay.tsx:264
 #: src/pages/Onboarding.tsx:276
 msgid "Could not reach this model server"
 msgstr "Не удалось связаться с сервером этой модели."
@@ -1273,7 +1275,7 @@ msgstr "Не удалось запустить задачу"
 #: src/pages/KnowledgeSection.tsx:132
 #: src/pages/ResearchSettingsOverlay.tsx:58
 #: src/pages/ResearchSettingsOverlay.tsx:75
-#: src/pages/shell/bot-panel.tsx:546
+#: src/pages/shell/bot-panel.tsx:510
 msgid "Could not save"
 msgstr "Не удалось сохранить"
 
@@ -1374,7 +1376,7 @@ msgid "Couldn't update messaging settings"
 msgstr "Не удалось обновить настройки обмена сообщениями."
 
 #: src/pages/Shell.tsx:2579
-#: src/pages/shell/bot-panel.tsx:185
+#: src/pages/shell/bot-panel.tsx:186
 #: src/pages/shell/dialogs.tsx:202
 msgid "Create"
 msgstr "Создать"
@@ -1424,7 +1426,7 @@ msgid "Created"
 msgstr "Создано"
 
 #: src/pages/GroupPanel.tsx:144
-#: src/pages/shell/bot-panel.tsx:185
+#: src/pages/shell/bot-panel.tsx:186
 #: src/pages/shell/dialogs.tsx:91
 #: src/pages/shell/dialogs.tsx:202
 msgid "Creating…"
@@ -1476,13 +1478,13 @@ msgstr "дни"
 msgid "Decline"
 msgstr "Отклонить"
 
-#: src/pages/ModelSettingsOverlay.tsx:576
+#: src/pages/ModelSettingsOverlay.tsx:599
 #: src/pages/Onboarding.tsx:513
 msgid "Default"
 msgstr ""
 
 #. placeholder {0}: thinkingLevelLabel(defaultThinkingLevel)
-#: src/pages/shell/bot-panel.tsx:437
+#: src/pages/shell/bot-panel.tsx:401
 msgid "Default ({0})"
 msgstr ""
 
@@ -1545,16 +1547,16 @@ msgstr "Отклонено"
 msgid "Deny"
 msgstr "Запретить"
 
-#: src/pages/ModelSettingsOverlay.tsx:396
+#: src/pages/ModelSettingsOverlay.tsx:419
 msgid "Deployment default"
 msgstr "Развертывание по умолчанию"
 
-#: src/pages/shell/bot-panel.tsx:156
+#: src/pages/shell/bot-panel.tsx:157
 msgid "Describe what this bot does"
 msgstr "Опишите, что делает этот бот"
 
-#: src/pages/shell/bot-panel.tsx:161
-#: src/pages/shell/bot-panel.tsx:346
+#: src/pages/shell/bot-panel.tsx:162
+#: src/pages/shell/bot-panel.tsx:310
 msgid "Description"
 msgstr "Описание"
 
@@ -1673,23 +1675,23 @@ msgstr "Электронная почта"
 msgid "Engage when... Ignore..."
 msgstr "Включайтесь, когда... Игнорируйте..."
 
-#: src/pages/ModelSettingsOverlay.tsx:303
+#: src/pages/ModelSettingsOverlay.tsx:326
 #: src/pages/Onboarding.tsx:306
 msgid "Enter a whole number from 1 to {MAX_MODEL_CONTEXT_WINDOW} for the context limit."
 msgstr ""
 
-#: src/pages/ModelSettingsOverlay.tsx:296
+#: src/pages/ModelSettingsOverlay.tsx:319
 #: src/pages/Onboarding.tsx:299
 msgid "Enter a whole number from 1 to {MAX_MODEL_MAX_TOKENS} for maximum output tokens."
 msgstr ""
 
-#: src/pages/ModelSettingsOverlay.tsx:287
+#: src/pages/ModelSettingsOverlay.tsx:310
 #: src/pages/Onboarding.tsx:290
 msgid "Enter a whole number from 1 to 1000 for the image limit."
 msgstr ""
 
 #. placeholder {0}: oauth.verificationUri.replace(/^https:\/\//, "")
-#: src/pages/ModelSettingsOverlay.tsx:701
+#: src/pages/ModelSettingsOverlay.tsx:755
 #: src/pages/Onboarding.tsx:600
 msgid "Enter this code at <0>{0}</0>"
 msgstr "Введите этот код по адресу <0>{0}</0>."
@@ -1750,7 +1752,7 @@ msgstr "Развернуть"
 msgid "Expand {0}"
 msgstr "Развернуть {0}"
 
-#: src/pages/shell/bot-panel.tsx:553
+#: src/pages/shell/bot-panel.tsx:517
 msgid "Export"
 msgstr "Экспорт"
 
@@ -1763,9 +1765,9 @@ msgstr "Экспортируйте список этой недели из CRM �
 msgid "External conversation"
 msgstr "Внешний диалог"
 
-#: src/pages/ModelSettingsOverlay.tsx:572
+#: src/pages/ModelSettingsOverlay.tsx:595
 #: src/pages/Onboarding.tsx:509
-#: src/pages/shell/bot-panel.tsx:573
+#: src/pages/shell/bot-panel.tsx:533
 msgid "Extra high"
 msgstr "Очень высокий"
 
@@ -1798,18 +1800,18 @@ msgstr "Неуспешный."
 msgid "Failure handling"
 msgstr "Обработка сбоев"
 
-#: src/pages/ModelSettingsOverlay.tsx:495
+#: src/pages/ModelSettingsOverlay.tsx:518
 #: src/pages/Onboarding.tsx:430
 msgid "Find models"
 msgstr "Найти модели"
 
-#: src/pages/ModelSettingsOverlay.tsx:495
+#: src/pages/ModelSettingsOverlay.tsx:518
 #: src/pages/Onboarding.tsx:430
 msgid "Finding…"
 msgstr "Поиск…"
 
 #. placeholder {0}: new URL(oauth.verificationUri).hostname
-#: src/pages/ModelSettingsOverlay.tsx:661
+#: src/pages/ModelSettingsOverlay.tsx:715
 #: src/pages/Onboarding.tsx:564
 msgid "Finish signing in at <0>{0}</0>. The final page may not load; paste its URL or code here."
 msgstr "Завершите вход на странице <0>{0}</0>. Если последняя страница не загрузится, вставьте сюда её URL или код."
@@ -1835,7 +1837,7 @@ msgstr "Пометить неожиданные действия"
 msgid "Forgot password?"
 msgstr "Забыли пароль?"
 
-#: src/pages/ModelSettingsOverlay.tsx:1172
+#: src/pages/ModelSettingsOverlay.tsx:1227
 msgid "Free"
 msgstr "Бесплатно"
 
@@ -1922,9 +1924,9 @@ msgstr "Скрыть ботов"
 msgid "Hide password"
 msgstr "Скрыть пароль"
 
-#: src/pages/ModelSettingsOverlay.tsx:571
+#: src/pages/ModelSettingsOverlay.tsx:594
 #: src/pages/Onboarding.tsx:508
-#: src/pages/shell/bot-panel.tsx:576
+#: src/pages/shell/bot-panel.tsx:536
 msgid "High"
 msgstr "Высокий"
 
@@ -1961,7 +1963,7 @@ msgstr "игнорировать"
 msgid "Import OpenAPI JSON"
 msgstr "Импортировать OpenAPI JSON"
 
-#: src/pages/shell/bot-panel.tsx:453
+#: src/pages/shell/bot-panel.tsx:417
 msgid "Inherit default"
 msgstr "Наследовать значение по умолчанию"
 
@@ -2012,7 +2014,7 @@ msgid "invalid"
 msgstr ""
 
 #: src/pages/MemorySettingsOverlay.tsx:49
-#: src/pages/shell/bot-panel.tsx:454
+#: src/pages/shell/bot-panel.tsx:418
 msgid "Isolated"
 msgstr "изолированный"
 
@@ -2098,8 +2100,8 @@ msgstr "Загрузка интеграций…"
 msgid "Loading memory settings…"
 msgstr "Загрузка настроек памяти…"
 
-#: src/pages/ModelSettingsOverlay.tsx:360
-#: src/pages/ModelSettingsOverlay.tsx:834
+#: src/pages/ModelSettingsOverlay.tsx:383
+#: src/pages/ModelSettingsOverlay.tsx:889
 msgid "Loading model catalog…"
 msgstr "Загрузка каталога моделей…"
 
@@ -2143,9 +2145,9 @@ msgstr "Настройки локального сервера"
 msgid "Log out"
 msgstr "Выйти"
 
-#: src/pages/ModelSettingsOverlay.tsx:569
+#: src/pages/ModelSettingsOverlay.tsx:592
 #: src/pages/Onboarding.tsx:506
-#: src/pages/shell/bot-panel.tsx:574
+#: src/pages/shell/bot-panel.tsx:534
 msgid "Low"
 msgstr "Низкий"
 
@@ -2182,18 +2184,18 @@ msgstr "Отметить как прочитанное"
 msgid "Mark as Unread"
 msgstr "Отметить как непрочитанное"
 
-#: src/pages/ModelSettingsOverlay.tsx:573
+#: src/pages/ModelSettingsOverlay.tsx:596
 #: src/pages/Onboarding.tsx:510
-#: src/pages/shell/bot-panel.tsx:578
+#: src/pages/shell/bot-panel.tsx:538
 msgid "Max"
 msgstr "Макс"
 
-#: src/pages/ModelSettingsOverlay.tsx:604
+#: src/pages/ModelSettingsOverlay.tsx:627
 #: src/pages/Onboarding.tsx:525
 msgid "Maximum images per request"
 msgstr ""
 
-#: src/pages/ModelSettingsOverlay.tsx:583
+#: src/pages/ModelSettingsOverlay.tsx:606
 #: src/pages/Onboarding.tsx:516
 msgid "Maximum output tokens"
 msgstr ""
@@ -2206,9 +2208,9 @@ msgstr ""
 msgid "MCP servers"
 msgstr "MCP-серверы"
 
-#: src/pages/ModelSettingsOverlay.tsx:570
+#: src/pages/ModelSettingsOverlay.tsx:593
 #: src/pages/Onboarding.tsx:507
-#: src/pages/shell/bot-panel.tsx:575
+#: src/pages/shell/bot-panel.tsx:535
 msgid "Medium"
 msgstr "Средний"
 
@@ -2226,7 +2228,7 @@ msgstr "Участники (выберите {GROUP_MEMBER_MIN}–{GROUP_MEMBER_
 msgid "Memory"
 msgstr "Память"
 
-#: src/pages/shell/bot-panel.tsx:449
+#: src/pages/shell/bot-panel.tsx:413
 msgid "Memory scope"
 msgstr "Область памяти"
 
@@ -2279,9 +2281,9 @@ msgstr "Обмен сообщениями"
 msgid "Microphone failed"
 msgstr "Ошибка микрофона"
 
-#: src/pages/ModelSettingsOverlay.tsx:568
+#: src/pages/ModelSettingsOverlay.tsx:591
 #: src/pages/Onboarding.tsx:505
-#: src/pages/shell/bot-panel.tsx:577
+#: src/pages/shell/bot-panel.tsx:537
 msgid "Minimal"
 msgstr "Минимальный"
 
@@ -2306,23 +2308,24 @@ msgstr "минуты"
 msgid "Mode"
 msgstr ""
 
-#: src/pages/ModelSettingsOverlay.tsx:500
-#: src/pages/ModelSettingsOverlay.tsx:610
-#: src/pages/ModelSettingsOverlay.tsx:1060
+#: src/pages/ModelSettingsOverlay.tsx:523
+#: src/pages/ModelSettingsOverlay.tsx:633
+#: src/pages/ModelSettingsOverlay.tsx:1115
 #: src/pages/Onboarding.tsx:435
 #: src/pages/Onboarding.tsx:531
 #: src/pages/Onboarding.tsx:543
 #: src/pages/ResearchSettingsOverlay.tsx:86
-#: src/pages/shell/bot-panel.tsx:399
+#: src/pages/shell/bot-panel.tsx:363
 msgid "Model"
 msgstr "Модель"
 
-#: src/pages/ModelSettingsOverlay.tsx:534
+#: src/pages/ModelSettingsOverlay.tsx:557
+#: src/pages/ModelSettingsOverlay.tsx:645
 #: src/pages/Onboarding.tsx:473
 msgid "Model id"
 msgstr "Идентификатор модели"
 
-#: src/pages/ModelSettingsOverlay.tsx:1096
+#: src/pages/ModelSettingsOverlay.tsx:1151
 msgid "Model options"
 msgstr "Варианты модели"
 
@@ -2330,21 +2333,21 @@ msgstr "Варианты модели"
 msgid "Model spend uses your provider keys."
 msgstr "Расходы на модель оплачиваются ключами вашего провайдера."
 
-#: src/pages/ModelSettingsOverlay.tsx:267
+#: src/pages/ModelSettingsOverlay.tsx:289
 msgid "Model updated."
 msgstr "Модель обновлена."
 
 #: src/pages/LocalSettings.tsx:36
-#: src/pages/ModelSettingsOverlay.tsx:373
+#: src/pages/ModelSettingsOverlay.tsx:396
 #: src/pages/SettingsOverlay.tsx:101
 msgid "Models"
 msgstr "Модели"
 
-#: src/pages/ModelSettingsOverlay.tsx:362
+#: src/pages/ModelSettingsOverlay.tsx:385
 msgid "Models for the server owner’s default space."
 msgstr "Модели для пространства владельца сервера по умолчанию."
 
-#: src/pages/ModelSettingsOverlay.tsx:513
+#: src/pages/ModelSettingsOverlay.tsx:536
 #: src/pages/Onboarding.tsx:452
 msgid "Models from server"
 msgstr "Модели с сервера"
@@ -2374,14 +2377,14 @@ msgstr "Переместить в"
 #: src/pages/GroupPanel.tsx:119
 #: src/pages/GroupPanel.tsx:212
 #: src/pages/RoutineEditor.tsx:307
-#: src/pages/shell/bot-panel.tsx:139
-#: src/pages/shell/bot-panel.tsx:326
+#: src/pages/shell/bot-panel.tsx:140
+#: src/pages/shell/bot-panel.tsx:290
 #: src/pages/shell/dialogs.tsx:72
 #: src/pages/shell/dialogs.tsx:187
 msgid "Name"
 msgstr "Имя"
 
-#: src/pages/shell/bot-panel.tsx:145
+#: src/pages/shell/bot-panel.tsx:146
 msgid "Name this bot"
 msgstr "Назовите этого бота"
 
@@ -2405,7 +2408,7 @@ msgstr "Требуется передача управления"
 msgid "Needs you"
 msgstr "Требуется ваше участие"
 
-#: src/pages/shell/bot-panel.tsx:123
+#: src/pages/shell/bot-panel.tsx:124
 msgid "New bot"
 msgstr "Новый бот"
 
@@ -2479,7 +2482,7 @@ msgstr "Больше не активен"
 msgid "No managed app catalog is configured on this deployment."
 msgstr "В этом развертывании не настроен каталог управляемых приложений."
 
-#: src/pages/ModelSettingsOverlay.tsx:1124
+#: src/pages/ModelSettingsOverlay.tsx:1179
 msgid "No matching models"
 msgstr "Нет подходящих моделей"
 
@@ -2495,11 +2498,11 @@ msgstr "Серверов MCP пока нет."
 msgid "No messages with {peerBotName} yet."
 msgstr "Сообщений с {peerBotName} пока нет."
 
-#: src/pages/ModelSettingsOverlay.tsx:838
+#: src/pages/ModelSettingsOverlay.tsx:893
 msgid "No model catalog is available."
 msgstr "Каталога моделей нет."
 
-#: src/pages/ModelSettingsOverlay.tsx:453
+#: src/pages/ModelSettingsOverlay.tsx:476
 msgid "No providers found."
 msgstr "Поставщики не найдены."
 
@@ -2536,7 +2539,7 @@ msgstr "Нет триггера"
 msgid "None yet"
 msgstr "Пока нет"
 
-#: src/pages/ModelSettingsOverlay.tsx:641
+#: src/pages/ModelSettingsOverlay.tsx:695
 msgid "Not connected"
 msgstr "Не подключено"
 
@@ -2560,10 +2563,9 @@ msgstr "Пока ничего не запомнено"
 msgid "Now"
 msgstr "Сейчас"
 
-#. placeholder {0}: selected.label
-#: src/pages/ModelSettingsOverlay.tsx:267
-msgid "Now using {0}."
-msgstr "Теперь используется {0}."
+#: src/pages/ModelSettingsOverlay.tsx:289
+msgid "Now using {activeLabel}."
+msgstr "Теперь используется {activeLabel}."
 
 #: src/pages/McpOAuthCallback.tsx:24
 msgid "OAuth authorization was cancelled."
@@ -2617,7 +2619,7 @@ msgstr "Открыть навигацию"
 msgid "Open work"
 msgstr "Открытые задачи"
 
-#: src/pages/ModelSettingsOverlay.tsx:473
+#: src/pages/ModelSettingsOverlay.tsx:496
 #: src/pages/Onboarding.tsx:418
 msgid "OpenAI-compatible server URL"
 msgstr "URL-адрес сервера, совместимого с OpenAI"
@@ -2634,7 +2636,7 @@ msgstr ""
 msgid "Opening your Space…"
 msgstr "Открытие вашего пространства…"
 
-#: src/pages/ModelSettingsOverlay.tsx:751
+#: src/pages/ModelSettingsOverlay.tsx:805
 #: src/pages/Onboarding.tsx:638
 msgid "Optional"
 msgstr "Необязательно"
@@ -2647,7 +2649,7 @@ msgstr "Дополнительные элементы управления, ко
 msgid "Optional header value"
 msgstr "Необязательное значение заголовка"
 
-#: src/pages/ModelSettingsOverlay.tsx:765
+#: src/pages/ModelSettingsOverlay.tsx:819
 msgid "Or connect an API key"
 msgstr "Или подключить API-ключ"
 
@@ -2663,7 +2665,11 @@ msgstr "Органичный"
 msgid "Organization API key"
 msgstr "Ключ API организации"
 
-#: src/pages/ModelSettingsOverlay.tsx:521
+#: src/pages/ModelSettingsOverlay.tsx:674
+msgid "Other model id"
+msgstr "Другой ID модели"
+
+#: src/pages/ModelSettingsOverlay.tsx:544
 #: src/pages/Onboarding.tsx:200
 #: src/pages/Onboarding.tsx:462
 msgid "Other model…"
@@ -2707,7 +2713,7 @@ msgstr "Пароли не совпадают"
 msgid "Paste a replacement key"
 msgstr "Вставьте запасной ключ"
 
-#: src/pages/ModelSettingsOverlay.tsx:484
+#: src/pages/ModelSettingsOverlay.tsx:507
 msgid "Paste the OpenAI-compatible address from your server. Rakazo adds /v1 if needed."
 msgstr "Вставьте OpenAI-совместимый адрес со своего сервера. При необходимости Rakazo добавляет /v1."
 
@@ -2723,7 +2729,7 @@ msgstr "Приостановлено"
 msgid "permission"
 msgstr ""
 
-#: src/pages/ModelSettingsOverlay.tsx:635
+#: src/pages/ModelSettingsOverlay.tsx:689
 msgid "Personal credential"
 msgstr "Личные учётные данные"
 
@@ -2744,7 +2750,7 @@ msgstr "ОТПРАВИТЬ в"
 msgid "Preview {0}"
 msgstr "Предварительный просмотр {0}"
 
-#: src/pages/shell/bot-panel.tsx:72
+#: src/pages/shell/bot-panel.tsx:73
 msgid "Private"
 msgstr "Личный"
 
@@ -2766,7 +2772,7 @@ msgstr "ID проекта"
 msgid "Provider"
 msgstr "Поставщик"
 
-#: src/pages/ModelSettingsOverlay.tsx:408
+#: src/pages/ModelSettingsOverlay.tsx:431
 #: src/pages/VoiceSettingsOverlay.tsx:170
 msgid "Providers"
 msgstr "Провайдеры"
@@ -2795,7 +2801,7 @@ msgstr ""
 msgid "Reactions"
 msgstr ""
 
-#: src/pages/shell/bot-panel.tsx:483
+#: src/pages/shell/bot-panel.tsx:447
 msgid "Read replies aloud"
 msgstr "Читать ответы вслух"
 
@@ -2803,7 +2809,7 @@ msgstr "Читать ответы вслух"
 msgid "read-only"
 msgstr "только для чтения"
 
-#: src/pages/ModelSettingsOverlay.tsx:575
+#: src/pages/ModelSettingsOverlay.tsx:598
 #: src/pages/Onboarding.tsx:512
 msgid "Reasoning effort"
 msgstr ""
@@ -2956,8 +2962,8 @@ msgstr "Удаление…"
 msgid "Reopen"
 msgstr "Открыть заново"
 
-#: src/pages/ModelSettingsOverlay.tsx:763
-#: src/pages/ModelSettingsOverlay.tsx:796
+#: src/pages/ModelSettingsOverlay.tsx:817
+#: src/pages/ModelSettingsOverlay.tsx:851
 msgid "Replace API key"
 msgstr "Заменить ключ API"
 
@@ -3105,10 +3111,10 @@ msgstr "Запускается, когда этот бот получает пр
 #: src/pages/GroupPanel.tsx:236
 #: src/pages/KnowledgeSection.tsx:203
 #: src/pages/KnowledgeSection.tsx:422
-#: src/pages/ModelSettingsOverlay.tsx:794
+#: src/pages/ModelSettingsOverlay.tsx:849
 #: src/pages/ResearchSettingsOverlay.tsx:139
 #: src/pages/RoutineEditor.tsx:481
-#: src/pages/shell/bot-panel.tsx:550
+#: src/pages/shell/bot-panel.tsx:514
 msgid "Save"
 msgstr "Сохранить"
 
@@ -3123,7 +3129,7 @@ msgstr "Сохранено"
 msgid "Saved, but list refresh failed"
 msgstr "Сохранено, но обновить список не удалось."
 
-#: src/pages/ModelSettingsOverlay.tsx:336
+#: src/pages/ModelSettingsOverlay.tsx:359
 msgid "Saved."
 msgstr "Сохранено."
 
@@ -3142,7 +3148,7 @@ msgstr "Сохранение..."
 #: src/components/AskCard.tsx:157
 #: src/components/teach/SkillDraftCard.tsx:142
 #: src/pages/GroupPanel.tsx:236
-#: src/pages/ModelSettingsOverlay.tsx:792
+#: src/pages/ModelSettingsOverlay.tsx:847
 #: src/pages/RoutineEditor.tsx:481
 msgid "Saving…"
 msgstr "Сохранение…"
@@ -3156,7 +3162,7 @@ msgstr "Скажите что-нибудь. После паузы сообщен
 msgid "Say yes or no, or answer in a sentence."
 msgstr "Скажите «да» или «нет» или ответьте предложением."
 
-#: src/pages/ModelSettingsOverlay.tsx:1085
+#: src/pages/ModelSettingsOverlay.tsx:1140
 #: src/pages/PluginsOverlay.tsx:878
 #: src/pages/Shell.tsx:2638
 #: src/pages/shell/bot-picker.tsx:55
@@ -3184,12 +3190,12 @@ msgstr "Поиск по домену"
 msgid "Search integrations.sh"
 msgstr "Поиск integrations.sh"
 
-#: src/pages/ModelSettingsOverlay.tsx:1080
+#: src/pages/ModelSettingsOverlay.tsx:1135
 msgid "Search models"
 msgstr "Поиск моделей"
 
-#: src/pages/ModelSettingsOverlay.tsx:411
-#: src/pages/ModelSettingsOverlay.tsx:417
+#: src/pages/ModelSettingsOverlay.tsx:434
+#: src/pages/ModelSettingsOverlay.tsx:440
 msgid "Search providers"
 msgstr "Поиск поставщиков"
 
@@ -3246,7 +3252,7 @@ msgstr "Имя сервера"
 #: src/components/integrations/IntegrationSetup.tsx:282
 #: src/components/integrations/IntegrationSetup.tsx:300
 #: src/pages/McpServersOverlay.tsx:329
-#: src/pages/ModelSettingsOverlay.tsx:468
+#: src/pages/ModelSettingsOverlay.tsx:491
 #: src/pages/Onboarding.tsx:413
 msgid "Server URL"
 msgstr "URL-адрес сервера"
@@ -3269,12 +3275,12 @@ msgid "Settings: Usage"
 msgstr "Настройки: Использование"
 
 #: src/components/integrations/IntegrationSetup.tsx:328
-#: src/pages/ModelSettingsOverlay.tsx:481
+#: src/pages/ModelSettingsOverlay.tsx:504
 msgid "Setup help"
 msgstr "Помощь по настройке"
 
 #: src/pages/MemorySettingsOverlay.tsx:49
-#: src/pages/shell/bot-panel.tsx:455
+#: src/pages/shell/bot-panel.tsx:419
 msgid "Shared"
 msgstr "Общий"
 
@@ -3311,7 +3317,7 @@ msgstr "Показать настройки"
 #: src/lib/localized-provider-hint.ts:7
 #: src/pages/Auth.tsx:230
 #: src/pages/Auth.tsx:288
-#: src/pages/ModelSettingsOverlay.tsx:733
+#: src/pages/ModelSettingsOverlay.tsx:787
 #: src/pages/Onboarding.tsx:188
 msgid "Sign in"
 msgstr "Войти"
@@ -3353,7 +3359,7 @@ msgstr "Пропущен {0}"
 msgid "Software update"
 msgstr "Обновление программного обеспечения"
 
-#: src/pages/shell/bot-panel.tsx:410
+#: src/pages/shell/bot-panel.tsx:374
 msgid "Space default"
 msgstr "Пространство по умолчанию"
 
@@ -3396,7 +3402,7 @@ msgid "Starting"
 msgstr "Запуск"
 
 #: src/components/teach/TeachComputerOverlay.tsx:248
-#: src/pages/ModelSettingsOverlay.tsx:731
+#: src/pages/ModelSettingsOverlay.tsx:785
 #: src/pages/Onboarding.tsx:623
 msgid "Starting…"
 msgstr "Запуск…"
@@ -3432,7 +3438,7 @@ msgstr "Остановлено."
 msgid "Stored encrypted"
 msgstr "Хранится в зашифрованном виде"
 
-#: src/pages/ModelSettingsOverlay.tsx:646
+#: src/pages/ModelSettingsOverlay.tsx:700
 msgid "Stored securely. Never shown here."
 msgstr "Хранится безопасно. Здесь не отображается."
 
@@ -3440,17 +3446,17 @@ msgstr "Хранится безопасно. Здесь не отображае�
 msgid "subagent"
 msgstr "субагент"
 
-#: src/pages/ModelSettingsOverlay.tsx:691
+#: src/pages/ModelSettingsOverlay.tsx:745
 #: src/pages/Onboarding.tsx:590
 msgid "Submit"
 msgstr "Отправить"
 
-#: src/pages/ModelSettingsOverlay.tsx:597
+#: src/pages/ModelSettingsOverlay.tsx:620
 #: src/pages/Onboarding.tsx:522
 msgid "Supports images"
 msgstr ""
 
-#: src/pages/ModelSettingsOverlay.tsx:560
+#: src/pages/ModelSettingsOverlay.tsx:583
 #: src/pages/Onboarding.tsx:499
 msgid "Supports thinking"
 msgstr "Поддерживает рассуждения"
@@ -3459,7 +3465,7 @@ msgstr "Поддерживает рассуждения"
 msgid "Switch bot"
 msgstr "Сменить бота"
 
-#: src/pages/ModelSettingsOverlay.tsx:824
+#: src/pages/ModelSettingsOverlay.tsx:879
 msgid "Switching…"
 msgstr "Переключение…"
 
@@ -3476,7 +3482,7 @@ msgstr "Научить задачу"
 msgid "Teaching in progress. Stop teaching before sending a new message."
 msgstr "Обучение в процессе. Прекратите обучение, прежде чем отправлять новое сообщение."
 
-#: src/pages/shell/bot-panel.tsx:72
+#: src/pages/shell/bot-panel.tsx:73
 msgid "Team"
 msgstr "Команда"
 
@@ -3512,7 +3518,7 @@ msgstr "API не вернулся. Обновите эту страницу."
 msgid "The selected memory provider is not available in this build."
 msgstr "Выбранный поставщик памяти недоступен в этой сборке."
 
-#: src/pages/shell/bot-panel.tsx:429
+#: src/pages/shell/bot-panel.tsx:393
 msgid "Thinking"
 msgstr "рассуждение"
 
@@ -3561,7 +3567,7 @@ msgstr "Этот сервер не запрашивал авторизацию �
 msgid "This server is already connected. Disconnect it first to authorize again."
 msgstr "Этот сервер уже подключен. Сначала отключите его, чтобы авторизоваться снова."
 
-#: src/pages/ModelSettingsOverlay.tsx:806
+#: src/pages/ModelSettingsOverlay.tsx:861
 msgid "This subscription sign-in is not available in Rakazo yet. Use a deployment credential or choose another provider."
 msgstr "Вход по этой подписке пока недоступен в Rakazo. Используйте учетные данные развертывания или выберите другого поставщика."
 
@@ -3573,8 +3579,8 @@ msgstr "Время суток"
 msgid "timeout"
 msgstr ""
 
-#: src/pages/shell/bot-panel.tsx:150
-#: src/pages/shell/bot-panel.tsx:336
+#: src/pages/shell/bot-panel.tsx:151
+#: src/pages/shell/bot-panel.tsx:300
 msgid "Title"
 msgstr "Заголовок"
 
@@ -3704,17 +3710,21 @@ msgstr "Использование"
 msgid "Use {hostLabel}"
 msgstr "Используйте {hostLabel}"
 
-#: src/pages/ModelSettingsOverlay.tsx:546
+#: src/pages/ModelSettingsOverlay.tsx:569
 #: src/pages/Onboarding.tsx:488
 msgid "Use a found model"
 msgstr "Использовать найденную модель"
+
+#: src/pages/ModelSettingsOverlay.tsx:672
+msgid "Use a listed model"
+msgstr "Выбрать модель из списка"
 
 #: src/pages/ExternalConversationSettings.tsx:129
 #: src/pages/ExternalConversationSettings.tsx:130
 msgid "Use default guidance"
 msgstr "Использовать рекомендации по умолчанию"
 
-#: src/pages/ModelSettingsOverlay.tsx:826
+#: src/pages/ModelSettingsOverlay.tsx:881
 msgid "Use this model"
 msgstr "Используйте эту модель"
 
@@ -3729,14 +3739,14 @@ msgstr "Проверка…"
 #: src/pages/SettingsOverlay.tsx:104
 #: src/pages/Shell.tsx:5108
 #: src/pages/Shell.tsx:5109
-#: src/pages/shell/bot-panel.tsx:487
+#: src/pages/shell/bot-panel.tsx:451
 #: src/pages/VoiceSettingsOverlay.tsx:154
 #: src/pages/VoiceSettingsOverlay.tsx:253
 msgid "Voice"
 msgstr "Голос"
 
-#: src/pages/ModelSettingsOverlay.tsx:695
-#: src/pages/ModelSettingsOverlay.tsx:717
+#: src/pages/ModelSettingsOverlay.tsx:749
+#: src/pages/ModelSettingsOverlay.tsx:771
 #: src/pages/Onboarding.tsx:594
 #: src/pages/Onboarding.tsx:616
 msgid "Waiting for sign-in…"
@@ -3772,7 +3782,7 @@ msgstr "Какой результат вы продемонстрируете?"
 msgid "What should this routine do each time it runs?"
 msgstr "Что должна делать эта задача при каждом запуске?"
 
-#: src/pages/shell/bot-panel.tsx:167
+#: src/pages/shell/bot-panel.tsx:168
 msgid "What this bot is for"
 msgstr "Для чего нужен этот бот"
 

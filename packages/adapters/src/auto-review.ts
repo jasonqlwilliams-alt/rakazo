@@ -261,15 +261,12 @@ export async function runAutoReviewJudge(input: {
         signal: AbortSignal.timeout(timeoutMs),
       },
     )) {
-      if (
-        event.type === "text" &&
-        /^(?:I hit a problem:|Unknown model )/i.test(event.text.trim())
-      ) {
+      if (event.type === "text" && /^I hit a problem:/i.test(event.text.trim())) {
         failed = true;
       }
       if (event.type === "done" && event.text) {
         const body = event.text.trim();
-        if (/^(?:I hit a problem:|Unknown model )/i.test(body)) failed = true;
+        if (/^I hit a problem:/i.test(body)) failed = true;
         else text = body;
       }
     }

@@ -7,6 +7,7 @@ import {
   normalizeCreateBotProfile,
   type ThinkingLevel,
 } from "@rakazo/contracts";
+import { connectedModelOptions, modelOptionKey, parseModelOptionKey } from "@rakazo/core";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
@@ -25,13 +26,6 @@ import { useMobileTokens, useResolvedAppearance } from "../lib/native";
 
 type BotSettingsRecord = MobileBot & {
   description?: string;
-};
-
-type ModelOption = {
-  key: string;
-  provider: string;
-  modelId: string;
-  label: string;
 };
 
 type PickerChoice = {
@@ -101,40 +95,10 @@ export default function BotSettingsScreen() {
       });
   }, [t]);
 
-  const connectedOptions = useMemo(() => {
-    const options: ModelOption[] = [];
-    const seen = new Set<string>();
-    for (const credential of credentials) {
-      const providerModels = catalog.filter(
-        (entry) => entry.provider === credential.provider && !entry.placeholder,
-      );
-      const credentialInCatalog = Boolean(
-        credential.modelId && providerModels.some((entry) => entry.id === credential.modelId),
-      );
-      const nextOptions =
-        credential.modelId && !credentialInCatalog
-          ? [
-              {
-                key: modelOptionKey(credential.provider, credential.modelId),
-                provider: credential.provider,
-                modelId: credential.modelId,
-                label: `${credential.label} · ${credential.modelId}`,
-              },
-            ]
-          : providerModels.map((entry) => ({
-              key: modelOptionKey(entry.provider, entry.id),
-              provider: entry.provider,
-              modelId: entry.id,
-              label: `${entry.providerName ?? entry.provider} · ${entry.label}`,
-            }));
-      for (const option of nextOptions) {
-        if (seen.has(option.key)) continue;
-        seen.add(option.key);
-        options.push(option);
-      }
-    }
-    return options;
-  }, [catalog, credentials]);
+  const connectedOptions = useMemo(
+    () => connectedModelOptions(credentials, catalog),
+    [catalog, credentials],
+  );
 
   const effectiveProvider = modelKey
     ? parseModelOptionKey(modelKey)?.provider
@@ -469,16 +433,6 @@ export default function BotSettingsScreen() {
       </ScrollView>
     </>
   );
-}
-
-function modelOptionKey(provider: string, modelId: string) {
-  return `${provider}::${modelId}`;
-}
-
-function parseModelOptionKey(key: string) {
-  const separator = key.indexOf("::");
-  if (separator <= 0) return null;
-  return { provider: key.slice(0, separator), modelId: key.slice(separator + 2) };
 }
 
 function catalogLabel(

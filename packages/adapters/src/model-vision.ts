@@ -1,6 +1,8 @@
 import type { Models } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+import { acceptsNewerModelIds } from "@rakazo/core";
 import { DEFAULT_OPENROUTER_MODEL_ID } from "./deployment-model.js";
+import { resolveProviderModel } from "./model-family.js";
 import { registerLocalProvider } from "./pi-local-provider.js";
 import {
   OPENAI_COMPATIBLE_PROVIDER_ID,
@@ -90,7 +92,9 @@ export function modelAcceptsImageInput(
   if (acceptsImages && resolved.provider === OPENAI_COMPATIBLE_PROVIDER_ID) return true;
 
   const models = catalogModels();
-  let model = models.getModel(resolved.provider, resolved.id);
+  let model = acceptsNewerModelIds(resolved.provider)
+    ? resolveProviderModel(models, resolved.provider, resolved.id)
+    : models.getModel(resolved.provider, resolved.id);
   if (
     !model &&
     resolved.provider !== "openrouter" &&

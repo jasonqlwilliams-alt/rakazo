@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   ComposioEmulator,
   createScheduleFromTool,
+  DEFAULT_OPENROUTER_MODEL_ID,
   DesktopSandboxProvider,
   FakeSandboxProvider,
   handoffToGroupBot,
@@ -1289,7 +1290,7 @@ describeJourneys("required product journeys", () => {
       provider: "openrouter",
       apiKey: secret,
       label: "test",
-      modelId: "scripted",
+      modelId: DEFAULT_OPENROUTER_MODEL_ID,
     });
     await sendAndWait(app, cookie, bot.id, "write this to the destination crm as a note");
     expect(connector.records.length).toBeGreaterThan(before);
@@ -1344,7 +1345,7 @@ describeJourneys("required product journeys", () => {
       provider: "openrouter",
       apiKey: secret,
       label: "hidden",
-      modelId: "scripted",
+      modelId: DEFAULT_OPENROUTER_MODEL_ID,
     });
     await sendAndWait(
       app,

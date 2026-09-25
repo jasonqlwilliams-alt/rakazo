@@ -63,7 +63,9 @@ import {
   replaceComputer,
   resolveAutoReviewChecker,
   resolveBotWorkspacePath,
+  resolveCatalogEntry,
   sanitizeComposioError,
+  savedModelChoiceError,
   savePushToken,
   scheduleComputerControlExpiry,
   scheduleComputerSleep,
@@ -804,6 +806,9 @@ export function createRouter(deps: RouterDeps) {
         });
       }),
       connect: authed.models.connect.handler(async ({ context, input }) => {
+        if (input.modelId !== undefined && input.provider !== OPENAI_COMPATIBLE_PROVIDER_ID) {
+          assertSavableModelChoice(input.provider, input.modelId);
+        }
         let plaintext: string;
         try {
           let previousPlaintext: string | undefined;
@@ -863,6 +868,7 @@ export function createRouter(deps: RouterDeps) {
         },
       ),
       beginOAuth: authed.models.beginOAuth.handler(async ({ context, input }) => {
+        if (input.modelId !== undefined) assertSavableModelChoice(input.provider, input.modelId);
         return deps.oauthLogins.begin({
           userId: context.actor.userId,
           spaceId: context.actor.spaceId,
@@ -922,6 +928,7 @@ export function createRouter(deps: RouterDeps) {
                   message: `No model credential is connected for ${input.provider}.`,
                 });
               }
+              assertSavableModelChoice(input.provider, input.modelId);
               await selectSpaceModelPreference(tx, context.actor, credential.id, input.modelId);
             },
             { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
@@ -1032,9 +1039,7 @@ export function createRouter(deps: RouterDeps) {
           const effectiveProvider = provider ?? me.defaultProvider;
           const effectiveModelId = modelId ?? me.defaultModel;
           if (effectiveProvider && effectiveModelId) {
-            const entry = listPiCatalog().find(
-              (item) => item.provider === effectiveProvider && item.id === effectiveModelId,
-            );
+            const entry = resolveCatalogEntry(effectiveProvider, effectiveModelId);
             let allowed = entry?.thinkingLevels;
             if (effectiveProvider === OPENAI_COMPATIBLE_PROVIDER_ID) {
               allowed = ["off"];
@@ -5177,6 +5182,11 @@ async function persistModelCredential(
     ),
   );
   return modelCredentialDto(cred, input.plaintext);
+}
+
+function assertSavableModelChoice(provider: string, modelId: string) {
+  const message = savedModelChoiceError(provider, modelId);
+  if (message) throw new ORPCError("BAD_REQUEST", { message });
 }
 
 function throwIfAborted(signal?: AbortSignal) {

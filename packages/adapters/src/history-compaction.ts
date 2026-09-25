@@ -311,12 +311,12 @@ export async function compactHistory(deps: CompactHistoryDeps, threadId: string)
       signal: AbortSignal.timeout(SUMMARIZE_TIMEOUT_MS),
     },
   )) {
-    if (event.type === "text" && /^(?:I hit a problem:|Unknown model )/i.test(event.text.trim())) {
+    if (event.type === "text" && /^I hit a problem:/i.test(event.text.trim())) {
       runtimeReportedFailure = true;
     }
     if (event.type === "done" && event.text) {
       const text = event.text.trim();
-      if (/^(?:I hit a problem:|Unknown model )/i.test(text)) runtimeReportedFailure = true;
+      if (/^I hit a problem:/i.test(text)) runtimeReportedFailure = true;
       else summary = text;
     }
   }

@@ -112,6 +112,54 @@ test("custom connections persist reasoning support and bot thinking", async ({
   await expect(thinking).toHaveValue("low");
 });
 
+test("saves a model id newer than the catalog and offers it to bots", async ({
+  page,
+}, testInfo) => {
+  const stamp = Date.now();
+  await signup(page, `custom-model-${stamp}@rakazo.test`, "password12", `Custom ${stamp}`);
+  await completeOnboarding(page);
+  await openUserSettings(page, "models");
+  await page.getByPlaceholder("Search providers").fill("xai");
+  await page.getByRole("button", { name: /^xAI/ }).click();
+  await page.getByRole("button", { name: "Other model id" }).click();
+  const modelIdInput = page.getByLabel("Model id");
+  const apiKeyInput = page.getByLabel("Or connect an API key");
+
+  await modelIdInput.fill("grok-mystery");
+  await apiKeyInput.fill("fake-xai-key-for-e2e");
+  await page.getByRole("button", { name: "Connect API key" }).click();
+  await expect(page.getByText("Unknown model for that provider")).toBeVisible();
+
+  await modelIdInput.fill("grok-4.999");
+  await page.getByRole("button", { name: "Connect API key" }).click();
+  await expect(page.getByText("Connected and using grok-4.999.")).toBeVisible();
+  await captureScreenshot(page, testInfo, "custom-model-id");
+  const credentials = await rpc<
+    Array<{ provider: string; modelId?: string; thinkingLevels?: string[] }>
+  >(page, "models/credentials", {});
+  const xai = credentials.find((entry) => entry.provider === "xai");
+  expect(xai?.modelId).toBe("grok-4.999");
+  expect(xai?.thinkingLevels?.length).toBeGreaterThan(0);
+
+  await page.reload();
+  await openUserSettings(page, "models");
+  await expect(page.getByLabel("Model id")).toHaveValue("grok-4.999");
+  await page.getByRole("button", { name: "Use a listed model" }).click();
+  await expect(page.getByRole("combobox", { name: "Model" })).toHaveText(/Grok/);
+
+  await page.getByRole("button", { name: "Close model settings" }).click();
+  await page.locator("main").getByRole("button", { name: "Chief", exact: true }).click();
+  const settings = page.getByTestId("bot-settings");
+  await settings.getByTestId("bot-settings-advanced").evaluate((element) => {
+    (element as HTMLDetailsElement).open = true;
+  });
+  const model = settings.getByRole("combobox", { name: "Model", exact: true });
+  await expect(model).toContainText("xAI · grok-4.999");
+  await expect(model).toContainText(/xAI · Grok/);
+  await model.selectOption("xai::grok-4.999");
+  await expect(settings.getByRole("combobox", { name: "Thinking", exact: true })).toBeVisible();
+});
+
 test("connects, lists, and uses an OpenAI-compatible endpoint", async ({ page }, testInfo) => {
   const server = createServer((request, response) => {
     if (request.method === "GET" && request.url === "/v1/models") {
