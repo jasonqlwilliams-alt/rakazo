@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "pg";
@@ -17,6 +18,7 @@ export const PRODUCTION_DATABASE_MARKER = "rakazo:production";
 export const DATABASE_ENVIRONMENT_VARIABLE = "RAKAZO_DATABASE_ENVIRONMENT";
 
 const DB_PACKAGE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const MIGRATIONS_DIR = path.join(DB_PACKAGE_DIR, "prisma/migrations");
 
 const WRITE_COMMANDS = new Set([
   "migrate deploy",
@@ -105,7 +107,7 @@ export async function guardPrismaCommand(
       }
       if (!owner) {
         throw new Error(
-          `Refusing prisma ${command}: the database is marked as production. Run it from the deployment that owns the database, which sets ${DATABASE_ENVIRONMENT_VARIABLE}=production.`,
+          `Refusing prisma ${command}: the database is marked as production. It belongs to its deployment, and only that deployment's own service migrates it.`,
         );
       }
       return;
@@ -130,14 +132,37 @@ export async function guardPrismaCommand(
   });
 }
 
+async function hasPendingMigrations(client: Client): Promise<boolean> {
+  const { rows } = await client
+    .query<{ migration_name: string }>(
+      "select migration_name from _prisma_migrations where finished_at is not null and rolled_back_at is null",
+    )
+    .catch((error: { code?: string }) => {
+      // 42P01: no migration has ever run here.
+      if (error.code === "42P01") return { rows: [] };
+      throw error;
+    });
+  const applied = new Set(rows.map((row) => row.migration_name));
+  return readdirSync(MIGRATIONS_DIR, { withFileTypes: true }).some(
+    (entry) => entry.isDirectory() && !applied.has(entry.name),
+  );
+}
+
 /**
  * Makes `url` ready for Postgres-gated tests: refuses a non-test name before connecting,
  * refuses a production-marked database, creates the database when missing, and applies
- * migrations to it.
+ * migrations when any are pending.
  */
 export async function prepareTestDatabase(url: string): Promise<void> {
   assertTestDatabaseUrl(url, "DATABASE_URL");
-  const marker = await withClient(url, readMarker).catch(async (error: { code?: string }) => {
+  const pending = await withClient(url, async (client) => {
+    if ((await readMarker(client)) === PRODUCTION_DATABASE_MARKER) {
+      throw new Error(
+        `Refusing to use database "${databaseName(url)}" from DATABASE_URL: it is marked as production.`,
+      );
+    }
+    return hasPendingMigrations(client);
+  }).catch(async (error: { code?: string }) => {
     // 3D000: the database does not exist yet.
     if (error.code !== "3D000") throw error;
     const server = new URL(url);
@@ -145,13 +170,9 @@ export async function prepareTestDatabase(url: string): Promise<void> {
     await withClient(server.toString(), (client) =>
       client.query(`create database "${databaseName(url).replaceAll('"', '""')}"`),
     );
-    return null;
+    return true;
   });
-  if (marker === PRODUCTION_DATABASE_MARKER) {
-    throw new Error(
-      `Refusing to use database "${databaseName(url)}" from DATABASE_URL: it is marked as production.`,
-    );
-  }
+  if (!pending) return;
   try {
     execFileSync("pnpm", ["exec", "prisma", "migrate", "deploy"], {
       cwd: DB_PACKAGE_DIR,

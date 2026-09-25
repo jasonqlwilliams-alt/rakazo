@@ -27,8 +27,8 @@ CI runs `pnpm lint`, `pnpm check`, production builds (including Electron preload
 
 To run one Postgres suite without Testcontainers, set `VERIFY_DATABASE=1` and a `DATABASE_URL`
 whose database name has `test` as its own word, such as `rakazo_test`. The test setup refuses any
-other name before it connects, refuses a database marked as production, and creates and migrates
-the test database when it is missing.
+other name before it connects, refuses a database marked as production, creates the test database
+when it is missing, and applies any pending migrations.
 
 ## Adding a UI language
 

@@ -159,7 +159,7 @@ add `infra/compose/docker-compose.postgres-host.yml` so Postgres is published on
 `docker compose --env-file .env -f infra/compose/docker-compose.yml exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'`.
 Do not publish Postgres on a public interface. The `api` service marks the database as production
 when it first applies migrations; after that, Prisma commands from a checkout refuse to write to it
-unless `RAKAZO_DATABASE_ENVIRONMENT=production` is set for that command, and never reset it.
+and never reset it. Restart the `api` service to apply new migrations.
 
 The Docker supervisor is not published as its own image and is not exposed on the host. It runs from
 the app image, stays on the internal Compose network, and holds the Docker socket because access to

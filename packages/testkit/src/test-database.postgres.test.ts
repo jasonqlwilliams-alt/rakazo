@@ -14,6 +14,9 @@ const describePostgres =
 
 const created = new Set<string>();
 
+/** Advisory lock Prisma Migrate holds while it reads or applies migrations. */
+const PRISMA_MIGRATE_LOCK = 72707369;
+
 function urlFor(name: string) {
   const url = new URL(databaseUrl!);
   url.pathname = `/${name}`;
@@ -114,11 +117,34 @@ describePostgres("database guard against a real server", () => {
     expect(await marker("guard_fresh_test")).toBeNull();
   });
 
+  it("migrates an existing test database that has never been migrated", async () => {
+    await createDatabase("guard_empty_test");
+    await prepareTestDatabases({ VERIFY_DATABASE: "1", DATABASE_URL: urlFor("guard_empty_test") });
+    expect(await tableCount("guard_empty_test")).toBeGreaterThan(0);
+  });
+
+  it("does not run Prisma on a test database with no pending migrations", async () => {
+    const url = urlFor("guard_fresh_test");
+    const { prisma: client, pool } = createDb(url);
+    const session = await pool.connect();
+    try {
+      // Prisma would wait for this lock and then fail, so returning proves it never ran.
+      await session.query("select pg_advisory_lock($1)", [PRISMA_MIGRATE_LOCK]);
+      await prepareTestDatabases({ VERIFY_DATABASE: "1", DATABASE_URL: url });
+    } finally {
+      session.release();
+      await client.$disconnect();
+      await pool.end();
+    }
+  });
+
   it("stops Prisma from migrating or resetting a production-marked database", async () => {
     const url = urlFor("guard_marked_test");
-    expect(prisma(["migrate", "deploy"], { DATABASE_URL: url })).toMatch(
-      /Refusing prisma migrate deploy: the database is marked as production/,
+    const refusal = prisma(["migrate", "deploy"], { DATABASE_URL: url });
+    expect(refusal).toMatch(
+      /Refusing prisma migrate deploy: the database is marked as production\. It belongs to its deployment, and only that deployment's own service migrates it\./,
     );
+    expect(refusal).not.toContain(DATABASE_ENVIRONMENT_VARIABLE);
     expect(
       prisma(["migrate", "reset", "--force"], {
         DATABASE_URL: url,
