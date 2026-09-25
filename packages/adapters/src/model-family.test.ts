@@ -24,6 +24,20 @@ describe("closest family model", () => {
     ["gpt-6.1-luna", ids("gpt-5.6-luna", "gpt-6-luna", "gpt-6-sol"), "gpt-6-luna"],
     ["gemini-3.9-flash", ids("gemini-3.8-flash", "gemini-3-flash-preview"), "gemini-3.8-flash"],
     ["o5", ids("o1", "o3", "o3-mini"), "o3"],
+    // A release stage is not a family: the GA id borrows its listed preview.
+    [
+      "gemini-3.1-pro",
+      ids("gemini-2.5-pro", "gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools"),
+      "gemini-3.1-pro-preview",
+    ],
+    ["gemini-3-flash", ids("gemini-2.5-flash", "gemini-3-flash-preview"), "gemini-3-flash-preview"],
+    // Between siblings of one version, the requested release stage wins.
+    ["gemini-3.2-flash", ids("gemini-3.1-flash-preview", "gemini-3.1-flash"), "gemini-3.1-flash"],
+    [
+      "gemini-3.2-flash-preview",
+      ids("gemini-3.1-flash", "gemini-3.1-flash-preview"),
+      "gemini-3.1-flash-preview",
+    ],
     // Older than every sibling: borrow the oldest newer one.
     ["grok-4.1", ids("grok-4.3", "grok-4.7"), "grok-4.3"],
   ])("%s borrows from its family", (modelId, catalog, expected) => {
@@ -52,6 +66,23 @@ describe("custom model ids on catalog providers", () => {
     });
     expect(resolveProviderModel(models, "xai", "grok-4.7")).toBe(sibling);
     expect(resolveProviderModel(models, "xai", "grok-mystery")).toBeUndefined();
+  });
+
+  it.each([
+    ["gemini-3.1-pro", "gemini-3.1-pro-preview"],
+    ["gemini-3-flash", "gemini-3-flash-preview"],
+  ])("runs the GA id %s with its listed preview's settings", (modelId, preview) => {
+    const models = builtinModels();
+    expect(models.getModel("google", modelId)).toBeUndefined();
+
+    expect(resolveProviderModel(models, "google", modelId)).toEqual({
+      ...models.getModel("google", preview),
+      id: modelId,
+      name: modelId,
+    });
+    expect(resolveCatalogEntry("google", modelId)?.thinkingLevels).toEqual(
+      resolveCatalogEntry("google", preview)?.thinkingLevels,
+    );
   });
 
   it("reports the family's thinking levels and vision for the new id", () => {

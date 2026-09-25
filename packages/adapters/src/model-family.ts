@@ -1,20 +1,31 @@
 import type { Api, Model, Models } from "@earendil-works/pi-ai";
 
+/** Release stages name the same model at another point in its rollout, not another family. */
+const RELEASE_STAGES = new Set(["preview", "latest", "exp"]);
+
 /**
- * A family is an id with its numbers taken out: `grok-4.8` and `grok-4.7` are both `grok`, and
- * `claude-opus-6` and `claude-opus-5-5` are both `claude-opus`, while `gpt-5.4-pro` and `gpt-5.4`
- * are not one family. The numbers, in order, are the version.
+ * A family is an id with its numbers and release stage taken out: `grok-4.8` and `grok-4.7` are
+ * both `grok`, `claude-opus-6` and `claude-opus-5-5` are both `claude-opus`, and `gemini-3.1-pro`
+ * and `gemini-3.1-pro-preview` are both `gemini-pro`, while `gpt-5.4-pro` and `gpt-5.4` are not one
+ * family. The numbers, in order, are the version.
  */
-function modelFamily(modelId: string): { key: string; version: number[] } | undefined {
+function modelFamily(
+  modelId: string,
+): { key: string; stage: string; version: number[] } | undefined {
   const words: string[] = [];
+  const stages: string[] = [];
   const version: number[] = [];
   for (const token of modelId.toLowerCase().split(/[-._/:]+/)) {
     if (!token) continue;
+    if (RELEASE_STAGES.has(token)) {
+      stages.push(token);
+      continue;
+    }
     for (const digits of token.match(/\d+/g) ?? []) version.push(Number(digits));
     if (!/^\d+$/.test(token)) words.push(token.replace(/\d+/g, "#"));
   }
   if (version.length === 0) return undefined;
-  return { key: words.join("-"), version };
+  return { key: words.join("-"), stage: stages.join("-"), version };
 }
 
 function compareVersions(a: readonly number[], b: readonly number[]) {
@@ -25,9 +36,19 @@ function compareVersions(a: readonly number[], b: readonly number[]) {
   return 0;
 }
 
+type Sibling<T> = { model: T; version: number[]; sameStage: boolean };
+
+/** Whether `candidate` is closer than `current`, where `direction` 1 wants the newer version. */
+function isCloser<T>(candidate: Sibling<T>, current: Sibling<T> | undefined, direction: 1 | -1) {
+  if (!current) return true;
+  const diff = compareVersions(candidate.version, current.version) * direction;
+  return diff > 0 || (diff === 0 && candidate.sameStage && !current.sameStage);
+}
+
 /**
  * The catalog model a newer id of the same family borrows its request settings from: the newest
- * sibling at or below the requested version, else the oldest one above it.
+ * sibling at or below the requested version, else the oldest one above it. Between siblings of one
+ * version, the one at the requested release stage wins.
  */
 export function closestFamilyModel<T extends { id: string }>(
   catalogModels: readonly T[],
@@ -35,17 +56,16 @@ export function closestFamilyModel<T extends { id: string }>(
 ): T | undefined {
   const wanted = modelFamily(modelId.trim());
   if (!wanted) return undefined;
-  let below: { model: T; version: number[] } | undefined;
-  let above: { model: T; version: number[] } | undefined;
+  let below: Sibling<T> | undefined;
+  let above: Sibling<T> | undefined;
   for (const model of catalogModels) {
     const family = modelFamily(model.id);
     if (!family || family.key !== wanted.key) continue;
+    const sibling = { model, version: family.version, sameStage: family.stage === wanted.stage };
     if (compareVersions(family.version, wanted.version) <= 0) {
-      if (!below || compareVersions(family.version, below.version) > 0) {
-        below = { model, version: family.version };
-      }
-    } else if (!above || compareVersions(family.version, above.version) < 0) {
-      above = { model, version: family.version };
+      if (isCloser(sibling, below, 1)) below = sibling;
+    } else if (isCloser(sibling, above, -1)) {
+      above = sibling;
     }
   }
   return (below ?? above)?.model;

@@ -2,69 +2,134 @@ name: pi model library update
 
 # Weekly pull request that moves Pi (Rakazo's model library and catalog) to its
 # newest release, so new models reach the picker without someone noticing first.
-# It only opens a pull request; a maintainer reviews and merges it.
+# It only opens a pull request; a maintainer reviews and merges it. When a check
+# fails on the new release, the pull request opens as a draft with the failure.
 on:
   schedule:
     - cron: "17 6 * * 1"
   workflow_dispatch:
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 concurrency:
   group: pi-bump
   cancel-in-progress: false
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
+  # Installs and runs the new release's code, so it holds no write token and
+  # saves no cache; it hands the manifest and lockfile change to the next job.
   bump:
     name: Update Pi
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      changed: ${{ steps.bump.outputs.changed }}
+      previous: ${{ steps.bump.outputs.previous }}
+      version: ${{ steps.bump.outputs.version }}
+      failed: ${{ steps.package.outputs.failed }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - id: bump
+        run: node scripts/pi-bump.mjs >> "$GITHUB_OUTPUT"
+      - name: Install
+        id: install
+        if: steps.bump.outputs.changed == 'true'
+        run: pnpm install --no-frozen-lockfile 2>&1 | tee "$RUNNER_TEMP/install.log"
+      - name: Lint
+        id: lint
+        if: steps.bump.outputs.changed == 'true'
+        run: pnpm lint 2>&1 | tee "$RUNNER_TEMP/lint.log"
+      - name: Typecheck
+        id: typecheck
+        if: steps.bump.outputs.changed == 'true'
+        env:
+          DATABASE_URL: postgres://rakazo:rakazo@127.0.0.1:5433/rakazo
+        run: |
+          { pnpm db:generate && pnpm check; } 2>&1 | tee "$RUNNER_TEMP/typecheck.log"
+      - name: Test
+        id: test
+        if: steps.bump.outputs.changed == 'true'
+        run: pnpm test 2>&1 | tee "$RUNNER_TEMP/test.log"
+      - id: package
+        if: ${{ !cancelled() && steps.bump.outputs.changed == 'true' }}
+        env:
+          OUTCOMES: >-
+            install=${{ steps.install.outcome }}
+            lint=${{ steps.lint.outcome }}
+            typecheck=${{ steps.typecheck.outcome }}
+            test=${{ steps.test.outcome }}
+        run: |
+          out="$RUNNER_TEMP/pi-bump"
+          mkdir -p "$out"
+          git diff -- '*package.json' pnpm-lock.yaml > "$out/update.patch"
+          for outcome in $OUTCOMES; do
+            if [ "${outcome#*=}" = failure ]; then
+              step="${outcome%%=*}"
+              echo "failed=$step" >> "$GITHUB_OUTPUT"
+              tail -n 80 "$RUNNER_TEMP/$step.log" | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' > "$out/failure.log"
+              break
+            fi
+          done
+      - if: ${{ !cancelled() && steps.bump.outputs.changed == 'true' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pi-bump
+          path: ${{ runner.temp }}/pi-bump
+          if-no-files-found: error
+
+  # Runs no dependency code: it applies the manifest and lockfile change, commits
+  # without hooks, and opens the pull request.
+  pull-request:
+    name: Open the pull request
+    needs: bump
+    if: ${{ !cancelled() && needs.bump.outputs.changed == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       # A pull request pushed with the default token does not start CI. Set the
       # PI_BUMP_TOKEN secret (contents and pull-requests write) to have CI run on it.
       - uses: actions/checkout@v5
         with:
           token: ${{ secrets.PI_BUMP_TOKEN || github.token }}
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: node scripts/pi-bump.mjs models > "$RUNNER_TEMP/models-before.txt"
-      - id: bump
-        run: node scripts/pi-bump.mjs >> "$GITHUB_OUTPUT"
-      - if: steps.bump.outputs.changed == 'true'
-        run: pnpm install --no-frozen-lockfile
-      - if: steps.bump.outputs.changed == 'true'
-        run: |
-          node scripts/pi-bump.mjs models > "$RUNNER_TEMP/models-after.txt"
-          LC_ALL=C comm -13 "$RUNNER_TEMP/models-before.txt" "$RUNNER_TEMP/models-after.txt" > "$RUNNER_TEMP/models-added.txt"
-      - if: steps.bump.outputs.changed == 'true'
-        run: pnpm lint
-      - if: steps.bump.outputs.changed == 'true'
-        run: pnpm db:generate
-        env:
-          DATABASE_URL: postgres://rakazo:rakazo@127.0.0.1:5433/rakazo
-      - if: steps.bump.outputs.changed == 'true'
-        run: pnpm check
-      - if: steps.bump.outputs.changed == 'true'
-        run: pnpm test
-      - if: steps.bump.outputs.changed == 'true'
-        env:
+          name: pi-bump
+          path: ${{ runner.temp }}/pi-bump
+      - env:
           GH_TOKEN: ${{ secrets.PI_BUMP_TOKEN || github.token }}
           BASE: ${{ github.event.repository.default_branch }}
-          PREVIOUS: ${{ steps.bump.outputs.previous }}
-          VERSION: ${{ steps.bump.outputs.version }}
+          PREVIOUS: ${{ needs.bump.outputs.previous }}
+          VERSION: ${{ needs.bump.outputs.version }}
+          FAILED: ${{ needs.bump.outputs.failed }}
         run: |
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Unexpected Pi version: $VERSION" >&2
+            exit 1
+          fi
           branch="deps/pi-$VERSION"
           if [ -n "$(gh pr list --head "$branch" --state open --json number --jq '.[].number')" ]; then
             echo "A pull request for Pi $VERSION is already open."
             exit 0
           fi
-          added="$RUNNER_TEMP/models-added.txt"
+          git apply --index "$RUNNER_TEMP/pi-bump/update.patch"
+          if git diff --cached --no-renames --name-only | grep -Ev '(^|/)package\.json$|^pnpm-lock\.yaml$'; then
+            echo "The update changed files other than package manifests and the lockfile." >&2
+            exit 1
+          fi
           {
             echo "## Why"
             echo
@@ -73,21 +138,25 @@ jobs:
             echo "## What changed"
             echo
             echo "- \`@earendil-works/pi-ai\` and \`@earendil-works/pi-agent-core\` $PREVIOUS -> $VERSION, and the lockfile."
-            if [ -s "$added" ]; then
-              echo "- New catalog models:"
-              while read -r model; do echo "  - \`$model\`"; done < "$added"
-            else
-              echo "- No new catalog models."
-            fi
             echo
             echo "## How it was tested"
             echo
-            echo "The weekly workflow ran lint, typecheck, and the offline unit suite on this update before opening the pull request."
+            if [ -n "$FAILED" ]; then
+              echo "The weekly workflow's \`$FAILED\` step failed on this update, so it needs work before it can merge. The end of that step's log:"
+              echo
+              echo "~~~~text"
+              cat "$RUNNER_TEMP/pi-bump/failure.log"
+              echo "~~~~"
+            else
+              echo "The weekly workflow ran lint, typecheck, and the offline unit suite on this update before opening the pull request."
+            fi
           } > "$RUNNER_TEMP/body.md"
+          draft=()
+          if [ -n "$FAILED" ]; then draft=(--draft); fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$branch"
-          git commit -am "chore(deps): update Pi to $VERSION"
+          git -c core.hooksPath=/dev/null commit -m "chore(deps): update Pi to $VERSION"
           git push --force origin "$branch"
-          gh pr create --base "$BASE" --head "$branch" \
+          gh pr create "${draft[@]}" --base "$BASE" --head "$branch" \
             --title "chore(deps): update Pi to $VERSION" --body-file "$RUNNER_TEMP/body.md"

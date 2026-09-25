@@ -298,10 +298,12 @@ here), so a new family or a changed context window may need the next Pi update. 
 family is rejected when saved, and a run that cannot resolve its model fails instead of replying.
 
 The `pi model library update` workflow opens a pull request each week when Pi publishes a newer
-release. It only opens the pull request; merge it and redeploy to get the new catalog. With the
-default workflow token, the repository must allow GitHub Actions to create pull requests, and those
-pull requests do not start CI. Add a `PI_BUMP_TOKEN` repository secret with contents and
-pull-request write access to open them as that token instead and run CI.
+release. It only opens the pull request; merge it and redeploy to get the new catalog. If install,
+lint, typecheck, or the unit suite fails on the new release, the pull request opens as a draft with
+the failing step and the end of its log. With the default workflow token, the repository must allow
+GitHub Actions to create pull requests, and those pull requests do not start CI. Add a
+`PI_BUMP_TOKEN` repository secret with contents and pull-request write access to open them as that
+token instead and run CI.
 
 Do not commit `.env`. Never put `COMPOSIO_API_KEY`, OpenRouter keys, or provider tokens in git, logs, or chat.
 

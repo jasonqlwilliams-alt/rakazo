@@ -1,12 +1,9 @@
 #!/usr/bin/env node
 // Moves Rakazo's Pi packages to their newest shared release. Used by the weekly
 // .github/workflows/pi-bump.yml pull request; safe to run by hand.
-//
-//   node scripts/pi-bump.mjs          bump every workspace manifest, print step outputs
-//   node scripts/pi-bump.mjs models   print the Pi catalog as provider/model lines
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 /** Pi releases these together; a mismatched pair does not install cleanly. */
 export const PI_PACKAGES = ["@earendil-works/pi-ai", "@earendil-works/pi-agent-core"];
@@ -122,25 +119,8 @@ export async function bumpPi({ root, fetchImpl = fetch }) {
   };
 }
 
-/** Every model the installed Pi catalog lists, as sorted `provider/model` lines. */
-async function catalogModelLines(root) {
-  const entry = path.join(
-    root,
-    "packages/adapters/node_modules/@earendil-works/pi-ai/dist/providers/all.js",
-  );
-  const { builtinModels } = await import(pathToFileURL(entry).href);
-  return builtinModels()
-    .getModels()
-    .map((model) => `${model.provider}/${model.id}`)
-    .sort();
-}
-
 async function main() {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-  if (process.argv[2] === "models") {
-    process.stdout.write(`${(await catalogModelLines(root)).join("\n")}\n`);
-    return;
-  }
   const result = await bumpPi({ root });
   // stdout is key=value lines for $GITHUB_OUTPUT; the summary goes to stderr.
   process.stdout.write(
