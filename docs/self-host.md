@@ -153,7 +153,7 @@ inside Compose. Official Postgres images set user, password, and database only o
 init, so an existing `pgdata` volume keeps its original identity: keep those values in `.env`, or
 change them in place with `ALTER ROLE` / rename. Recreate the volume only after a backup (or when
 the data is disposable); `docker compose down -v` deletes all Postgres state. For host-side clients
-(`pnpm db:migrate`, GUI tools),
+such as GUI tools,
 add `infra/compose/docker-compose.postgres-host.yml` so Postgres is published on loopback
 `127.0.0.1:5433`, or use
 `docker compose --env-file .env -f infra/compose/docker-compose.yml exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'`.

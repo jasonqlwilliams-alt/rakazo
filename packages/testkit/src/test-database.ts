@@ -3,7 +3,7 @@ import { assertTestDatabaseUrl, prepareTestDatabase } from "@rakazo/db/database-
 /**
  * Vitest global setup. Postgres-gated tests (VERIFY_DATABASE) write freely, so before any test
  * file loads, both database URLs must name a disposable test database. The main one is created
- * when missing and migrated.
+ * when missing and migrated when migrations are pending.
  */
 export async function prepareTestDatabases(env: NodeJS.ProcessEnv): Promise<void> {
   if (!env.VERIFY_DATABASE) return;
