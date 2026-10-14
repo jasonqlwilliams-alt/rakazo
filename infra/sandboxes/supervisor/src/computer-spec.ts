@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
+import path from "node:path";
 import { MAX_DESKTOP_DISPLAY, screenPorts } from "@rakazo/core/node/desktop-runtime";
+import type Docker from "dockerode";
 
 export const COMPUTER_IMAGE = process.env.RAKAZO_COMPUTER_IMAGE ?? "rakazo/computer:local";
 export const COMPUTER_UID = 1000;
@@ -148,12 +150,152 @@ export function computerPortBindings(publishControlPort = false) {
   return { ExposedPorts, PortBindings };
 }
 
+/** A host folder or file mounted into a bot computer beside its home. */
+export interface ComputerBind {
+  source: string;
+  target: string;
+  readOnly: boolean;
+}
+
+/** One `SANDBOX_COMPUTER_BINDS` entry: a bind plus the home keys of the computers that get it. */
+export interface ComputerBindRule extends ComputerBind {
+  homeKeys: string[];
+}
+
+/** Every bind source is a path Compose mounted on the supervisor under this prefix. */
+export const COMPUTER_BIND_SOURCE_PREFIX = "/host/";
+/** Every bind target lives here, outside the home so the home store never sees host folders. */
+export const COMPUTER_BIND_TARGET_PREFIX = "/continuum/";
+
+function containedPath(value: string, prefix: string, what: string, entry: string): string {
+  const normalized = path.posix.normalize(value.trim()).replace(/\/+$/, "");
+  if (
+    !path.posix.isAbsolute(normalized) ||
+    !normalized.startsWith(prefix) ||
+    normalized.length === prefix.length
+  ) {
+    throw new Error(
+      `SANDBOX_COMPUTER_BINDS ${what} must be a path under ${prefix}, received "${entry}"`,
+    );
+  }
+  return normalized;
+}
+
+/**
+ * Parse `SANDBOX_COMPUTER_BINDS`: entries separated by `;` or newlines, each
+ * `<supervisor mount path>:<target under /continuum/>[:<ro|rw>]@<homeKey>[,<homeKey>...]`.
+ * The mode defaults to read-only. Targets may not repeat or nest within one computer,
+ * because a nested bind shadows part of the other.
+ */
+export function parseComputerBinds(value = process.env.SANDBOX_COMPUTER_BINDS): ComputerBindRule[] {
+  const rules: ComputerBindRule[] = [];
+  const targetsByHome = new Map<string, string[]>();
+  for (const raw of (value ?? "").split(/[;\n]/)) {
+    const entry = raw.trim();
+    if (!entry) continue;
+    const at = entry.lastIndexOf("@");
+    const parts = at < 0 ? [] : entry.slice(0, at).split(":");
+    if (parts.length < 2 || parts.length > 3) {
+      throw new Error(
+        `SANDBOX_COMPUTER_BINDS entries look like "<source>:<target>[:<ro|rw>]@<homeKey>[,...]", received "${entry}"`,
+      );
+    }
+    const [rawSource, rawTarget, rawMode = "ro"] = parts as [string, string, string?];
+    const source = containedPath(rawSource, COMPUTER_BIND_SOURCE_PREFIX, "source", entry);
+    const target = containedPath(rawTarget, COMPUTER_BIND_TARGET_PREFIX, "target", entry);
+    const mode = rawMode.trim();
+    if (mode !== "ro" && mode !== "rw") {
+      throw new Error(`SANDBOX_COMPUTER_BINDS mode must be "ro" or "rw", received "${entry}"`);
+    }
+    const homeKeys = entry
+      .slice(at + 1)
+      .split(",")
+      .map((key) => key.trim());
+    if (homeKeys.some((key) => !key)) {
+      throw new Error(`SANDBOX_COMPUTER_BINDS needs at least one home key, received "${entry}"`);
+    }
+    for (const homeKey of homeKeys) {
+      const targets = targetsByHome.get(homeKey) ?? [];
+      const clash = targets.find(
+        (other) =>
+          other === target || other.startsWith(`${target}/`) || target.startsWith(`${other}/`),
+      );
+      if (clash) {
+        throw new Error(
+          `SANDBOX_COMPUTER_BINDS target ${target} repeats or nests ${clash} for ${homeKey}`,
+        );
+      }
+      targets.push(target);
+      targetsByHome.set(homeKey, targets);
+    }
+    rules.push({ source, target, readOnly: mode === "ro", homeKeys });
+  }
+  return rules;
+}
+
+/**
+ * Translate each bind source into the path the Docker daemon binds. Inside Compose that
+ * is the supervisor's own mount of the source (the same translation hostHomePath
+ * applies to the data directory); a host-run supervisor shares the daemon's filesystem.
+ */
+export function resolveComputerBinds(
+  rules: ComputerBind[],
+  info: Docker.ContainerInspectInfo | undefined,
+): ComputerBind[] {
+  return rules.map(({ source, target, readOnly }) => {
+    if (!info) return { source, target, readOnly };
+    const mount = info.Mounts.filter(
+      (entry) =>
+        entry.Type === "bind" &&
+        (entry.Destination === source || source.startsWith(`${entry.Destination}/`)),
+    ).sort((a, b) => b.Destination.length - a.Destination.length)[0];
+    if (!mount?.Source) {
+      throw new Error(`computer bind source ${source} is not mounted on the supervisor`);
+    }
+    const daemonSource = dockerDesktopDaemonSource(mount.Source);
+    return {
+      source: path.posix.join(daemonSource, path.posix.relative(mount.Destination, source)),
+      target,
+      readOnly,
+    };
+  });
+}
+
+/** Docker Desktop sometimes records a Windows drive path as Mounts[].Source instead of
+ * `/run/desktop/mnt/host/<drive>/...`. The daemon rejects `C:\...` binds (too many colons). */
+export function dockerDesktopDaemonSource(source: string): string {
+  const match = source.match(/^([A-Za-z]):[\\/](.*)$/);
+  if (!match) return source.replaceAll("\\", "/");
+  const drive = match[1].toLowerCase();
+  const rest = match[2].replaceAll("\\", "/");
+  return `/run/desktop/mnt/host/${drive}/${rest}`;
+}
+
+function bindSpec(bind: ComputerBind) {
+  return `${bind.source}:${bind.target}:${bind.readOnly ? "ro" : "rw"}`;
+}
+
+/**
+ * Whether an existing computer carries exactly the configured binds. Docker keeps
+ * HostConfig.Binds verbatim from creation, so the home entry is set aside and the rest
+ * compared as a set: a changed bind list means the computer must be recreated.
+ */
+export function computerBindsMatch(
+  existing: string[] | null | undefined,
+  desired: ComputerBind[],
+): boolean {
+  const current = (existing ?? []).filter((bind) => bind.split(":")[1] !== "/home/rakazo").sort();
+  const wanted = desired.map(bindSpec).sort();
+  return current.length === wanted.length && current.every((bind, i) => bind === wanted[i]);
+}
+
 export interface ComputerCreateInput {
   name: string;
   image: string;
   botId: string;
   spaceId: string;
   homePath: string;
+  binds?: ComputerBind[];
   user?: string;
   controlToken?: string;
   networkMode?: string;
@@ -175,6 +317,7 @@ export type SandboxInput =
 
 export function containerCreateOptions(input: ComputerCreateInput) {
   const ports = computerPortBindings(input.publishControlPort);
+  const binds = (input.binds ?? []).map(bindSpec);
   return {
     Image: input.image,
     name: input.name,
@@ -195,7 +338,7 @@ export function containerCreateOptions(input: ComputerCreateInput) {
     },
     ExposedPorts: ports.ExposedPorts,
     HostConfig: {
-      Binds: [`${input.homePath}:/home/rakazo`],
+      Binds: [`${input.homePath}:/home/rakazo`, ...binds],
       PortBindings: ports.PortBindings,
       ShmSize: 256 * 1024 * 1024,
       CapDrop: ["ALL"],

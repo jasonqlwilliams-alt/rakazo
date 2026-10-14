@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readdir, stat } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,6 +23,7 @@ import {
   COMPUTER_IMAGE,
   COMPUTER_UID,
   COMPUTER_USER,
+  computerBindsMatch,
   computerNetworkNameFor,
   computerNetworkNamesForCleanup,
   computerResourceLimits,
@@ -31,7 +32,9 @@ import {
   controlPortPublicationMatches,
   hostComputerUser,
   legacyNetworkOwnedSolelyBy,
+  parseComputerBinds,
   publishedLoopbackControlHostPort,
+  resolveComputerBinds,
   resolveComputerControlEndpoint,
   resolveScreenNetworkMode,
   resolveScreenPublishTarget,
@@ -92,6 +95,7 @@ let supervisorInfo: Docker.ContainerInspectInfo | undefined;
 const supervisorToken = resolveSupervisorToken(process.env);
 const screenNetworkMode = resolveScreenNetworkMode(process.env.SANDBOX_SCREEN_NETWORK);
 const teamScreenLimit = resolveTeamScreenLimit();
+const computerBindRules = parseComputerBinds();
 // Host-run supervisors on Docker Desktop (macOS/Windows) cannot reach container
 // IPs, so computer control must use a published loopback port instead.
 const controlViaLoopback = process.env.SANDBOX_CONTROL_VIA_LOOPBACK === "true";
@@ -174,12 +178,22 @@ app.post("/computers", async (c) => {
       // user-controlled paths at runtime; Compose data-init handles legacy data.
       if (hostUid !== 0) await mkdir(serviceHomePath, { recursive: true });
       const homePath = hostHomePath(serviceHomePath, runtimeInfo);
+      const binds = await computerBindsFor(body.botId, runtimeInfo);
       const computerUser = runtimeInfo ? COMPUTER_USER : hostComputerUser(hostUid, hostGid);
       const existing = await findBotContainer(body.botId, body.spaceId);
       const retainedId = process.env.SANDBOX_RETAINED_COMPUTER_ID;
-      if (retainedId) {
+      const allowHomeKeys = new Set(
+        (process.env.SANDBOX_RETAINED_ALLOW_HOMEKEY ?? "")
+          .split(",")
+          .map((key) => key.trim())
+          .filter(Boolean),
+      );
+      if (retainedId && !allowHomeKeys.has(body.botId)) {
         // findBotContainer already enforces bot/space ownership. A failed pin must
         // never fall through to normal replacement, including for another bot.
+        // SANDBOX_RETAINED_ALLOW_HOMEKEY is a comma-separated homeKey allowlist
+        // (Thor + entity seats). Those homeKeys fall through to create.
+        // Every other homeKey stays pinned.
         const info = existing ? await existing.inspect() : undefined;
         const desired = await docker.getImage(COMPUTER_IMAGE).inspect();
         assertRetainedComputer(
@@ -203,7 +217,8 @@ app.post("/computers", async (c) => {
           info.Image === desired.Id &&
           (!networkMode || info.HostConfig.NetworkMode === networkMode) &&
           info.Config.User === computerUser &&
-          controlPublishOk
+          controlPublishOk &&
+          computerBindsMatch(info.HostConfig.Binds, binds)
         ) {
           if (!info.State.Running) await existing.start();
           return c.json({
@@ -241,6 +256,7 @@ app.post("/computers", async (c) => {
             botId: body.botId,
             spaceId: body.spaceId,
             homePath,
+            binds,
             user: computerUser,
             networkMode,
             controlToken: randomUUID(),
@@ -968,6 +984,27 @@ function assertBotHomePath(homePath: string, botId: string) {
   if (homePath !== expected) {
     throw new Error("computer home must be the bot's home directory");
   }
+}
+
+/**
+ * The configured binds for one computer, translated to daemon paths. Each source is
+ * probed on the supervisor first: Docker Desktop mounts a host path written in the
+ * wrong form as an empty directory instead of failing, so a missing or empty source is
+ * refused before a computer could boot with a hollow mount and "write" into scratch.
+ */
+async function computerBindsFor(
+  homeKey: string,
+  runtimeInfo: Docker.ContainerInspectInfo | undefined,
+) {
+  const rules = computerBindRules.filter((rule) => rule.homeKeys.includes(homeKey));
+  for (const rule of rules) {
+    const stats = await stat(rule.source).catch(() => undefined);
+    if (!stats) throw new Error(`computer bind source ${rule.source} is missing on the supervisor`);
+    if (stats.isDirectory() && (await readdir(rule.source)).length === 0) {
+      throw new Error(`computer bind source ${rule.source} is empty on the supervisor`);
+    }
+  }
+  return resolveComputerBinds(rules, runtimeInfo);
 }
 
 function hostHomePath(serviceHomePath: string, info: Docker.ContainerInspectInfo | undefined) {
