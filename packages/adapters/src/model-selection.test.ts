@@ -226,6 +226,15 @@ describe("connected model validation", () => {
     expect(savedModelChoiceError("xai", "  ")).toBe("Enter a model id");
     expect(savedModelChoiceError("openai-compatible", "anything-goes")).toBeUndefined();
   });
+
+  it("accepts Gemini 4 Argon for Google and still rejects unknown Gemini ids", () => {
+    expect(savedModelChoiceError("google", "gemini-4-argon")).toBeUndefined();
+    expect(savedModelChoiceError("google", "gemini-4-mystery")).toBe(
+      "Unknown model for that provider",
+    );
+    expect(savedModelChoiceError("google", "gemini-4")).toBe("Unknown model for that provider");
+    expect(savedModelChoiceError("xai", "gemini-4-argon")).toBe("Unknown model for that provider");
+  });
 });
 
 describe("the operator's local model list", () => {

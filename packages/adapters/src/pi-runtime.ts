@@ -38,6 +38,7 @@ import {
   openAiToolParametersNeedNormalization,
 } from "./openai-tool-parameters.js";
 import { PiRuntimeCredentialStore, toOAuthCredential } from "./pi-credentials.js";
+import { registerGoogleModels } from "./pi-google-models.js";
 import { registerLocalProvider } from "./pi-local-provider.js";
 import {
   OPENAI_COMPATIBLE_PROVIDER_ID,
@@ -59,7 +60,9 @@ const running = new Map<string, { controller: AbortController; work: Promise<voi
 // would run before .env is loaded and miss the local provider entirely.
 let catalogModelsCache: Models | undefined;
 function catalogModels(): Models {
-  catalogModelsCache ??= registerOpenAiCompatibleCatalog(registerLocalProvider(builtinModels()));
+  catalogModelsCache ??= registerOpenAiCompatibleCatalog(
+    registerLocalProvider(registerGoogleModels(builtinModels())),
+  );
   return catalogModelsCache;
 }
 const MAX_PARALLEL_SUBAGENTS = 4;
@@ -537,13 +540,15 @@ export function modelsForRequest(
     const persist = oauth.persist;
     return registerOpenAiCompatibleCatalog(
       registerLocalProvider(
-        builtinModels({
-          credentials: new PiRuntimeCredentialStore(
-            provider,
-            toOAuthCredential(oauth.credential),
-            persist ? (next) => persist(next) : undefined,
-          ),
-        }),
+        registerGoogleModels(
+          builtinModels({
+            credentials: new PiRuntimeCredentialStore(
+              provider,
+              toOAuthCredential(oauth.credential),
+              persist ? (next) => persist(next) : undefined,
+            ),
+          }),
+        ),
       ),
     );
   }
@@ -552,7 +557,9 @@ export function modelsForRequest(
     request.model.baseUrl &&
     request.model.id.trim()
   ) {
-    const models = registerOpenAiCompatibleCatalog(registerLocalProvider(builtinModels()));
+    const models = registerOpenAiCompatibleCatalog(
+      registerLocalProvider(registerGoogleModels(builtinModels())),
+    );
     return registerOpenAiCompatibleRuntime(models, {
       modelId: request.model.id,
       baseUrl: request.model.baseUrl,
