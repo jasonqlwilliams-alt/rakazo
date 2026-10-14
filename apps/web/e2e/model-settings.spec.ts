@@ -193,9 +193,7 @@ test("lists Gemini 4 Argon and accepts it without accepting an unknown Gemini fa
     "models/credentials",
     {},
   );
-  expect(credentials.find((entry) => entry.provider === "google")?.modelId).toBe(
-    "gemini-4-argon",
-  );
+  expect(credentials.find((entry) => entry.provider === "google")?.modelId).toBe("gemini-4-argon");
 });
 
 test("connects, lists, and uses an OpenAI-compatible endpoint", async ({ page }, testInfo) => {
