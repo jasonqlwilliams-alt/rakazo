@@ -28,7 +28,10 @@ async function sentThinking(modelId: string, reasoning?: "low" | "medium" | "hig
   });
   vi.stubGlobal("fetch", mockFetch);
   const models = registerGoogleModels(builtinModels());
-  const model = models.getModel("google", modelId) as Model<"google-generative-ai">;
+  const model = (resolveProviderModel(models, "google", modelId) ?? {
+    ...models.getModel("google", "gemini-2.5-flash"),
+    id: modelId,
+  }) as Model<"google-generative-ai">;
   const stream = models.streamSimple(
     model,
     { messages: [{ role: "user", content: "Hello.", timestamp: 1 }] },
@@ -76,6 +79,18 @@ describe("Google models newer than Pi's catalog", () => {
     const thinking = await sentThinking(GEMINI_4_ARGON_ID);
     expect(thinking).toMatchObject({ thinkingLevel: "LOW" });
     expect(thinking?.thinkingBudget).toBeUndefined();
+  });
+
+  it("sends levels for newer Argon versions", async () => {
+    const thinking = await sentThinking("gemini-4.1-argon", "high");
+    expect(thinking?.thinkingLevel).toBe("HIGH");
+    expect(thinking?.thinkingBudget).toBeUndefined();
+  });
+
+  it("leaves other Gemini 4 families on Pi's own thinking format", async () => {
+    const thinking = await sentThinking("gemini-4-pro", "high");
+    expect(thinking?.thinkingBudget).toEqual(expect.any(Number));
+    expect(thinking?.thinkingLevel).toBeUndefined();
   });
 
   it("leaves earlier Gemini models on Pi's own thinking format", async () => {
