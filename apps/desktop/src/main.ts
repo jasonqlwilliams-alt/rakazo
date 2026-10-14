@@ -1,6 +1,8 @@
 import { existsSync } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { desktopCookieHeader, imageMimeType, parsePickedFiles } from "./file-picker.js";
 import { browserWindowOptions } from "./window-options.js";
 
 const WEB_URL = process.env.RAKAZO_WEB_URL ?? "http://127.0.0.1:5173";
@@ -99,6 +101,81 @@ app.whenReady().then(() => {
       maximized: win?.isMaximized() ?? false,
       fullScreen: win?.isFullScreen() ?? false,
     };
+  });
+  ipcMain.handle("desktop.file.pick", async (event, input: unknown) => {
+    const botId =
+      input && typeof input === "object" && "botId" in input
+        ? String((input as { botId: unknown }).botId)
+        : "";
+    if (!botId) throw new Error("Choose an active bot before attaching photos");
+    const win = windowFrom(event);
+    const options = {
+      title: "Add photos to Rakazo",
+      properties: ["openFile", "multiSelections"] as Array<"openFile" | "multiSelections">,
+      filters: [
+        {
+          name: "Images",
+          extensions: [
+            "png",
+            "jpg",
+            "jpeg",
+            "gif",
+            "webp",
+            "bmp",
+            "tif",
+            "tiff",
+            "heic",
+            "heif",
+            "avif",
+          ],
+        },
+      ],
+    };
+    const selection = win
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options);
+    if (selection.canceled || selection.filePaths.length === 0) return [];
+    if (selection.filePaths.length > 12) throw new Error("Choose no more than 12 images at once");
+
+    const form = new FormData();
+    form.set("botId", botId);
+    let total = 0;
+    for (const filePath of selection.filePaths) {
+      const mimeType = imageMimeType(filePath);
+      if (!mimeType) throw new Error(`${path.basename(filePath)} is not a supported image`);
+      const info = await stat(filePath);
+      if (info.size > 25 * 1024 * 1024) {
+        throw new Error(`${path.basename(filePath)} is larger than 25 MB`);
+      }
+      total += info.size;
+      if (total > 100 * 1024 * 1024) {
+        throw new Error("The selected images are larger than 100 MB together");
+      }
+      form.append(
+        "files",
+        new Blob([new Uint8Array(await readFile(filePath))], { type: mimeType }),
+        path.basename(filePath),
+      );
+    }
+
+    const cookies = await event.sender.session.cookies.get({ url: WEB_URL });
+    const response = await fetch(new URL("/api/desktop-files", WEB_URL), {
+      method: "POST",
+      headers: {
+        cookie: desktopCookieHeader(cookies),
+        origin: new URL(WEB_URL).origin,
+      },
+      body: form,
+    });
+    const payload: unknown = await response.json().catch(() => null);
+    if (!response.ok) {
+      const message =
+        payload && typeof payload === "object" && "error" in payload
+          ? String((payload as { error: unknown }).error)
+          : "Could not attach photos";
+      throw new Error(message);
+    }
+    return parsePickedFiles(payload);
   });
   createWindow();
   app.on("activate", () => {

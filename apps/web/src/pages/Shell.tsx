@@ -3,6 +3,7 @@ import type {
   Bot,
   ComputerMode,
   ComputerStatus,
+  DesktopPickedFile,
   ProductEvent,
   Routine,
   ThreadMessage,
@@ -27,8 +28,15 @@ import {
   useState,
 } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import {
+  copyBrowserImages,
+  formatAttachmentSize,
+  mergePickedFiles,
+  messageWithPhotoPaths,
+} from "../lib/attachments";
 import { authClient } from "../lib/auth";
 import { botCreateInput, botSettingsPatch } from "../lib/bot-fields";
+import { desktopBridge } from "../lib/desktop";
 import { rpc } from "../lib/rpc";
 import {
   isComputerStatusEvent,
@@ -57,6 +65,9 @@ export function ShellPage() {
   const [query, setQuery] = useState("");
   const [snapshot, setSnapshot] = useState<ThreadSnapshot | null>(null);
   const [draft, setDraft] = useState("");
+  const [pickedPhotos, setPickedPhotos] = useState<DesktopPickedFile[]>([]);
+  const [attachingPhotos, setAttachingPhotos] = useState(false);
+  const [attachmentError, setAttachmentError] = useState("");
   const [panel, setPanel] = useState<Panel>(null);
   const [routines, setRoutines] = useState<Routine[]>([]);
   const [computer, setComputer] = useState<ComputerStatus | null>(null);
@@ -84,6 +95,7 @@ export function ShellPage() {
   const autoBooted = useRef<string | null>(null);
   const expandedHistoryThread = useRef<string | null>(null);
   const messageScroll = useRef<HTMLDivElement>(null);
+  const photoInput = useRef<HTMLInputElement>(null);
   const manuallyUnread = useRef(new Set<string>());
   const computerVisible = useRef(false);
   computerVisible.current = panel === "computer" || computerOpen;
@@ -299,11 +311,67 @@ export function ShellPage() {
   const answerableAskMessageId = latestAnswerableAskMessageId(snapshot);
 
   async function send() {
-    if (!active || !draft.trim()) return;
-    const text = draft;
+    if (!active) return;
+    const text = messageWithPhotoPaths(draft, pickedPhotos);
+    if (!text) return;
+    const pendingDraft = draft;
+    const pendingPhotos = pickedPhotos;
     setDraft("");
-    await rpc.threads.send({ botId: active.id, text });
-    await refreshThread(active.id);
+    setPickedPhotos([]);
+    setAttachmentError("");
+    try {
+      await rpc.threads.send({ botId: active.id, text });
+      await refreshThread(active.id);
+    } catch (error) {
+      if (activeBotId.current === active.id) {
+        setDraft(pendingDraft);
+        setPickedPhotos((current) => mergePickedFiles(pendingPhotos, current));
+        setAttachmentError(error instanceof Error ? error.message : "Could not send message");
+      }
+    }
+  }
+
+  async function choosePhotos() {
+    if (!active || attachingPhotos) return;
+    const nativePicker = desktopBridge()?.file?.pick;
+    if (!nativePicker) {
+      photoInput.current?.click();
+      return;
+    }
+    setAttachingPhotos(true);
+    setAttachmentError("");
+    const targetBotId = active.id;
+    try {
+      const files = await nativePicker({ botId: targetBotId });
+      if (activeBotId.current === targetBotId) {
+        setPickedPhotos((current) => mergePickedFiles(current, files));
+      }
+    } catch (error) {
+      if (activeBotId.current === targetBotId) {
+        setAttachmentError(error instanceof Error ? error.message : "Could not attach photos");
+      }
+    } finally {
+      if (activeBotId.current === targetBotId) setAttachingPhotos(false);
+    }
+  }
+
+  async function copySelectedBrowserPhotos(files: File[]) {
+    if (!active || files.length === 0 || attachingPhotos) return;
+    setAttachingPhotos(true);
+    setAttachmentError("");
+    const targetBotId = active.id;
+    try {
+      const copied = await copyBrowserImages(targetBotId, files);
+      if (activeBotId.current === targetBotId) {
+        setPickedPhotos((current) => mergePickedFiles(current, copied));
+      }
+    } catch (error) {
+      if (activeBotId.current === targetBotId) {
+        setAttachmentError(error instanceof Error ? error.message : "Could not attach photos");
+      }
+    } finally {
+      if (activeBotId.current === targetBotId) setAttachingPhotos(false);
+    }
   }
 
   async function createBot(input: {
@@ -357,6 +425,9 @@ export function ShellPage() {
 
   useEffect(() => {
     setComputerOpen(false);
+    setPickedPhotos([]);
+    setAttachmentError("");
+    setAttachingPhotos(false);
   }, [active?.id]);
 
   useEffect(() => {
@@ -656,45 +727,100 @@ export function ShellPage() {
           ) : null}
         </div>
         <div className="px-6 pb-6 pt-3">
-          <div className="flex items-center gap-3.5 rounded-full border border-[#202023] bg-[#131315] py-[9px] pr-2.5 pl-3">
-            <span className="grid h-[34px] w-[34px] shrink-0 place-items-center rounded-full border border-[#26262A] text-[18px] text-[#9A9AA0]">
-              +
-            </span>
-            <input
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  void send();
-                }
-              }}
-              placeholder={active ? `Message ${active.name}` : "Message…"}
-              className="flex-1 bg-transparent text-[15.5px] text-[#E9E9EA] outline-none"
-            />
-            {snapshot?.run && isActive(snapshot.run.status) ? (
+          <input
+            ref={photoInput}
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            onChange={(event) => {
+              const files = Array.from(event.currentTarget.files ?? []);
+              event.currentTarget.value = "";
+              void copySelectedBrowserPhotos(files);
+            }}
+          />
+          <div className="rounded-[24px] border border-[#202023] bg-[#131315] px-3 py-[9px]">
+            {pickedPhotos.length > 0 ? (
+              <div className="mb-2 flex flex-wrap gap-2 px-1">
+                {pickedPhotos.map((file) => (
+                  <span
+                    key={file.path}
+                    className="flex max-w-full items-center gap-2 rounded-full border border-[#2B2B30] bg-[#1A1A1D] px-3 py-1.5 text-[12.5px] text-[#D5D5D8]"
+                    title={file.path}
+                  >
+                    <span className="max-w-[240px] truncate">{file.name}</span>
+                    <span className="shrink-0 text-[#77777E]">
+                      {formatAttachmentSize(file.size)}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label={`Remove ${file.name}`}
+                      onClick={() =>
+                        setPickedPhotos((current) =>
+                          current.filter((candidate) => candidate.path !== file.path),
+                        )
+                      }
+                      className="-mr-1 text-[#85858A] hover:text-[#E9E9EA]"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            <div className="flex items-center gap-3.5">
               <button
                 type="button"
-                aria-label="Stop"
-                onClick={() =>
-                  active &&
-                  void rpc.threads.stop({ botId: active.id }).then(() => refreshThread(active.id))
-                }
-                className="grid h-9 w-9 place-items-center rounded-full bg-[#F1F1EF] text-[#17171A]"
+                aria-label="Add photos"
+                title="Add photos to this bot's inbox"
+                disabled={!active || attachingPhotos}
+                onClick={() => void choosePhotos()}
+                className="grid h-[34px] w-[34px] shrink-0 place-items-center rounded-full border border-[#26262A] text-[18px] text-[#9A9AA0] hover:border-[#3A3A40] hover:text-[#E9E9EA] disabled:cursor-not-allowed disabled:opacity-50"
               >
-                ■
+                {attachingPhotos ? "…" : "+"}
               </button>
-            ) : (
-              <button
-                type="button"
-                aria-label="Send"
-                onClick={() => void send()}
-                className="grid h-9 w-9 place-items-center rounded-full bg-[#F1F1EF] text-[#17171A]"
-              >
-                ↑
-              </button>
-            )}
+              <input
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    void send();
+                  }
+                }}
+                placeholder={active ? `Message ${active.name}` : "Message…"}
+                className="flex-1 bg-transparent text-[15.5px] text-[#E9E9EA] outline-none"
+              />
+              {snapshot?.run && isActive(snapshot.run.status) ? (
+                <button
+                  type="button"
+                  aria-label="Stop"
+                  onClick={() =>
+                    active &&
+                    void rpc.threads.stop({ botId: active.id }).then(() => refreshThread(active.id))
+                  }
+                  className="grid h-9 w-9 place-items-center rounded-full bg-[#F1F1EF] text-[#17171A]"
+                >
+                  ■
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  aria-label="Send"
+                  disabled={attachingPhotos || (!draft.trim() && pickedPhotos.length === 0)}
+                  onClick={() => void send()}
+                  className="grid h-9 w-9 place-items-center rounded-full bg-[#F1F1EF] text-[#17171A] disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  ↑
+                </button>
+              )}
+            </div>
           </div>
+          {attachmentError ? (
+            <p role="alert" className="mt-2 px-3 text-[12.5px] text-[#E77B72]">
+              {attachmentError}
+            </p>
+          ) : null}
         </div>
       </main>
 

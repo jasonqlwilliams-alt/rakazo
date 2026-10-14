@@ -22,6 +22,7 @@ export * from "./expo-push.js";
 export * from "./fake-sandbox.js";
 export * from "./home.js";
 export * from "./host-aware-sandbox.js";
+export * from "./inbox-files.js";
 export * from "./job-reconciler.js";
 export * from "./mcp-emulator.js";
 export * from "./peer-message.js";
