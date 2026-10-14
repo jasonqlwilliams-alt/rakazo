@@ -208,7 +208,12 @@ export default defineConfig(({ mode }) => {
     preview: {
       host: "0.0.0.0",
       port: Number(process.env.WEB_PORT ?? 5173),
-      allowedHosts: [previewHost],
+      allowedHosts: [
+        previewHost,
+        "localhost",
+        "127.0.0.1",
+        // private tailnet host withheld from the public fork; supply it from local configuration
+      ],
       proxy: {
         "/api": { target: api, changeOrigin: true },
         "/rpc": { target: api, changeOrigin: true },

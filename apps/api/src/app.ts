@@ -298,6 +298,7 @@ export async function createApp(
       "http://127.0.0.1:8081",
       "http://localhost:19006",
       "http://127.0.0.1:19006",
+      // private tailnet host withheld from the public fork; supply it from local configuration
     ],
     beforeDeleteUser: async (userId) => {
       const bots = await prisma.bot.findMany({

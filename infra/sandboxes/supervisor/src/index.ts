@@ -43,6 +43,7 @@ import {
   xdotoolCommand,
 } from "./computer-spec.js";
 import { assertComputerHomeWritable } from "./home-ownership.js";
+import { assertRetainedComputer } from "./retained-computer.js";
 import {
   assertRequestIdentity,
   attemptComputerControl,
@@ -160,7 +161,8 @@ app.post("/computers", async (c) => {
       spaceId: body.spaceId,
     });
     return await withBotLifecycleLock(body.botId, async () => {
-      await ensureComputerImage();
+      // Retained mode must fail if its image is missing, never rebuild a computer image.
+      if (!process.env.SANDBOX_RETAINED_COMPUTER_ID) await ensureComputerImage();
       const runtimeInfo = await inspectSupervisorContainer();
       const networkMode = computerNetworkName(body.botId, runtimeInfo);
       const serviceHomePath = path.resolve(body.homePath);
@@ -174,6 +176,22 @@ app.post("/computers", async (c) => {
       const homePath = hostHomePath(serviceHomePath, runtimeInfo);
       const computerUser = runtimeInfo ? COMPUTER_USER : hostComputerUser(hostUid, hostGid);
       const existing = await findBotContainer(body.botId, body.spaceId);
+      const retainedId = process.env.SANDBOX_RETAINED_COMPUTER_ID;
+      if (retainedId) {
+        // findBotContainer already enforces bot/space ownership. A failed pin must
+        // never fall through to normal replacement, including for another bot.
+        const info = existing ? await existing.inspect() : undefined;
+        const desired = await docker.getImage(COMPUTER_IMAGE).inspect();
+        assertRetainedComputer(
+          info,
+          retainedId,
+          desired.Id,
+          homePath,
+          Object.keys(runtimeInfo?.NetworkSettings.Networks ?? {}),
+        );
+        if (!info.State.Running) await existing!.start();
+        return c.json({ id: info.Id, image: COMPUTER_IMAGE, resumed: true });
+      }
       if (existing) {
         const info = await existing.inspect();
         const desired = await docker.getImage(COMPUTER_IMAGE).inspect();
@@ -744,7 +762,14 @@ app.delete("/computers/:id", async (c) => {
   try {
     if (!botId) throw new Error("missing computer identity");
     return await withBotLifecycleLock(botId, async () => {
-      const { container } = await managedContainer(id, botId, c.req.header("x-rakazo-space-id"));
+      const { container, info } = await managedContainer(
+        id,
+        botId,
+        c.req.header("x-rakazo-space-id"),
+      );
+      if (process.env.SANDBOX_RETAINED_COMPUTER_ID === info.Id) {
+        return c.json({ error: "Pinned computer deletion is disabled" }, 409);
+      }
       await withComputerScreenLock(id, async () => {
         await container.remove({ force: true }).catch(() => undefined);
         clearComputerScreenRegistry(computerScreens, id);
