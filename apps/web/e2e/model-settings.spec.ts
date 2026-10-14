@@ -160,6 +160,44 @@ test("saves a model id newer than the catalog and offers it to bots", async ({
   await expect(settings.getByRole("combobox", { name: "Thinking", exact: true })).toBeVisible();
 });
 
+test("lists Gemini 4 Argon and accepts it without accepting an unknown Gemini family", async ({
+  page,
+}, testInfo) => {
+  const stamp = Date.now();
+  await signup(page, `gemini-4-${stamp}@rakazo.test`, "password12", `Gemini ${stamp}`);
+  await completeOnboarding(page);
+  await openUserSettings(page, "models");
+  await page.getByPlaceholder("Search providers").fill("google");
+  await page.getByRole("button", { name: /^Google/ }).click();
+
+  const model = page.getByRole("combobox", { name: "Model", exact: true });
+  await model.click();
+  await page.getByRole("combobox", { name: "Search models" }).fill("Gemini 4 Argon");
+  await expect(page.getByRole("option", { name: "Gemini 4 Argon" })).toBeVisible();
+  await captureScreenshot(page, testInfo, "gemini-4-argon-picker");
+  await page.getByRole("option", { name: "Gemini 4 Argon" }).click();
+  await expect(model).toHaveText("Gemini 4 Argon");
+
+  await page.getByRole("button", { name: "Other model id" }).click();
+  const modelId = page.getByLabel("Model id");
+  await modelId.fill("gemini-4-mystery");
+  await page.getByLabel("API key").fill("fake-google-key-for-e2e");
+  await page.getByRole("button", { name: "Connect API key" }).click();
+  await expect(page.getByText("Unknown model for that provider")).toBeVisible();
+
+  await modelId.fill("gemini-4-argon");
+  await page.getByRole("button", { name: "Connect API key" }).click();
+  await expect(page.getByText("Connected and using gemini-4-argon.")).toBeVisible();
+  const credentials = await rpc<Array<{ provider: string; modelId?: string }>>(
+    page,
+    "models/credentials",
+    {},
+  );
+  expect(credentials.find((entry) => entry.provider === "google")?.modelId).toBe(
+    "gemini-4-argon",
+  );
+});
+
 test("connects, lists, and uses an OpenAI-compatible endpoint", async ({ page }, testInfo) => {
   const server = createServer((request, response) => {
     if (request.method === "GET" && request.url === "/v1/models") {
