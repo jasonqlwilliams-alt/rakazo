@@ -1,7 +1,16 @@
 import * as z from "zod";
+import { AGENT_SECRET_NAME_PATTERN } from "./agent-secret-name.js";
+import { BotAvatarValueSchema } from "./bot-avatar.js";
+import { DisabledBuiltinToolsSchema } from "./builtin-tools.js";
+import {
+  CLOUDFLARE_AI_GATEWAY_CONFIG_MESSAGE,
+  cloudflareGatewayRoutingId,
+  isCloudflareAiGatewayProvider,
+} from "./cloudflare-ai-gateway.js";
 import { ThreadMessageSchema } from "./events.js";
 import { Id, MemoryScope, RunStatus, SandboxKind } from "./ids.js";
 import { McpHeadersSchema, McpRemoteEndpointSchema, McpTransportSchema } from "./mcp.js";
+import { RunTriggerSchema } from "./runs.js";
 
 export const ComputerModeSchema = z.enum(["team", "dedicated"]);
 export type ComputerMode = z.infer<typeof ComputerModeSchema>;
@@ -42,7 +51,7 @@ export const ThinkingLevelSchema = z.enum([
 ]);
 export type ThinkingLevel = z.infer<typeof ThinkingLevelSchema>;
 
-export const AGENT_SECRET_NAME_PATTERN = /^[A-Z_][A-Z0-9_]{0,63}$/;
+export { AGENT_SECRET_NAME_PATTERN };
 
 export const AgentSecretSchema = z.object({
   id: Id,
@@ -76,6 +85,7 @@ export const BotSchema = z.object({
   threadId: Id,
   preview: z.string(),
   status: z.string(),
+  runErrorId: Id.nullable().default(null),
   computerMode: ComputerModeSchema,
   updatedAt: z.string(),
   createdAt: z.string(),
@@ -86,6 +96,7 @@ export const BotSchema = z.object({
   thinkingLevel: ThinkingLevelSchema.nullable(),
   teamChatAmbientEnabled: z.boolean(),
   teamChatRules: z.string(),
+  disabledBuiltinTools: z.array(z.string()).default([]),
   webhookConfigured: z.boolean(),
   /** Present when created with an idempotency key (e.g. onboarding:first). */
   spawnKey: z.string().nullable(),
@@ -107,6 +118,16 @@ export const GroupMemberSchema = z.object({
   status: z.string().optional(),
 });
 export type GroupMember = z.infer<typeof GroupMemberSchema>;
+
+/** Selected-text excerpt carried by a reply; capped so a quote stays a quote. */
+export const REPLY_QUOTE_MAX_LENGTH = 2_000;
+
+/** Cap an excerpt at the quote limit without splitting a surrogate pair. */
+export function truncateReplyQuote(value: string): string {
+  const truncated = value.slice(0, REPLY_QUOTE_MAX_LENGTH);
+  const last = truncated.charCodeAt(truncated.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? truncated.slice(0, -1) : truncated;
+}
 
 export const GROUP_MEMBER_MIN = 2;
 export const GROUP_MEMBER_MAX = 6;
@@ -177,8 +198,10 @@ export const SpaceBotSchema = BotSchema.pick({
   pinned: true,
   sectionId: true,
   unread: true,
+  parentBotId: true,
   preview: true,
   status: true,
+  runErrorId: true,
   updatedAt: true,
 });
 export type SpaceBot = z.infer<typeof SpaceBotSchema>;
@@ -268,6 +291,8 @@ export const SpaceSchema = z.object({
   isDefault: z.boolean(),
   /** True when the space has any bot or group, including archived. */
   hasContent: z.boolean(),
+  /** True only when the current member owns the space and may rename it. */
+  canRename: z.boolean().optional(),
   /** True only when the current member may delete this non-default space. */
   canDelete: z.boolean().optional(),
   bots: z.array(SpaceBotSchema),
@@ -302,7 +327,7 @@ export const CreateBotInput = z
     description: z.string().max(BOT_DESCRIPTION_MAX_LENGTH).default(""),
     instructions: z.string().max(BOT_INSTRUCTIONS_MAX_LENGTH).default(""),
     notifyOnFinish: z.boolean().default(true),
-    color: z.string().optional(),
+    color: BotAvatarValueSchema.optional(),
     computerMode: ComputerModeSchema.default("team"),
     /** Idempotency key within a space (unique with spaceId). */
     spawnKey: z.string().trim().min(1).max(120).optional(),
@@ -332,7 +357,7 @@ export const UpdateBotInput = z
     description: z.string().trim().max(BOT_DESCRIPTION_MAX_LENGTH).optional(),
     instructions: z.string().trim().max(BOT_INSTRUCTIONS_MAX_LENGTH).optional(),
     notifyOnFinish: z.boolean().optional(),
-    color: z.string().optional(),
+    color: BotAvatarValueSchema.optional(),
     pinned: z.boolean().optional(),
     memoryScope: MemoryScopeSchema.nullable().optional(),
     sectionId: Id.nullable().optional(),
@@ -343,6 +368,7 @@ export const UpdateBotInput = z
     thinkingLevel: ThinkingLevelSchema.nullable().optional(),
     teamChatAmbientEnabled: z.boolean().optional(),
     teamChatRules: z.string().max(TEAM_CHAT_RULES_MAX_LENGTH).optional(),
+    disabledBuiltinTools: DisabledBuiltinToolsSchema.optional(),
   })
   .superRefine((value, ctx) => {
     if (!botFieldsAreSeparate(value)) {
@@ -383,6 +409,37 @@ export const UnattendedToolName = z
   .regex(/^[a-z][a-z0-9._-]*$/i);
 export const UnattendedTools = z.array(UnattendedToolName).max(100);
 
+/**
+ * A routine's model is optional, but provider and id only mean something together,
+ * and a thinking level belongs to a model this routine actually names.
+ */
+export function routineModelIssues(
+  value: {
+    modelProvider?: string | null;
+    modelId?: string | null;
+    thinkingLevel?: string | null;
+  },
+  ctx: { addIssue: (issue: { code: "custom"; message: string; path: string[] }) => void },
+) {
+  const providerProvided = value.modelProvider !== undefined && value.modelProvider !== null;
+  const modelProvided = value.modelId !== undefined && value.modelId !== null;
+  if (providerProvided !== modelProvided) {
+    ctx.addIssue({
+      code: "custom",
+      message: "Model provider and model id must both be set or both cleared",
+      path: ["modelId"],
+    });
+    return;
+  }
+  if (value.thinkingLevel && !providerProvided) {
+    ctx.addIssue({
+      code: "custom",
+      message: "Pick a model for this routine first",
+      path: ["thinkingLevel"],
+    });
+  }
+}
+
 export const RoutineSchema = z.object({
   id: Id,
   botId: Id,
@@ -401,6 +458,10 @@ export const RoutineSchema = z.object({
     .regex(/^[a-z0-9._-]+$/i)
     .nullable(),
   unattendedTools: UnattendedTools,
+  /** Null runs this routine on its bot's model. */
+  modelProvider: z.string().nullable(),
+  modelId: z.string().nullable(),
+  thinkingLevel: ThinkingLevelSchema.nullable(),
   lastRunAt: z.string().nullable(),
   nextRunAt: z.string().nullable(),
   createdAt: z.string(),
@@ -426,8 +487,12 @@ export const CreateRoutineInput = z
       .nullable()
       .default(null),
     unattendedTools: UnattendedTools.default([]),
+    modelProvider: z.string().trim().min(1).max(80).nullable().default(null),
+    modelId: z.string().trim().min(1).max(200).nullable().default(null),
+    thinkingLevel: ThinkingLevelSchema.nullable().default(null),
   })
   .superRefine((value, ctx) => {
+    routineModelIssues(value, ctx);
     if (
       value.crons.length === 0 &&
       !value.webhookEnabled &&
@@ -487,6 +552,7 @@ export const TeachRecordingEventSchema = z.object({
   key: z.string().optional(),
   text: z.string().optional(),
   summary: z.string().optional(),
+  sensitive: z.boolean().optional(),
 });
 export type TeachRecordingEvent = z.infer<typeof TeachRecordingEventSchema>;
 
@@ -747,10 +813,23 @@ export const ArtifactSchema = z.object({
   groupId: Id.nullable(),
   runId: Id.nullable(),
   name: z.string(),
+  description: z.string().nullable(),
   mimeType: z.string(),
   size: z.number().int(),
+  version: z.number().int(),
   createdAt: z.string(),
 });
+
+export type Artifact = z.infer<typeof ArtifactSchema>;
+
+export const ArtifactVersionSchema = z.object({
+  id: Id,
+  version: z.number().int(),
+  name: z.string(),
+  createdAt: z.string(),
+});
+
+export type ArtifactVersion = z.infer<typeof ArtifactVersionSchema>;
 
 export const ArtifactWithContentSchema = ArtifactSchema.extend({
   contentBase64: z.string(),
@@ -763,8 +842,22 @@ export const UsageRecordSchema = z.object({
   runId: Id.nullable(),
   provider: z.string(),
   model: z.string(),
-  inputTokens: z.number().int(),
-  outputTokens: z.number().int(),
+  inputTokens: z.number().int().nullable(),
+  outputTokens: z.number().int().nullable(),
+  cacheReadTokens: z.number().int().nullable().optional(),
+  cacheWriteTokens: z.number().int().nullable().optional(),
+  cacheWrite1hTokens: z.number().int().nullable().optional(),
+  reasoningTokens: z.number().int().nullable().optional(),
+  totalTokens: z.number().int().nullable().optional(),
+  costUsd: z.number().nonnegative().nullable().optional(),
+  costSource: z.string().nullable().optional(),
+  pricingVersion: z.string().nullable().optional(),
+  usageSource: z.string().nullable().optional(),
+  callId: z.string().nullable().optional(),
+  operationId: z.string().nullable().optional(),
+  operationKind: z.enum(["answer", "setup", "retrieval", "subagent", "compaction"]).optional(),
+  parentRunId: z.string().nullable().optional(),
+  agentId: z.string().nullable().optional(),
   createdAt: z.string(),
 });
 
@@ -801,6 +894,7 @@ export const ComputerStatusSchema = z.object({
   homeRevision: z.string().nullable(),
   busyBotName: z.string().nullable(),
   canUpdate: z.boolean(),
+  terminalAvailable: z.boolean(),
 });
 export type ComputerStatus = z.infer<typeof ComputerStatusSchema>;
 
@@ -856,21 +950,7 @@ export const RunSchema = z.object({
   threadId: Id,
   taskId: Id,
   status: RunStatus,
-  trigger: z.enum([
-    "user",
-    "routine",
-    "resume",
-    "follow_up",
-    "reaction",
-    "spawn",
-    "peer",
-    "skill",
-    "bot_message",
-    "webhook",
-    "messaging",
-    "cloud_agent",
-    "research",
-  ]),
+  trigger: RunTriggerSchema,
   routineId: Id.nullable(),
   modelProvider: z.string().nullable(),
   modelId: z.string().nullable(),
@@ -885,6 +965,7 @@ export const ThreadMessagePageSchema = z.object({
   threadId: Id,
   messages: z.array(ThreadMessageSchema),
   olderCursor: z.number().int().nonnegative().nullable(),
+  coveredThroughSeq: z.number().int().nonnegative().optional(),
 });
 export type ThreadMessagePage = z.infer<typeof ThreadMessagePageSchema>;
 
@@ -913,7 +994,7 @@ export const MAX_MODEL_MAX_TOKENS = 131_072;
 export const DEFAULT_MODEL_CONTEXT_WINDOW = 32_768;
 
 /** Largest context window exposed by model settings. */
-export const MAX_MODEL_CONTEXT_WINDOW = 1_048_576;
+export const MAX_MODEL_CONTEXT_WINDOW = 2_147_483_647;
 /** Parse the optional per-connection image limit entered in model settings. */
 export function parseModelMaxImagesPerPrompt(
   value: string,
@@ -940,23 +1021,88 @@ export function parseModelContextWindow(value: string): number | undefined {
     : undefined;
 }
 
+/**
+ * JS null/undefined stringifies to the literals "null" / "undefined". Those
+ * are not catalog ids; treat them (and blank values) as unset.
+ */
+export function usableModelId(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "null" || trimmed === "undefined") return null;
+  return trimmed;
+}
+
+/** Connection-declared capabilities; omission means unknown, not a provider default. */
+export const CacheCapabilitiesSchema = z.object({
+  retentionMs: z.number().int().positive().max(2147483647).optional(),
+  minimumTokens: z.number().int().nonnegative().max(2147483647).optional(),
+  scope: z.enum(["account", "connection"]),
+  retentionMode: z.enum(["none", "short", "long"]).optional(),
+  inputCostPerMillion: z.number().nonnegative().optional(),
+  readCostPerMillion: z.number().nonnegative().optional(),
+  writeCostPerMillion: z.number().nonnegative().optional(),
+});
+export type CacheCapabilities = z.infer<typeof CacheCapabilitiesSchema>;
+
+export const ModelContextLimitsSchema = z.object({
+  cacheCapabilities: CacheCapabilitiesSchema.optional(),
+  contextWindow: z.number().int().min(1).max(MAX_MODEL_CONTEXT_WINDOW).optional(),
+});
+export type ModelContextLimits = z.infer<typeof ModelContextLimitsSchema>;
+
+/** A completion limit must leave capacity for at least one input token. */
+export function modelOutputLeavesInputRoom(
+  maxTokens: number | null | undefined,
+  contextWindow: number | undefined,
+): boolean {
+  return typeof maxTokens !== "number" || contextWindow === undefined || maxTokens < contextWindow;
+}
+
 export const ModelCredentialSchema = z.object({
+  ...ModelContextLimitsSchema.shape,
   id: Id,
   provider: z.string(),
   label: z.string(),
   hasKey: z.boolean(),
   isDefault: z.boolean(),
   baseUrl: z.string().optional(),
+  accountId: z.string().optional(),
+  gatewayId: z.string().optional(),
   modelId: z.string().optional(),
   reasoning: z.boolean().optional(),
   thinkingLevel: ThinkingLevelSchema.nullable().optional(),
   maxTokens: z.number().int().min(1).max(MAX_MODEL_MAX_TOKENS).optional(),
-  contextWindow: z.number().int().min(1).max(MAX_MODEL_CONTEXT_WINDOW).optional(),
   supportsImages: z.boolean().optional(),
   maxImagesPerPrompt: z.number().int().min(1).max(1000).optional(),
   thinkingLevels: z.array(ThinkingLevelSchema).optional(),
+  /** Stored secret kind. Absent when the secret could not be read. */
+  authKind: z.enum(["api_key", "oauth", "openai_compatible"]).optional(),
 });
 export type ModelCredential = z.infer<typeof ModelCredentialSchema>;
+
+export const MAX_MODEL_BACKUPS = 10;
+export const ModelBackupChoiceSchema = z.object({
+  provider: z.string().trim().min(1).max(128),
+  modelId: z.string().trim().min(1).max(512),
+});
+export type ModelBackupChoice = z.infer<typeof ModelBackupChoiceSchema>;
+export const ModelBackupListSchema = z
+  .array(ModelBackupChoiceSchema)
+  .max(MAX_MODEL_BACKUPS)
+  .superRefine((choices, ctx) => {
+    const seen = new Set<string>();
+    for (const [index, choice] of choices.entries()) {
+      const key = JSON.stringify([choice.provider, choice.modelId]);
+      if (seen.has(key)) {
+        ctx.addIssue({
+          code: "custom",
+          message: "Backup models must be unique",
+          path: [index],
+        });
+      }
+      seen.add(key);
+    }
+  });
 
 export const OPENAI_COMPATIBLE_PROVIDER_ID = "openai-compatible";
 
@@ -965,29 +1111,43 @@ export const LOCAL_PROVIDER_ID = "local";
 
 export const ModelConnectInputSchema = z
   .object({
+    ...ModelContextLimitsSchema.shape,
     provider: z.string(),
     apiKey: z.string().optional(),
+    accountId: z.string().optional(),
+    gatewayId: z.string().optional(),
     baseUrl: z.string().optional(),
     label: z.string().optional(),
     modelId: z.string().optional(),
     reasoning: z.boolean().optional(),
     thinkingLevel: ThinkingLevelSchema.nullable().optional(),
-    maxTokens: z.number().int().min(1).max(MAX_MODEL_MAX_TOKENS).optional(),
-    contextWindow: z.number().int().min(1).max(MAX_MODEL_CONTEXT_WINDOW).optional(),
+    maxTokens: z.number().int().min(1).max(MAX_MODEL_MAX_TOKENS).nullable().optional(),
     supportsImages: z.boolean().optional(),
     maxImagesPerPrompt: z.number().int().min(1).max(1000).nullable().optional(),
   })
   .superRefine((value, ctx) => {
-    if (
-      value.maxTokens !== undefined &&
-      value.contextWindow !== undefined &&
-      value.maxTokens > value.contextWindow
-    ) {
+    if (!modelOutputLeavesInputRoom(value.maxTokens, value.contextWindow)) {
       ctx.addIssue({
         code: "custom",
-        message: "Maximum output tokens cannot exceed the context limit",
+        message: "Maximum output tokens must leave room for input",
         path: ["maxTokens"],
       });
+    }
+    if (isCloudflareAiGatewayProvider(value.provider)) {
+      if (value.accountId !== undefined && !cloudflareGatewayRoutingId(value.accountId)) {
+        ctx.addIssue({
+          code: "custom",
+          message: CLOUDFLARE_AI_GATEWAY_CONFIG_MESSAGE,
+          path: ["accountId"],
+        });
+      }
+      if (value.gatewayId !== undefined && !cloudflareGatewayRoutingId(value.gatewayId)) {
+        ctx.addIssue({
+          code: "custom",
+          message: CLOUDFLARE_AI_GATEWAY_CONFIG_MESSAGE,
+          path: ["gatewayId"],
+        });
+      }
     }
     if (value.provider === OPENAI_COMPATIBLE_PROVIDER_ID) {
       if (!value.baseUrl?.trim()) {
@@ -1006,7 +1166,16 @@ export const ModelConnectInputSchema = z
       }
       return;
     }
-    if (!value.apiKey || value.apiKey.trim().length < 8) {
+    const apiKey = value.apiKey?.trim() ?? "";
+    if (apiKey.length > 0 && apiKey.length < 8) {
+      ctx.addIssue({
+        code: "custom",
+        message: "API key must contain at least 8 characters",
+        path: ["apiKey"],
+      });
+    }
+    // An existing connection can update its output limit without a new key.
+    if (!apiKey && value.maxTokens === undefined) {
       ctx.addIssue({
         code: "custom",
         message: "API key must contain at least 8 characters",
@@ -1061,6 +1230,8 @@ export const ModelCatalogEntrySchema = z.object({
   thinkingLevels: z.array(ThinkingLevelSchema).optional(),
   /** Catalog stand-in so a provider appears before the user enters a real model id. */
   placeholder: z.boolean().optional(),
+  /** Models share one pinned HTTPS models-list URL that can be probed. */
+  catalogProbe: z.boolean().optional(),
 });
 export type ModelCatalogEntry = z.infer<typeof ModelCatalogEntrySchema>;
 
@@ -1085,6 +1256,8 @@ export const VoiceCredentialSchema = z.object({
   hasKey: z.boolean(),
   isDefault: z.boolean(),
   voiceId: z.string(),
+  /** Fish speech-model override. Empty uses the deployment default. */
+  speechModel: z.string(),
   transcribe: z.boolean(),
 });
 export type VoiceCredential = z.infer<typeof VoiceCredentialSchema>;
@@ -1211,6 +1384,7 @@ export const ServerUpdateRequestSchema = z.object({
 export type ServerUpdateRequest = z.infer<typeof ServerUpdateRequestSchema>;
 
 export const MeSchema = z.object({
+  ticketBoardEnabled: z.boolean(),
   userId: Id,
   email: z.string().email(),
   name: z.string(),
@@ -1219,12 +1393,41 @@ export const MeSchema = z.object({
   needsModel: z.boolean(),
   defaultProvider: z.string().nullable(),
   defaultModel: z.string().nullable(),
+  /** Provider the active default runs on with the server's own credentials, without a key. */
+  hostCredentialProvider: z.string().nullable(),
+  /** Kind of those credentials, e.g. "AWS IAM"; set with hostCredentialProvider. */
+  hostCredentialSource: z.string().nullable(),
   computerHost: z.enum(["docker", "this-mac"]).nullable(),
   canChooseHostComputer: z.boolean(),
   sandboxProvider: z.string(),
   avatarStyle: AvatarStyleSchema,
+  /** True when this deployment bills and the user is not the deployment owner. */
+  billingEnabled: z.boolean(),
 });
 export type Me = z.infer<typeof MeSchema>;
+
+export const BillingStatusSchema = z.object({
+  access: z.boolean(),
+  /** Only organization owners start checkout or open the billing portal. */
+  canManage: z.boolean(),
+  trialAvailable: z.boolean(),
+  trialDays: z.number().int().nonnegative(),
+  state: z.enum(["none", "trialing", "active", "past_due", "incomplete", "canceled"]),
+  price: z
+    .object({
+      amount: z.number().int().nonnegative(),
+      currency: z.string(),
+      interval: z.enum(["day", "week", "month", "year"]),
+      intervalCount: z.number().int().positive(),
+    })
+    .nullable(),
+  seats: z.number().int().nonnegative(),
+  trialEndsAt: z.string().nullable(),
+  currentPeriodEndsAt: z.string().nullable(),
+  cancelAtPeriodEnd: z.boolean(),
+  hasCustomer: z.boolean(),
+});
+export type BillingStatus = z.infer<typeof BillingStatusSchema>;
 
 export const AppBootstrapSchema = z.object({
   me: MeSchema,
@@ -1245,7 +1448,9 @@ export const ExportManifestSchema = z.object({
   bot: BotSchema.pick({ name: true, title: true, description: true, instructions: true }),
   memory: z.array(z.object({ path: z.string(), content: z.string() })),
   routines: z.array(RoutineSchema.pick({ name: true, prompt: true, crons: true, timezone: true })),
-  files: z.array(z.object({ path: z.string(), content: z.string() })),
+  files: z.array(
+    z.object({ path: z.string(), content: z.string(), encoding: z.literal("base64").optional() }),
+  ),
   history: z.array(ThreadMessageSchema),
 });
 export type ExportManifest = z.infer<typeof ExportManifestSchema>;

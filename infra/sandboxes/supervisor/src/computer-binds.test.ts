@@ -77,7 +77,7 @@ function existingComputer(binds: string[] | undefined, botId = "team-space") {
         Binds: binds && [`/srv/rakazo/data/homes/${botId}:/home/rakazo`, ...binds],
       },
       State: { Running: false },
-      NetworkSettings: {},
+      NetworkSettings: { Networks: { shared: {} } },
     }),
     start: vi.fn().mockResolvedValue(undefined),
     remove: vi.fn().mockResolvedValue(undefined),

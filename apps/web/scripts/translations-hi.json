@@ -1,4 +1,5 @@
 {
+  "Today": "आज",
   " (unread)": " (अपठित)",
   "macOS will not ask for extra permission if you let bots run on this Mac. They run as you.": "यदि आप बॉट्स को इस Mac पर चलने देते हैं तो macOS अतिरिक्त अनुमति नहीं मांगेगा। वे आपके रूप में ही चलते हैं।",
   "Your OS will not ask for extra permission if you let bots run on {hostLabel}. They run as you.": "यदि आप बॉट्स को {hostLabel} पर चलने देते हैं तो आपका OS अतिरिक्त अनुमति नहीं मांगेगा। वे आपके रूप में ही चलते हैं।",
@@ -587,5 +588,7 @@
   "Authorize this server so agents can use its tools. A popup opens.": "एजेंटों को इसके टूल का उपयोग करने देने के लिए इस सर्वर को ऑथराइज़ करें। एक पॉपअप खुलता है।",
   "Make sure nothing is still running on this computer.": "सुनिश्चित करें कि इस कंप्यूटर पर कुछ भी चल नहीं रहा है।",
   "Nothing is still running": "कुछ भी नहीं चल रहा",
-  "Credentials are encrypted and never sent to the model.": "क्रेडेंशियल एन्क्रिप्टेड होते हैं और मॉडल को कभी नहीं भेजे जाते।"
+  "Credentials are encrypted and never sent to the model.": "क्रेडेंशियल एन्क्रिप्टेड होते हैं और मॉडल को कभी नहीं भेजे जाते।",
+  "Rename section": "अनुभाग का नाम बदलें",
+  "Could not rename section": "अनुभाग का नाम नहीं बदला जा सका"
 }

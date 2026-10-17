@@ -1,5 +1,5 @@
 import type { SpaceBot, SpaceGroup } from "@rakazo/contracts";
-import { groupBotsForSidebar } from "@rakazo/core";
+import { groupBotsForSidebar, nestRosterByParent } from "@rakazo/core";
 import {
   adoptDeletedSpaceFallback,
   type MobileBot,
@@ -19,7 +19,12 @@ export type InboxSpace = Pick<
 };
 
 export type InboxSpaceItem =
-  | { type: "bot"; bot: MobileBot | SpaceBot }
+  | {
+      type: "bot";
+      bot: MobileBot | SpaceBot;
+      depth: number;
+      hasChildren: boolean;
+    }
   | { type: "group"; group: MobileGroup | SpaceGroup }
   | { type: "heading"; key: string; title: string; space?: InboxSpace };
 
@@ -29,11 +34,32 @@ export function canDeleteInboxSpace(
   return !space.isDefault && !space.hasContent && space.canDelete === true;
 }
 
-export function spaceInboxItems(spaces: InboxSpace[]): InboxSpaceItem[] {
+/** A brand-new space renders only its heading until it has a bot or group. */
+export function inboxNeedsCreateHint(items: readonly { type: string }[]): boolean {
+  return items.length > 0 && items.every((item) => item.type === "heading");
+}
+
+export function spaceInboxItems(
+  spaces: InboxSpace[],
+  collapsedParentIds: ReadonlySet<string> = new Set(),
+): InboxSpaceItem[] {
   return spaces.flatMap((space): InboxSpaceItem[] => {
     const chats = [
-      ...space.bots.map((chat) => ({ type: "bot" as const, bot: chat, ...chat })),
-      ...space.groups.map((chat) => ({ type: "group" as const, group: chat, ...chat })),
+      ...space.bots.map((chat) => ({
+        type: "bot" as const,
+        bot: chat,
+        id: chat.id,
+        parentBotId: chat.parentBotId,
+        pinned: chat.pinned,
+        sectionId: chat.sectionId,
+      })),
+      ...space.groups.map((chat) => ({
+        type: "group" as const,
+        group: chat,
+        id: chat.id,
+        pinned: chat.pinned,
+        sectionId: chat.sectionId,
+      })),
     ];
     const items: InboxSpaceItem[] = [];
     if (spaces.length > 1 || !space.isDefault || chats.length === 0) {
@@ -43,7 +69,18 @@ export function spaceInboxItems(spaces: InboxSpace[]): InboxSpaceItem[] {
       if (group.title) {
         items.push({ type: "heading", key: `${space.id}:${group.key}`, title: group.title });
       }
-      items.push(...group.bots);
+      for (const row of nestRosterByParent(group.bots, collapsedParentIds)) {
+        if (row.item.type === "bot") {
+          items.push({
+            type: "bot",
+            bot: row.item.bot,
+            depth: row.depth,
+            hasChildren: row.hasChildren,
+          });
+        } else {
+          items.push({ type: "group", group: row.item.group });
+        }
+      }
     }
     return items;
   });

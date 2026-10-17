@@ -2,14 +2,38 @@
 
 [![GitHub stars](https://img.shields.io/github/stars/elie222/rakazo?labelColor=black&style=for-the-badge&color=2563EB)](https://github.com/elie222/rakazo/stargazers)
 [![Discord](https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?labelColor=black&style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/RWwKa2Sn7h)
+[![Download on the App Store](https://img.shields.io/badge/App%20Store-Download%20for%20iPhone-black?labelColor=black&style=for-the-badge&logo=apple&logoColor=white)](https://apps.apple.com/app/rakazo/id6801531099)
+[![Download the Android APK](https://img.shields.io/badge/Android-Download%20APK-black?labelColor=black&style=for-the-badge&logo=android&logoColor=white)](https://github.com/elie222/rakazo/releases/download/android/rakazo.apk)
 
 ![Rakazo — AI teammates you actually own](./docs/readme-hero.png)
 
-Rakazo is an open-source platform for running persistent AI teammates. It is available on the web,
-as an Electron desktop app, and through an Expo mobile app. Bring your own model and computer
-provider, or run the complete stack locally.
+Rakazo is an open source AI agent for persistent teammates, and a self-hosted AI assistant you
+can run on your own machine. It is available on the web, as an Electron desktop app, and on
+[iPhone](https://apps.apple.com/app/rakazo/id6801531099) and [Android](https://github.com/elie222/rakazo/releases/download/android/rakazo.apk). Bring your own model
+and computer provider, or run the complete stack locally.
+
+It is an open source, self-hosted alternative to Grok Bot, Meta Muse, OpenAI Dots, Instinct,
+OpenClaw, Hermes Agent, and Hark Pro.
 
 Rakazo is in beta. Learn more at [rakazo.com](https://rakazo.com).
+
+## How Rakazo compares
+
+Once Rakazo is running, it is just chat, like Grok Bot: you set up a bot and manage it from that
+chat. Muse, Dots, Instinct, and Hark Pro are hosted assistants. OpenClaw
+and Hermes Agent are also open source agents you can run yourself. Their docs describe installers,
+config files, and a gateway. Hermes Desktop can reach a first chat without the CLI; a messaging
+gateway is a separate process.
+
+- [Grok Bot](https://rakazo.com/grok-bot-alternative/)
+- [Muse](https://rakazo.com/muse-alternative/)
+- [Dots](https://rakazo.com/dots-alternative/)
+- [Instinct](https://rakazo.com/instinct-alternative/), the personal assistant you text or call
+- [OpenClaw](https://rakazo.com/openclaw-alternative/)
+- [Hermes Agent](https://rakazo.com/hermes-alternative/), Nous Research's open source agent
+- [Hark Pro](https://rakazo.com/hark-alternative/), the personal agent at hark.com
+- [All comparisons](https://rakazo.com/alternatives/)
+- [Self-hosting guide](https://rakazo.com/self-hosted-ai-agent/)
 
 ## Features
 
@@ -20,7 +44,7 @@ Rakazo is in beta. Learn more at [rakazo.com](https://rakazo.com).
 - Bots that can delegate to peer bots or short-lived subagents
 - Bring-your-own model credentials through Pi
 - App integrations through Composio or Pipedream Connect, plus user-installed Treg, remote MCP, and OpenAPI tool sources
-- Docker, E2B, Daytona, Box, and trusted local-computer support
+- Docker, E2B, Daytona, CreateOS, Box, and trusted local-computer support
 
 ## Demo
 
@@ -36,7 +60,7 @@ https://github.com/user-attachments/assets/dccdeddb-2134-4a56-8eed-b2e591736b1c
 - Better Auth
 - Graphile Worker
 - Pi
-- Docker, E2B, Daytona, and Box
+- Docker, E2B, Daytona, CreateOS, and Box
 - Composio, Pipedream Connect, MCP, and OpenAPI integrations
 
 ## Quick start (published images)
@@ -53,7 +77,7 @@ The installer downloads the Compose files, creates `.env` with random secrets, a
 It preserves an existing `.env` when rerun.
 
 Open [http://127.0.0.1:5173](http://127.0.0.1:5173), create an account, and connect a model.
-Local Docker computers are on by default. Optional remote providers: `e2b`, `daytona`, or `box`
+Local Docker computers are on by default. Optional remote providers: `e2b`, `daytona`, `createos`, or `box`
 with the matching API key.
 
 Default image tag is `edge` (main builds, `linux/amd64` + `linux/arm64`). Details and tags:
@@ -73,7 +97,7 @@ the desktop app, the mobile app, or a browser.
 
 ```bash
 bash install-images.sh --prepare-only
-# edit .env: SANDBOX_PROVIDER=box (or e2b / daytona) with its API key, RAKAZO_HOST=your.domain
+# edit .env: SANDBOX_PROVIDER=box (or e2b / daytona / createos) with its API key, RAKAZO_HOST=your.domain
 bash install-images.sh
 ```
 
@@ -97,6 +121,10 @@ put the same value in it. Set `BETTER_AUTH_SECRET`, `ENCRYPTION_KEY`, and `SCREE
 independent long random values. Docker sandboxes also need a dedicated
 `SANDBOX_SUPERVISOR_TOKEN`. You can also set `OPENROUTER_API_KEY`, or connect a supported
 model provider during onboarding.
+
+For host-side development with Docker Desktop, set `SANDBOX_CONTROL_VIA_LOOPBACK=true`
+in `.env`. The supervisor discovers Docker Desktop's user socket automatically;
+`DOCKER_HOST` or `DOCKER_SOCKET` can override it for another Docker runtime.
 
 Managed app catalogs are optional. Set `COMPOSIO_API_KEY` for Composio, or the
 `PIPEDREAM_CLIENT_ID`, `PIPEDREAM_CLIENT_SECRET`, and `PIPEDREAM_PROJECT_ID` trio for Pipedream
@@ -122,6 +150,7 @@ pnpm dev
 
 Postgres stays network-internal in the default Compose file (same as published images). The
 `postgres-host` overlay publishes loopback `127.0.0.1:5433` for host-side `pnpm` and DB tools.
+If that port is occupied, change `POSTGRES_HOST_PORT` and the port in `DATABASE_URL` in `.env`.
 Without the overlay, open a shell with
 `docker compose --env-file .env -f infra/compose/docker-compose.yml exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'`.
 Use a URI-safe `POSTGRES_PASSWORD` (`openssl rand -hex 16`). An existing `pgdata` volume keeps the
@@ -134,6 +163,11 @@ your first bot.
 
 For deployment, provider selection, backups, and upgrades, see the
 [self-hosting guide](./docs/self-host.md).
+
+To use CreateOS, set `SANDBOX_PROVIDER=createos` and `CREATEOS_SANDBOX_API_KEY`.
+Optional `CREATEOS_SANDBOX_BASE_URL`, `CREATEOS_SANDBOX_SHAPE`, and
+`CREATEOS_SANDBOX_ROOTFS` default to `https://api.sb.createos.sh`, `s-2vcpu-2gb`,
+and `desktop:1`.
 
 ## Desktop and mobile
 
@@ -167,7 +201,9 @@ Mobile build and release instructions live in [docs/mobile-release.md](./docs/mo
 
 The web (and Electron-hosted) UI supports English, Deutsch, 한국어, Türkçe, हिन्दी,
 Português (Brasil), 简体中文, Español, and Русский under **Settings → Language**. The Expo
-app supports English, 简体中文, and Русский under **Account → Language**. The marketing
+app ships English, 简体中文, Русский, and Deutsch catalogs; **Account → Language** offers
+English and 简体中文, and the other catalogs follow the device language or
+`EXPO_PUBLIC_DEFAULT_UI_LOCALE`. The marketing
 homepage (`apps/www`) is available in en/de/ko/zh via footer language links (`/`, `/de/`,
 `/ko/`, `/zh/`); other marketing pages stay English. The Russian marketing homepage and
 native Electron setup/menu remain separate follow-up work.

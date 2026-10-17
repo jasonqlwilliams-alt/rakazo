@@ -1,11 +1,33 @@
 import * as fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { assertTransition, canTransition } from "./run-state.js";
+import {
+  assertTransition,
+  canTransition,
+  isBackgroundRunTrigger,
+  isConversationalRun,
+} from "./run-state.js";
 
 describe("run state machine", () => {
   it("allows takeover resume onto a lease", () => {
     expect(canTransition("waiting_takeover", "leased")).toBe(true);
     expect(canTransition("waiting_takeover", "running")).toBe(false);
+  });
+
+  it("withholds user steering from routine, webhook, and creation intro turns", () => {
+    expect(isConversationalRun("user")).toBe(true);
+    expect(isConversationalRun("follow_up")).toBe(true);
+    expect(isConversationalRun("messaging")).toBe(true);
+    expect(isConversationalRun("routine")).toBe(false);
+    expect(isConversationalRun("webhook")).toBe(false);
+    expect(isConversationalRun("created")).toBe(false);
+    expect(isConversationalRun("tickets")).toBe(false);
+  });
+
+  it("marks ticket runs as background work that stays out of the chat", () => {
+    expect(isBackgroundRunTrigger("tickets")).toBe(true);
+    expect(isBackgroundRunTrigger("user")).toBe(false);
+    expect(isBackgroundRunTrigger("routine")).toBe(false);
+    expect(isBackgroundRunTrigger(null)).toBe(false);
   });
 
   it("rejects rewriting a completed run", () => {

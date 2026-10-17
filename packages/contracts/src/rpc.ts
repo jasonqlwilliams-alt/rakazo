@@ -1,6 +1,27 @@
 import { eventIterator, oc } from "@orpc/contract";
 import * as z from "zod";
-import { ATTACHMENT_MAX_BASE64_LENGTH, ATTACHMENT_MAX_COUNT } from "./attachments.js";
+import { AiConsentQuerySchema, AiConsentStatusSchema } from "./ai-consent.js";
+import {
+  ARTIFACT_DESCRIPTION_MAX_LENGTH,
+  ARTIFACT_NAME_MAX_LENGTH,
+  ATTACHMENT_MAX_BASE64_LENGTH,
+  ATTACHMENT_MAX_COUNT,
+} from "./attachments.js";
+import {
+  BoardEventSchema,
+  BoardSchema,
+  CommentTicketInput,
+  CreateTicketInput,
+  GetTicketInput,
+  ListTicketsInput,
+  ListTicketsOutput,
+  MoveTicketInput,
+  RenameBoardInput,
+  TicketCommentSchema,
+  TicketSchema,
+  UpdateTicketInput,
+} from "./board.js";
+import { BotSecretMetadata, BotSecretPutInput, StoredBotSecretName } from "./bot-secrets.js";
 import {
   ActionApprovalRuleSchema,
   ActionAutoReviewSettingsSchema,
@@ -10,8 +31,10 @@ import {
   AgentSkillSchema,
   AppBootstrapSchema,
   ArtifactSchema,
+  ArtifactVersionSchema,
   ArtifactWithContentSchema,
   AvatarStyleSchema,
+  BillingStatusSchema,
   BotMcpServerSchema,
   BotSchema,
   BotSectionSchema,
@@ -42,10 +65,13 @@ import {
   MessagingChannelMembershipSchema,
   MessagingLinkedIdentitySchema,
   MessagingStatusSchema,
+  ModelBackupChoiceSchema,
+  ModelBackupListSchema,
   ModelCatalogEntrySchema,
   ModelConnectInputSchema,
   ModelCredentialSchema,
   ModelOAuthBeginSchema,
+  REPLY_QUOTE_MAX_LENGTH,
   ReorderBotsInput,
   RoutineSchema,
   ScratchpadItemSchema,
@@ -60,6 +86,7 @@ import {
   SpaceSchema,
   TaughtSkillSchema,
   TeachRecordingEventSchema,
+  ThinkingLevelSchema,
   ThreadMessagePageSchema,
   ThreadSnapshotSchema,
   UnattendedTools,
@@ -73,7 +100,7 @@ import {
   VoiceInfoSchema,
   VoiceStatusSchema,
 } from "./domain.js";
-import { DIRECT_MESSAGE_MAX_LENGTH, ProductEventSchema } from "./events.js";
+import { ComputerCommandSchema, DIRECT_MESSAGE_MAX_LENGTH, ProductEventSchema } from "./events.js";
 import { Id, IsoDate } from "./ids.js";
 import {
   IntegrationProviderConfigSchema,
@@ -81,7 +108,7 @@ import {
 } from "./integration-settings.js";
 import { MessageReactionSchema } from "./reactions.js";
 import { SpaceResearchSettingsSchema, SpaceResearchSettingsViewSchema } from "./research.js";
-import { RunsListOutputSchema } from "./runs.js";
+import { RoutineHistorySchema, RoutineRunCursorSchema, RunsListOutputSchema } from "./runs.js";
 import { SearchQueryOutputSchema } from "./search.js";
 
 const botId = z.object({ botId: Id });
@@ -121,6 +148,7 @@ const threadSendInput = threadTarget
       .max(64)
       .optional(),
     replyToMessageId: Id.optional(),
+    replyQuote: z.string().trim().min(1).max(REPLY_QUOTE_MAX_LENGTH).optional(),
     clientNonce: z.string().min(1).max(200).optional(),
   })
   .superRefine((input, ctx) => {
@@ -133,17 +161,47 @@ const threadSendInput = threadTarget
         path: ["text"],
       });
     }
+    if (input.replyQuote && !input.replyToMessageId) {
+      ctx.addIssue({
+        code: "custom",
+        message: "replyQuote requires replyToMessageId",
+        path: ["replyQuote"],
+      });
+    }
   });
 
+const spaceName = z.string().trim().min(1).max(60);
+
 export const appContract = {
+  aiConsent: {
+    status: oc.input(AiConsentQuerySchema).output(AiConsentStatusSchema),
+    allow: oc
+      .input(
+        z.object({
+          scope: z.string(),
+          version: z.string(),
+          keys: z.array(z.string()).min(1).max(200),
+        }),
+      )
+      .output(AiConsentStatusSchema),
+    revoke: oc.input(z.object({ key: z.string().nullable() })).output(AiConsentStatusSchema),
+  },
   health: oc.output(z.object({ ok: z.literal(true), version: z.string() })),
   me: oc.output(MeSchema),
+  billing: {
+    status: oc.output(BillingStatusSchema),
+    checkout: oc.output(z.object({ url: z.string().url() })),
+    portal: oc.output(z.object({ url: z.string().url() })),
+  },
   preferences: {
     update: oc.input(z.object({ avatarStyle: AvatarStyleSchema })).output(MeSchema),
   },
   spaces: {
     list: oc.output(SpaceNavigationSchema),
-    create: oc.input(z.object({ name: z.string().trim().min(1).max(60) })).output(SpaceSchema),
+    create: oc.input(z.object({ name: spaceName })).output(SpaceSchema),
+    rename: oc
+      .input(z.object({ spaceId: Id, name: spaceName }))
+      .output(z.object({ id: Id, name: z.string() })),
     remove: oc
       .input(z.object({ spaceId: Id }))
       .output(z.object({ ok: z.literal(true), activeSpaceId: Id })),
@@ -174,6 +232,8 @@ export const appContract = {
   models: {
     list: oc.output(z.array(ModelCatalogEntrySchema)),
     credentials: oc.output(z.array(ModelCredentialSchema)),
+    backups: oc.output(z.array(ModelBackupChoiceSchema)),
+    setBackups: oc.input(ModelBackupListSchema).output(z.object({ ok: z.literal(true) })),
     connect: oc.input(ModelConnectInputSchema).output(ModelCredentialSchema),
     probeOpenAiCompatible: oc
       .input(
@@ -183,12 +243,21 @@ export const appContract = {
         }),
       )
       .output(z.object({ models: z.array(z.string()) })),
+    probeCatalog: oc
+      .input(
+        z.object({
+          provider: z.string().trim().min(1),
+          apiKey: z.string().trim().min(8),
+        }),
+      )
+      .output(z.object({ models: z.array(z.string()) })),
     beginOAuth: oc
       .input(
         z.object({
           provider: z.string(),
           label: z.string().optional(),
           modelId: z.string().optional(),
+          thinkingLevel: ThinkingLevelSchema.nullable().optional(),
         }),
       )
       .output(ModelOAuthBeginSchema),
@@ -209,7 +278,16 @@ export const appContract = {
       .input(z.object({ loginId: z.string() }))
       .output(z.object({ ok: z.literal(true) })),
     setDefault: oc
-      .input(z.object({ provider: z.string(), modelId: z.string() }))
+      .input(
+        z.object({
+          provider: z.string(),
+          modelId: z.string(),
+          thinkingLevel: ThinkingLevelSchema.nullable().optional(),
+        }),
+      )
+      .output(z.object({ ok: z.literal(true) })),
+    disconnect: oc
+      .input(z.object({ provider: z.string().trim().min(1) }))
       .output(z.object({ ok: z.literal(true) })),
   },
   bots: {
@@ -249,6 +327,9 @@ export const appContract = {
     list: oc.output(z.array(BotSectionSchema)),
     create: oc
       .input(threadTarget.safeExtend({ name: z.string().trim().min(1).max(60) }))
+      .output(BotSectionSchema),
+    update: oc
+      .input(z.object({ sectionId: Id, name: z.string().trim().min(1).max(60) }))
       .output(BotSectionSchema),
   },
   threads: {
@@ -325,7 +406,26 @@ export const appContract = {
       .output(z.object({ ok: z.literal(true) })),
     stop: oc.input(threadTarget).output(z.object({ ok: z.literal(true) })),
     followUp: oc
-      .input(threadTarget.safeExtend({ text: z.string().min(1) }))
+      .input(
+        threadTarget.safeExtend({
+          text: z.string().min(1),
+          /** Carries the call id, so a turn taken mid-run stays in the call's card. */
+          clientNonce: z.string().min(1).max(200).optional(),
+        }),
+      )
+      .output(z.object({ ok: z.literal(true) })),
+    /** The client hung up: close the call card and let the bot finish what was asked on it. */
+    endCall: oc
+      // ":" separates the call id from the nonce suffix, so it can never appear inside one.
+      .input(
+        botId.safeExtend({
+          callId: z
+            .string()
+            .min(1)
+            .max(200)
+            .regex(/^[^:]+$/),
+        }),
+      )
       .output(z.object({ ok: z.literal(true) })),
     clear: oc.input(threadTarget).output(z.object({ ok: z.literal(true) })),
     answer: oc
@@ -334,6 +434,10 @@ export const appContract = {
           runId: Id,
           messageId: Id,
           answer: z.string().min(1),
+          /** Carries the call id for an answer spoken during a call. */
+          clientNonce: z.string().min(1).max(200).optional(),
+          /** Only for a login card; `answer` carries its password. */
+          username: z.string().min(1).max(512).optional(),
         }),
       )
       .output(z.object({ ok: z.literal(true) })),
@@ -378,6 +482,22 @@ export const appContract = {
     readFile: oc
       .input(z.object({ botId: Id, path: z.string() }))
       .output(z.object({ path: z.string(), content: z.string() })),
+    downloadFile: oc
+      .input(z.object({ botId: Id, path: z.string().min(1) }))
+      .output(z.object({ path: z.string(), contentBase64: z.string() })),
+    uploadFile: oc
+      .input(
+        z.object({
+          botId: Id,
+          path: z.string().min(1),
+          contentBase64: z.string().max(ATTACHMENT_MAX_BASE64_LENGTH),
+        }),
+      )
+      .output(z.object({ ok: z.literal(true) })),
+    terminalUrl: oc.input(botId).output(z.object({ url: z.string().nullable() })),
+    commands: oc
+      .input(botId)
+      .output(z.array(ComputerCommandSchema.extend({ createdAt: z.string() }))),
     screenUrl: oc.input(botId).output(z.object({ url: z.string().nullable() })),
     heartbeat: oc.input(botId).output(z.object({ ok: z.literal(true) })),
   },
@@ -412,6 +532,9 @@ export const appContract = {
   },
   routines: {
     list: oc.input(botId).output(z.array(RoutineSchema)),
+    history: oc
+      .input(z.object({ routineId: Id, before: RoutineRunCursorSchema.optional() }))
+      .output(RoutineHistorySchema),
     create: oc.input(CreateRoutineInput).output(RoutineSchema),
     update: oc
       .input(
@@ -434,6 +557,10 @@ export const appContract = {
               .nullable()
               .optional(),
             unattendedTools: UnattendedTools.optional(),
+            /** Null clears the routine's own model and runs it on the bot's. */
+            modelProvider: z.string().trim().min(1).max(80).nullable().optional(),
+            modelId: z.string().trim().min(1).max(200).nullable().optional(),
+            thinkingLevel: ThinkingLevelSchema.nullable().optional(),
             /** ISO datetime to arm a never-run one-shot. */
             runAt: IsoDate.optional(),
           })
@@ -486,6 +613,21 @@ export const appContract = {
       )
       .output(ScratchpadItemSchema),
     remove: oc.input(z.object({ itemId: Id })).output(z.object({ ok: z.literal(true) })),
+  },
+  boards: {
+    list: oc.output(z.array(BoardSchema)),
+    get: oc.output(BoardSchema),
+    rename: oc.input(RenameBoardInput).output(BoardSchema),
+    subscribe: oc.output(eventIterator(BoardEventSchema)),
+  },
+  tickets: {
+    list: oc.input(ListTicketsInput).output(ListTicketsOutput),
+    get: oc.input(GetTicketInput).output(TicketSchema),
+    create: oc.input(CreateTicketInput).output(TicketSchema),
+    update: oc.input(UpdateTicketInput).output(TicketSchema),
+    move: oc.input(MoveTicketInput).output(TicketSchema),
+    comment: oc.input(CommentTicketInput).output(TicketCommentSchema),
+    comments: oc.input(z.object({ ticketId: Id })).output(z.array(TicketCommentSchema)),
   },
   skills: {
     list: oc.input(botId).output(z.array(TaughtSkillSchema)),
@@ -582,7 +724,12 @@ export const appContract = {
     assignments: {
       list: oc.input(botId).output(z.array(BotMcpServerSchema)),
       all: oc.output(z.array(BotMcpServerSchema)),
-      approve: oc.input(z.object({ botId: Id, serverId: Id })).output(BotMcpServerSchema),
+      approve: oc
+        .input(z.object({ botId: Id, serverId: Id, threadId: Id.optional() }))
+        .output(BotMcpServerSchema),
+      dismiss: oc
+        .input(z.object({ botId: Id, serverId: Id, threadId: Id.optional() }))
+        .output(z.object({ ok: z.literal(true) })),
       replace: oc
         .input(
           z.object({
@@ -721,25 +868,47 @@ export const appContract = {
   },
   artifacts: {
     list: oc.input(botId).output(z.array(ArtifactSchema)),
+    listSpace: oc
+      .input(
+        z.object({
+          botId: Id.optional(),
+          cursor: z.string().optional(),
+          limit: z.number().int().min(1).max(60).optional(),
+        }),
+      )
+      .output(
+        z.object({
+          items: z.array(ArtifactSchema.extend({ versionCount: z.number().int() })),
+          nextCursor: z.string().nullable(),
+        }),
+      ),
+    listVersions: oc.input(z.object({ familyId: Id })).output(z.array(ArtifactVersionSchema)),
     create: oc
       .input(
         threadTarget.and(
           z.object({
-            name: z.string().min(1).max(255),
+            name: z.string().min(1).max(ARTIFACT_NAME_MAX_LENGTH),
+            description: z.string().max(ARTIFACT_DESCRIPTION_MAX_LENGTH).optional(),
             mimeType: z.string().min(1),
             contentBase64: z.string().min(1).max(ATTACHMENT_MAX_BASE64_LENGTH),
+            /** Unique per upload; a retry with the same nonce returns the artifact it created. */
+            clientNonce: z.string().min(1).max(200).optional(),
           }),
         ),
       )
       .output(ArtifactSchema),
     get: oc.input(threadTarget.and(z.object({ artifactId: Id }))).output(ArtifactWithContentSchema),
+    getById: oc.input(z.object({ artifactId: Id })).output(ArtifactWithContentSchema),
+    remove: oc.input(z.object({ artifactId: Id })).output(z.object({ ok: z.literal(true) })),
   },
   usage: {
     list: oc.output(z.array(UsageRecordSchema)),
     summary: oc.output(
       z.object({
-        inputTokens: z.number(),
-        outputTokens: z.number(),
+        inputTokens: z.number().nullable(),
+        outputTokens: z.number().nullable(),
+        totalTokens: z.number().nullable().optional(),
+        modelCalls: z.number().optional(),
         runs: z.number(),
       }),
     ),
@@ -749,12 +918,23 @@ export const appContract = {
   },
   notifications: {
     registerPush: oc
-      .input(z.object({ token: z.string().min(8).max(512) }))
+      // No whitespace: the token store keeps the registering session on the next line.
+      .input(z.object({ token: z.string().min(8).max(512).regex(/^\S+$/) }))
       .output(z.object({ ok: z.literal(true) })),
     unregisterPush: oc.output(z.object({ ok: z.literal(true) })),
   },
   search: {
     query: oc.input(z.object({ q: z.string().max(200) })).output(SearchQueryOutputSchema),
+  },
+  links: {
+    /**
+     * The site icon for a link's origin as a small data URL, resolved and cached by the server.
+     * `retry` means the server was too busy to look; the origin may still have an icon.
+     */
+    favicon: oc
+      // The longest origin: a scheme, a 253-character host name and a port.
+      .input(z.object({ origin: z.string().max("https://".length + 253 + ":65535".length) }))
+      .output(z.object({ icon: z.string().nullable(), retry: z.boolean().optional() })),
   },
   runs: {
     list: oc.input(z.object({ filter: z.enum(["active", "recent"]) })).output(RunsListOutputSchema),
@@ -769,12 +949,19 @@ export const appContract = {
           provider: z.string(),
           apiKey: z.string().min(8),
           voiceId: z.string().max(120).optional(),
+          speechModel: z.string().max(64).optional(),
         }),
       )
       .output(VoiceCredentialSchema),
+    disconnect: oc
+      .input(z.object({ provider: z.string().min(1) }))
+      .output(z.object({ ok: z.literal(true) })),
     setVoice: oc
       .input(z.object({ voiceId: z.string().min(1).max(120), provider: z.string().optional() }))
       .output(VoiceStatusSchema),
+    setSpeechModel: oc
+      .input(z.object({ provider: z.string().min(1), speechModel: z.string().max(64) }))
+      .output(VoiceCredentialSchema),
     voices: oc
       .input(z.object({ provider: z.string().optional() }))
       .output(z.array(VoiceInfoSchema)),
@@ -797,6 +984,13 @@ export const appContract = {
     list: oc.output(z.array(AgentSecretSchema)),
     put: oc.input(AgentSecretInputSchema).output(AgentSecretSchema),
     remove: oc.input(z.object({ id: Id })).output(z.object({ ok: z.literal(true) })),
+  },
+  botSecrets: {
+    list: oc.input(z.object({ botId: Id })).output(z.array(BotSecretMetadata)),
+    put: oc.input(BotSecretPutInput).output(BotSecretMetadata),
+    remove: oc
+      .input(z.object({ botId: Id, name: StoredBotSecretName }))
+      .output(z.object({ ok: z.literal(true) })),
   },
 };
 

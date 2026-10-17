@@ -7,7 +7,22 @@ datasource db {
   provider = "postgresql"
 }
 
+model AiDataConsent {
+  userId String
+  spaceId String
+  recipientKey String
+  version String
+  grantedAt DateTime @default(now())
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  space Space @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  spaceMember SpaceMember @relation(fields: [spaceId, userId], references: [spaceId, userId], onDelete: Cascade)
+
+  @@id([userId, spaceId, recipientKey])
+  @@map("ai_data_consents")
+}
+
 model User {
+  aiDataConsents AiDataConsent[]
   id                          String                       @id
   name                        String
   email                       String
@@ -30,6 +45,8 @@ model User {
   createdSpaces               Space[]                      @relation("SpaceCreator")
   botSecrets BotSecret[]
   agentSecrets               AgentSecret[]
+  createdTickets              Ticket[]                     @relation("TicketCreatorUser")
+  ticketComments              TicketComment[]              @relation("TicketCommentAuthorUser")
 
   @@unique([email])
   @@map("user")
@@ -84,6 +101,16 @@ model Verification {
   @@map("verification")
 }
 
+/// Better Auth credential rate limits. `lastRequest` is epoch milliseconds.
+model RateLimit {
+  id          String @id
+  key         String @unique
+  count       Int
+  lastRequest BigInt
+
+  @@map("rateLimit")
+}
+
 model Organization {
   id          String       @id
   name        String
@@ -94,9 +121,31 @@ model Organization {
   members     Member[]
   invitations Invitation[]
   spaces      Space[]
+  billing     BillingAccount?
 
   @@unique([slug])
   @@map("organization")
+}
+
+model BillingAccount {
+  organizationId      String       @id
+  organization        Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customerId          String       @unique
+  subscriptionId      String?
+  subscriptionItemId  String?
+  priceId             String?
+  status              String?
+  seats               Int?
+  trialEndsAt         DateTime?
+  currentPeriodEndsAt DateTime?
+  cancelAtPeriodEnd   Boolean      @default(false)
+  endedAt             DateTime?
+  subscribedAt        DateTime?
+  syncedAt            DateTime?
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  @@map("billing_accounts")
 }
 
 model ActionApprovalRule {
@@ -146,7 +195,8 @@ model Member {
 }
 
 model Space {
-  directThreads DirectThread[]
+  directThreads               DirectThread[]
+  aiDataConsents              AiDataConsent[]
   id                          String                       @id
   organizationId              String
   organization                Organization                 @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -192,6 +242,9 @@ model Space {
   botSecrets BotSecret[]
   externalConversations       ExternalConversation[]
   agentSecrets                AgentSecret[]
+  board                       Board?
+  tickets                     Ticket[]
+  ticketComments              TicketComment[]
 
   @@unique([id, organizationId])
   @@index([organizationId, createdAt])
@@ -210,6 +263,8 @@ model SpaceMember {
   createdAt        DateTime
   modelPreferences SpaceModelPreference[]
   voicePreferences SpaceVoicePreference[]
+  aiDataConsents AiDataConsent[]
+  backupModels SpaceBackupModel[]
 
   @@unique([spaceId, userId])
   @@index([organizationId, userId])
@@ -290,6 +345,7 @@ model SpaceModelPreference {
   credentialId String
   credential   UserModelCredential @relation(fields: [credentialId, userId], references: [id, userId], onDelete: Cascade)
   modelId      String?
+  thinkingLevel String?
   isDefault    Boolean             @default(false)
   createdAt    DateTime            @default(now())
   updatedAt    DateTime            @updatedAt
@@ -301,6 +357,19 @@ model SpaceModelPreference {
   @@map("space_model_preferences")
 }
 
+model SpaceBackupModel {
+  spaceId     String
+  userId      String
+  spaceMember SpaceMember @relation(fields: [spaceId, userId], references: [spaceId, userId], onDelete: Cascade)
+  provider    String
+  modelId     String
+  position    Int
+
+  @@id([spaceId, userId, position])
+  @@unique([spaceId, userId, provider, modelId])
+  @@map("space_backup_models")
+}
+
 model SpaceVoicePreference {
   id           String              @id @default(cuid())
   spaceId      String
@@ -309,6 +378,8 @@ model SpaceVoicePreference {
   credentialId String
   credential   UserVoiceCredential @relation(fields: [credentialId, userId], references: [id, userId], onDelete: Cascade)
   voiceId      String              @default("")
+  // Fish speech-model override. Null keeps the deployment default.
+  speechModel  String?
   isDefault    Boolean             @default(false)
   createdAt    DateTime            @default(now())
   updatedAt    DateTime            @updatedAt
@@ -355,6 +426,7 @@ model Bot {
   modelProvider     String?
   modelId           String?
   thinkingLevel     String?
+  disabledBuiltinTools String[] @default([])
   webhookSecretId   String?
   teamChatAmbientEnabled Boolean @default(false)
   teamChatRules          String  @default("")
@@ -371,6 +443,9 @@ model Bot {
   mcpServers        BotMcpServer[]
   groupMembers      ChatGroupMember[]
   botSecrets BotSecret[]
+  assignedTickets   Ticket[]          @relation("TicketAssigneeBot")
+  createdTickets    Ticket[]          @relation("TicketCreatorBot")
+  ticketComments    TicketComment[]   @relation("TicketCommentAuthorBot")
 
   externalConversations ExternalConversation[]
 
@@ -484,6 +559,7 @@ model Message {
   blocks           Json
   botId            String?
   replyToMessageId String?
+  replyQuote       String?
   replyTo          Message?  @relation("MessageReplies", fields: [replyToMessageId], references: [id], onDelete: SetNull)
   replies          Message[] @relation("MessageReplies")
   runId            String?
@@ -594,6 +670,10 @@ model Run {
   trigger              String
   modelProvider        String?
   modelId              String?
+  thinkingLevel        String?
+  // True when these columns are the model the run must keep. A later attempt
+  // may record the model it used in the same columns without setting this.
+  modelPinned          Boolean          @default(false)
   error                String?
   leaseOwner           String?
   leaseFence           Int              @default(0)
@@ -643,6 +723,12 @@ model SteeringMessage {
   userId    String
   runId     String?
   run       Run?     @relation(fields: [runId], references: [id], onDelete: SetNull)
+  /// Set when a pending row must resume as this trigger so its reply can be delivered.
+  originTrigger String?
+  /// Model agreed for an inbound delivery that had to wait. Empty follows the bot.
+  modelProvider String?
+  modelId       String?
+  thinkingLevel String?
   claimedAt DateTime?
   createdAt DateTime @default(now())
 
@@ -781,7 +867,10 @@ model Routine {
   messageProvider String?
   /// Known builtin tool names this webhook routine may run without owner approval. Empty keeps the default.
   unattendedTools String[] @default([])
-  lastRunAt      DateTime?
+  modelProvider   String?
+  modelId         String?
+  thinkingLevel   String?
+  lastRunAt       DateTime?
   nextRunAt      DateTime?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
@@ -1034,21 +1123,33 @@ model Artifact {
   userId     String
   runId      String?
   name       String
+  description String?
   mimeType   String
   size       Int
   hash       String
   storageKey String
   createdAt  DateTime   @default(now())
 
+  // Null on the first version; that row's id is the family's stable id.
+  rootArtifactId String?
+  rootArtifact   Artifact?  @relation("ArtifactVersions", fields: [rootArtifactId], references: [id], onDelete: Cascade)
+  versions       Artifact[] @relation("ArtifactVersions")
+  version        Int        @default(1)
+  // Client-chosen per upload so a retried upload that already landed returns this row.
+  clientNonce    String?
+
+  @@unique([spaceId, userId, clientNonce])
   @@index([spaceId, botId])
   @@index([groupId])
+  @@index([rootArtifactId])
+  // artifacts_family_version_key is raw SQL: Prisma cannot express COALESCE indexes.
   @@map("artifacts")
 }
 
 model UsageRecord {
-  id           String   @id @default(cuid())
-  spaceId      String
-  space        Space    @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  id               String   @id @default(cuid())
+  spaceId          String
+  space            Space    @relation(fields: [spaceId], references: [id], onDelete: Cascade)
   /// Which bot spent this. Deliberately NOT a relation: a usage row is spend that really
   /// happened, and no lifecycle event on the bot may delete it or blank its attribution.
   /// `Cascade` erased the row; `SetNull` would erase the attribution instead, and because
@@ -1057,15 +1158,31 @@ model UsageRecord {
   ///
   /// So the id outlives the bot and may dangle. Read it with a LEFT JOIN; `BotDeletion.id`
   /// IS the bot id, so a deleted bot's name is still reachable for display.
-  botId        String?
-  userId       String
-  runId        String?
-  run          Run?     @relation(fields: [runId], references: [id], onDelete: SetNull)
-  provider     String
-  model        String
-  inputTokens  Int
-  outputTokens Int
-  createdAt    DateTime @default(now())
+  botId            String?
+  userId           String
+  runId            String?
+  run              Run?     @relation(fields: [runId], references: [id], onDelete: SetNull)
+  provider         String
+  model            String
+  /// Uncached input; cache buckets are additional, reasoning is a subset of output.
+  inputTokens       Int?
+  outputTokens      Int?
+  cacheReadTokens   Int?
+  cacheWriteTokens  Int?
+  cacheWrite1hTokens Int?
+  reasoningTokens   Int?
+  totalTokens       Int?
+  costUsd           Float?
+  costSource        String?
+  pricingVersion    String?
+  usageSource       String?
+  callId            String? @unique
+  operationId       String?
+  operationKind     String  @default("answer")
+  /// Durable attribution, deliberately without lifecycle foreign keys.
+  parentRunId       String?
+  agentId           String?
+  createdAt         DateTime @default(now())
 
   @@index([spaceId, userId, createdAt])
   @@map("usage_records")
@@ -1399,4 +1516,64 @@ model IntegrationProviderConfig {
   updatedAt  DateTime @updatedAt
 
   @@map("integration_provider_configs")
+}
+
+model Board {
+  id           String   @id @default(cuid())
+  spaceId      String   @unique
+  space        Space    @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  name         String   @default("Board")
+  ticketPrefix String   @default("RAK")
+  nextNumber   Int      @default(1)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  tickets      Ticket[]
+
+  @@map("boards")
+}
+
+model Ticket {
+  id              String    @id @default(cuid())
+  boardId         String
+  board           Board     @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  spaceId         String
+  space           Space     @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  number          Int
+  title           String
+  description     String?
+  status          String    @default("todo")
+  priority        String?
+  assigneeBotId   String?
+  assigneeBot     Bot?      @relation("TicketAssigneeBot", fields: [assigneeBotId], references: [id], onDelete: SetNull)
+  createdByBotId  String?
+  createdByBot    Bot?      @relation("TicketCreatorBot", fields: [createdByBotId], references: [id], onDelete: SetNull)
+  createdByUserId String?
+  createdByUser   User?     @relation("TicketCreatorUser", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  completedAt       DateTime?
+  comments        TicketComment[]
+
+  @@unique([boardId, number])
+  @@index([spaceId, status])
+  @@index([boardId, status])
+  @@map("tickets")
+}
+
+model TicketComment {
+  id           String   @id @default(cuid())
+  ticketId     String
+  ticket       Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  spaceId      String
+  space        Space    @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  authorBotId  String?
+  authorBot    Bot?     @relation("TicketCommentAuthorBot", fields: [authorBotId], references: [id], onDelete: SetNull)
+  authorUserId String?
+  authorUser   User?    @relation("TicketCommentAuthorUser", fields: [authorUserId], references: [id], onDelete: SetNull)
+  body         String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([ticketId, createdAt])
+  @@map("ticket_comments")
 }

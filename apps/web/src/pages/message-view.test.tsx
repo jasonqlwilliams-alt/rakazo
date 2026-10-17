@@ -6,6 +6,8 @@
  */
 import type { MessageBlock, ThreadMessage } from "@rakazo/contracts";
 import { reduceLiveMessageBlocks } from "@rakazo/core";
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { MessageView } from "./Shell";
@@ -55,6 +57,7 @@ function liveMessage(blocks: MessageBlock[]): ThreadMessage {
 
 const messageProps = {
   artifactTarget: { botId: "bot-1" },
+  onOpenComputer: vi.fn(),
   onOpenPeerMessages: vi.fn(),
   peerBot: vi.fn(),
   onRefresh: vi.fn(),
@@ -63,6 +66,7 @@ const messageProps = {
   voiceReady: false,
   speaking: false,
   onSpeak: vi.fn(),
+  showToolActivity: false,
 };
 
 function render(message: ThreadMessage, onOpenBot = vi.fn()) {
@@ -297,46 +301,43 @@ describe("agent note in the thread", () => {
     expect(html.match(/CROSSCHAT-PROOF/g)).toHaveLength(1);
   });
 
-  it("jumps to the other bot: the peer on each side, never itself", () => {
-    // renderToStaticMarkup does not fire handlers, so assert the wiring by invoking the
-    // rendered element's own onClick.
+  it("jumps to the other bot: the peer on each side, never itself", async () => {
     const fromSender = vi.fn();
-    elementFor(noteMessage("sent", "bot"), fromSender)?.props?.onClick?.();
+    await clickNote(noteMessage("sent", "bot"), fromSender);
     expect(fromSender).toHaveBeenCalledWith("bot-thor");
 
     const fromReceiver = vi.fn();
-    elementFor(noteMessage("received", "system"), fromReceiver)?.props?.onClick?.();
+    await clickNote(noteMessage("received", "system"), fromReceiver);
     expect(fromReceiver).toHaveBeenCalledWith("bot-eleusis");
   });
 });
 
-/** The clickable element MessageView produces for a note, wherever it sits in the tree. */
-function elementFor(message: ThreadMessage, onOpenBot: () => void) {
-  // MessageView is wrapped in memo(), so the callable component is its inner `type`.
-  const render = (MessageView as unknown as { type: (props: unknown) => unknown }).type;
-  const rendered = render({
-    ...messageProps,
-    canAnswer: false,
-    message,
-    onAnswer: vi.fn(),
-    onOpenBot,
-  });
-  return findClickable(rendered);
-}
-
-type Node = { props?: { onClick?: () => void; children?: unknown } } | null | undefined;
-
-/** Upstream reshapes this markup freely, so locate the handler rather than a fixed index. */
-function findClickable(node: unknown): Node {
-  if (!node || typeof node !== "object") return undefined;
-  if (Array.isArray(node)) {
-    for (const child of node) {
-      const hit = findClickable(child);
-      if (hit) return hit;
-    }
-    return undefined;
+async function clickNote(message: ThreadMessage, onOpenBot: (botId: string) => void) {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => {
+      root.render(
+        <MessageView
+          {...messageProps}
+          canAnswer={false}
+          message={message}
+          onAnswer={vi.fn()}
+          onOpenBot={onOpenBot}
+        />,
+      );
+    });
+    const button = container.querySelector("button");
+    expect(button).not.toBeNull();
+    await act(async () => {
+      button?.click();
+    });
+  } finally {
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
   }
-  const candidate = node as { props?: { onClick?: () => void; children?: unknown } };
-  if (typeof candidate.props?.onClick === "function") return candidate;
-  return findClickable(candidate.props?.children);
 }

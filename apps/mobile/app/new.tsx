@@ -1,17 +1,22 @@
+import type { ComputerMode } from "@rakazo/contracts";
 import {
   BOT_DESCRIPTION_MAX_LENGTH,
   BOT_NAME_MAX_LENGTH,
   BOT_TITLE_MAX_LENGTH,
-  type ComputerMode,
+  normalizeCreateBotProfile,
 } from "@rakazo/contracts";
 import { Stack, useRouter } from "expo-router";
 import { useState } from "react";
-import { Pressable, ScrollView, Text, TextInput } from "react-native";
+import { ScrollView, Text, TextInput } from "react-native";
 import { ComputerModePicker } from "../components/computer-mode-picker";
-import { type MobileBot, rpc } from "../lib/api";
+import { NativeActionButton } from "../components/native-action-button";
+import { cancelHeaderOptions } from "../components/sheet-header";
+import type { MobileBot } from "../lib/api";
+import { rpc } from "../lib/api";
 import { allowFocusPrompt, scheduleFocusPrompt } from "../lib/focus-prompt";
 import { useI18n } from "../lib/i18n";
-import { useMobileTokens } from "../lib/native";
+import { native, useMobileTokens } from "../lib/native";
+import { errorText } from "../lib/user-error";
 
 export default function NewBot() {
   const { t } = useI18n();
@@ -43,15 +48,17 @@ export default function NewBot() {
     try {
       // `description` is the short blurb; `instructions` is the persona. Sending the
       // blurb as the persona is what cost eight seats theirs on web — see
-      // apps/web/src/lib/bot-fields.ts. A new bot gets no instructions here and falls
+      // apps/web/src/lib/bot-fields.ts. Only the normalized name, title, and description
+      // are sent; a new bot gets no instructions here and falls
       // back to its name, title, and description when a run is built.
       // Failed list is unknown — delay focus rather than treating the bot as first.
       const existing = await rpc<MobileBot[]>("bots/list").catch(() => null);
       const isFirstBot = existing !== null && existing.length === 0;
+      const profile = normalizeCreateBotProfile({ name, title, description });
       const bot = await rpc<MobileBot>("bots/create", {
-        name: name.trim(),
-        title,
-        description,
+        name: profile.name,
+        title: profile.title,
+        description: profile.description,
         notifyOnFinish: true,
         computerMode,
       });
@@ -65,7 +72,7 @@ export default function NewBot() {
         scheduleFocusPrompt(bot.id, isFirstBot);
       })();
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("Could not create bot"));
+      setError(errorText(err, t("Could not create bot")));
     } finally {
       setPending(false);
     }
@@ -73,22 +80,9 @@ export default function NewBot() {
 
   return (
     <>
-      <Stack.Screen
-        options={{
-          headerLeft: () => (
-            <Pressable
-              onPress={close}
-              hitSlop={8}
-              style={{ paddingEnd: 20, paddingVertical: 8 }}
-              accessibilityRole="button"
-              accessibilityLabel={t("Cancel")}
-            >
-              <Text style={{ color: tokens.foreground, fontSize: 17 }}>{t("Cancel")}</Text>
-            </Pressable>
-          ),
-        }}
-      />
+      <Stack.Screen options={cancelHeaderOptions(t("Cancel"), close)} />
       <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
         style={{ flex: 1, backgroundColor: tokens.background }}
         contentContainerStyle={{ padding: 24 }}
         keyboardShouldPersistTaps="handled"
@@ -103,7 +97,7 @@ export default function NewBot() {
           placeholderTextColor={tokens.mutedForeground}
           style={{
             marginTop: 8,
-            backgroundColor: tokens.muted,
+            backgroundColor: native.fill,
             borderRadius: 11,
             padding: 16,
             color: tokens.foreground,
@@ -120,7 +114,7 @@ export default function NewBot() {
           placeholderTextColor={tokens.mutedForeground}
           style={{
             marginTop: 8,
-            backgroundColor: tokens.muted,
+            backgroundColor: native.fill,
             borderRadius: 11,
             padding: 16,
             color: tokens.foreground,
@@ -138,7 +132,7 @@ export default function NewBot() {
           multiline
           style={{
             marginTop: 8,
-            backgroundColor: tokens.muted,
+            backgroundColor: native.fill,
             borderRadius: 11,
             padding: 16,
             color: tokens.foreground,
@@ -148,22 +142,12 @@ export default function NewBot() {
         />
         <ComputerModePicker value={computerMode} onChange={setComputerMode} />
         {error ? <Text style={{ color: tokens.destructive, marginTop: 16 }}>{error}</Text> : null}
-        <Pressable
-          onPress={() => void create()}
+        <NativeActionButton
           disabled={!name.trim() || pending}
-          style={{
-            marginTop: 24,
-            backgroundColor: tokens.primary,
-            borderRadius: 11,
-            padding: 16,
-            alignItems: "center",
-            opacity: !name.trim() || pending ? 0.4 : 1,
-          }}
-        >
-          <Text style={{ color: tokens.primaryForeground, fontSize: 16 }}>
-            {pending ? t("Creating…") : t("Create")}
-          </Text>
-        </Pressable>
+          label={pending ? t("Creating…") : t("Create")}
+          onPress={() => void create()}
+          style={{ marginTop: 24 }}
+        />
       </ScrollView>
     </>
   );

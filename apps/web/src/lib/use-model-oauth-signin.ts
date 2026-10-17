@@ -1,13 +1,15 @@
-import type { ModelOAuthBegin } from "@rakazo/contracts";
+import type { ModelOAuthBegin, ThinkingLevel } from "@rakazo/contracts";
 import { cancelModelOAuthAttempt, finishModelOAuthAttempt } from "@rakazo/core";
 import { useEffect, useRef, useState } from "react";
 import { desktopBridge, oauthStateOf, onDesktopOAuthCallback } from "./desktop";
 import { waitForModelOAuth } from "./model-auth";
 import { rpc } from "./rpc";
+import { errorText } from "./user-error";
 
 export type ModelOAuthSignInBegin = {
   provider: string;
   modelId?: string;
+  thinkingLevel?: ThinkingLevel | null;
   label?: string;
 };
 
@@ -25,6 +27,7 @@ export function useModelOAuthSignIn(options: {
   const [oauth, setOauth] = useState<ModelOAuthBegin | null>(null);
   const [pasteCode, setPasteCode] = useState("");
   const [oauthPending, setOauthPending] = useState(false);
+  const [popupBlocked, setPopupBlocked] = useState(false);
   const oauthAbortRef = useRef<AbortController | null>(null);
   const oauthLoginIdRef = useRef<string | null>(null);
   const oauthCodeSubmittingRef = useRef(false);
@@ -51,6 +54,7 @@ export function useModelOAuthSignIn(options: {
       if (resetState) {
         setOauth(null);
         setOauthPending(false);
+        setPopupBlocked(false);
       }
     });
     if (loginId) void rpc.models.cancelOAuth({ loginId }).catch(() => undefined);
@@ -69,7 +73,7 @@ export function useModelOAuthSignIn(options: {
       await onFinishedRef.current(controller);
     } catch (err) {
       if (controller.signal.aborted) return;
-      onErrorRef.current(err instanceof Error ? err.message : "Connected, but could not refresh");
+      onErrorRef.current(errorText(err, "Connected, but could not refresh"));
     }
   }
 
@@ -102,7 +106,7 @@ export function useModelOAuthSignIn(options: {
         retryable = true;
         setPasteCode(code);
       }
-      onErrorRef.current(err instanceof Error ? err.message : "Could not finish sign-in");
+      onErrorRef.current(errorText(err, "Could not finish sign-in"));
     } finally {
       // A cancelled attempt may already have started another sign-in; do not clear
       // its submitting guard or the newer desktop callback is dropped.
@@ -120,6 +124,7 @@ export function useModelOAuthSignIn(options: {
   async function startSubscriptionSignIn(begin: ModelOAuthSignInBegin) {
     onClearErrorRef.current?.();
     setOauthPending(true);
+    setPopupBlocked(false);
     const controller = new AbortController();
     oauthAbortRef.current = controller;
     let waitingForCode = false;
@@ -128,6 +133,7 @@ export function useModelOAuthSignIn(options: {
         {
           provider: begin.provider,
           modelId: begin.modelId,
+          thinkingLevel: begin.thinkingLevel,
           label: begin.label,
         },
         { signal: controller.signal },
@@ -159,7 +165,11 @@ export function useModelOAuthSignIn(options: {
         await browserAuth.open(started.verificationUri);
         if (controller.signal.aborted) return;
       } else {
-        window.open(started.verificationUri, "rakazo-model-oauth", "noopener,noreferrer");
+        // null means the browser blocked the popup — the card keeps showing the
+        // URL, and callers can flag that nothing opened.
+        if (!window.open(started.verificationUri, "rakazo-model-oauth", "noopener,noreferrer")) {
+          setPopupBlocked(true);
+        }
       }
       waitingForCode = started.mode === "auth-url";
       if (!waitingForCode) await finishSubscriptionSignIn(started.loginId, controller);
@@ -168,7 +178,7 @@ export function useModelOAuthSignIn(options: {
       const loginId = oauthLoginIdRef.current;
       oauthLoginIdRef.current = null;
       if (loginId) void rpc.models.cancelOAuth({ loginId }).catch(() => undefined);
-      onErrorRef.current(err instanceof Error ? err.message : "Could not start sign-in");
+      onErrorRef.current(errorText(err, "Could not start sign-in"));
       setOauth(null);
     } finally {
       if (!waitingForCode) {
@@ -185,6 +195,7 @@ export function useModelOAuthSignIn(options: {
     pasteCode,
     setPasteCode,
     oauthPending,
+    popupBlocked,
     cancelOAuthAttempt,
     startSubscriptionSignIn,
     submitOAuthCode,

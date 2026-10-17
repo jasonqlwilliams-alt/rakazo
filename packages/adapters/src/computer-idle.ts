@@ -1,11 +1,11 @@
-import {
-  type AdapterContext,
-  type AgentHomeStore,
-  type ComputerRef,
-  computerSleepJob,
-  type JobPublisher,
-  type SandboxProvider,
+import type {
+  AdapterContext,
+  AgentHomeStore,
+  ComputerRef,
+  JobPublisher,
+  SandboxProvider,
 } from "@rakazo/adapter-kit";
+import { computerSleepJob } from "@rakazo/adapter-kit";
 import { ACTIVE_RUN_STATUSES } from "@rakazo/core";
 import type { PrismaClient, ThreadEvents } from "@rakazo/db";
 import { expireComputerControl, hasActiveComputerControl } from "./computer-control.js";
@@ -128,13 +128,13 @@ export const CANCEL_COMPUTER_RUN_WORK = [
   '[ -n "$computerId" ] && [ -n "$runId" ] || exit 0',
   `prefix="${BACKGROUND_WORK_MARKER_PREFIX}$computerId-$runId-"`,
   // Match the timeout wrapper cmdline (still contains the launch tag after exec into the user command).
-  'pkill -TERM -f "rakazo-background-launch ${computerId} ${runId} " 2>/dev/null || true',
+  `pkill -TERM -f "rakazo-background-launch $computerId $runId " 2>/dev/null || true`,
   "if [ -d /proc ]; then",
   "  for fd in /proc/[0-9]*/fd/*; do",
   '    target="$(readlink "$fd" 2>/dev/null)" || continue',
   '    case "$target" in',
   '      "$prefix"*)',
-  '        pid="${fd#/proc/}"; pid="${pid%%/*}"',
+  `        pid="\${fd#/proc/}"; pid="\${pid%%/*}"`,
   '        if [ -n "$pid" ] && [ "$pid" -eq "$pid" ] 2>/dev/null; then',
   // Never kill -PID (process group): sandbox work often shares the caller's PGID.
   '          kill -TERM "$pid" 2>/dev/null || true',
@@ -151,13 +151,13 @@ export const CANCEL_COMPUTER_RUN_WORK = [
   "  done",
   "fi",
   "sleep 0.2",
-  'pkill -KILL -f "rakazo-background-launch ${computerId} ${runId} " 2>/dev/null || true',
+  `pkill -KILL -f "rakazo-background-launch $computerId $runId " 2>/dev/null || true`,
   "if [ -d /proc ]; then",
   "  for fd in /proc/[0-9]*/fd/*; do",
   '    target="$(readlink "$fd" 2>/dev/null)" || continue',
   '    case "$target" in',
   '      "$prefix"*)',
-  '        pid="${fd#/proc/}"; pid="${pid%%/*}"',
+  `        pid="\${fd#/proc/}"; pid="\${pid%%/*}"`,
   '        if [ -n "$pid" ] && [ "$pid" -eq "$pid" ] 2>/dev/null; then',
   '          kill -KILL "$pid" 2>/dev/null || true',
   "        fi",
@@ -191,7 +191,7 @@ export const CANCEL_PRIMARY_BROWSER_WORK = [
   '  argv0=""; IFS= read -r -d "" argv0 <"$pid/cmdline" || true',
   '  case "$argv0" in',
   "    */google-chrome|*/google-chrome-*|google-chrome|google-chrome-*|*/chromium|*/chromium-*|chromium|chromium-*|*/chrome|chrome|*/firefox|*/firefox-*|firefox|firefox-*)",
-  '      kill -TERM "${pid#/proc/}" 2>/dev/null || true',
+  `      kill -TERM "\${pid#/proc/}" 2>/dev/null || true`,
   "      ;;",
   "  esac",
   "done; fi",
@@ -204,7 +204,7 @@ export const CANCEL_PRIMARY_BROWSER_WORK = [
   '  argv0=""; IFS= read -r -d "" argv0 <"$pid/cmdline" || true',
   '  case "$argv0" in',
   "    */google-chrome|*/google-chrome-*|google-chrome|google-chrome-*|*/chromium|*/chromium-*|chromium|chromium-*|*/chrome|chrome|*/firefox|*/firefox-*|firefox|firefox-*)",
-  '      kill -KILL "${pid#/proc/}" 2>/dev/null || true',
+  `      kill -KILL "\${pid#/proc/}" 2>/dev/null || true`,
   "      ;;",
   "  esac",
   "done; fi",
@@ -266,8 +266,12 @@ export function sandboxIdleMs(): number {
   return Number.isFinite(raw) && raw >= 30_000 ? raw : DEFAULT_SANDBOX_IDLE_MS;
 }
 
+export function computerIdleSleepEnabled(): boolean {
+  return process.env.SANDBOX_IDLE_MS?.trim() !== "0";
+}
+
 export function scheduleComputerSleep(jobs: JobPublisher, computerId: string): void {
-  if (!computerId) return;
+  if (!computerId || !computerIdleSleepEnabled()) return;
   void jobs.enqueue(computerSleepJob(computerId, new Date(Date.now() + sandboxIdleMs())));
 }
 
@@ -289,6 +293,7 @@ export async function sleepComputerIfIdle(
   },
   computerId: string,
 ): Promise<void> {
+  if (!computerIdleSleepEnabled()) return;
   let computer = await loadComputer(deps.prisma, computerId);
   if (!computer?.providerRef || computer.state !== "running") return;
 

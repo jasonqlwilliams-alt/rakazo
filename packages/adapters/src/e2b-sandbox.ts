@@ -13,6 +13,7 @@ import type {
   SandboxProvider,
   ScreenRequest,
   ScreenSession,
+  TerminalRequest,
 } from "@rakazo/adapter-kit";
 import { boundedSandboxCommandTimeoutMs } from "@rakazo/core";
 import { sandboxIdleMs } from "./computer-idle.js";
@@ -22,6 +23,7 @@ import {
   shouldSkipPortableWorkspaceFile,
 } from "./computer-workspace.js";
 import { LinuxDesktop, PREPARE_LINUX_DESKTOP } from "./linux-desktop.js";
+import { sandboxCommandArgv } from "./sandbox-command-environment.js";
 
 const E2B_WORKSPACE = "/home/user/rakazo-home";
 const E2B_BROWSER_PROFILES = `${E2B_WORKSPACE}/.browser-profiles`;
@@ -199,7 +201,7 @@ export class E2BSandboxProvider implements SandboxProvider {
     context: AdapterContext,
   ): AsyncIterable<ProcessEvent> {
     const desktop = await this.box(computer);
-    const cmd = request.argv.map(shellQuote).join(" ");
+    const cmd = sandboxCommandArgv(request).map(shellQuote).join(" ");
     const timeoutMs = boundedSandboxCommandTimeoutMs(request.timeoutMs);
     try {
       const result = await desktop.commands.run(cmd, {
@@ -230,6 +232,9 @@ export class E2BSandboxProvider implements SandboxProvider {
     context: AdapterContext,
   ): Promise<ScreenSession> {
     return this.desktops.connectScreen(computer, request, context);
+  }
+  async connectTerminal(computer: ComputerRef, request: TerminalRequest, context: AdapterContext) {
+    return this.desktops.connectTerminal(computer, request, context);
   }
   async setScreenControl(
     computer: ComputerRef,

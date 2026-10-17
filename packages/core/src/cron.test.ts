@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
+import type { CronPreset } from "./cron.js";
 import {
-  type CronPreset,
+  CRON_INTERVAL_MAX,
+  clampIntervalAmount,
   cronFromPreset,
+  cronIntervalAmounts,
   describeCronPreset,
   formatCron,
   hasMixedOneShotSchedule,
@@ -127,6 +130,40 @@ describe("formatCron", () => {
       lead: "Every hour",
       detail: "",
     });
+  });
+
+  it("names any single weekday", () => {
+    expect(formatCron("0 6 * * 0")).toBe("Every Sunday at 6:00 AM");
+    expect(formatCron("0 6 * * 7")).toBe("Every Sunday at 6:00 AM");
+    expect(formatCron("30 18 * * 2")).toBe("Every Tuesday at 6:30 PM");
+    expect(formatCron("0 9 * * 3")).toBe("Every Wednesday at 9:00 AM");
+    expect(formatCron("0 9 * * 4")).toBe("Every Thursday at 9:00 AM");
+    expect(formatCron("0 17 * * 5")).toBe("Every Friday at 5:00 PM");
+    expect(formatCron(" 0 0 * * 6 ")).toBe("Every Saturday at 12:00 AM");
+  });
+
+  it("keeps the other shapes", () => {
+    expect(formatCron("0 6 * * *")).toBe("Every day at 6:00 AM");
+    expect(formatCron("0 * * * *")).toBe("Every hour");
+    expect(formatCron("0 9 1 * *")).toBe("Monthly on the 1st at 9:00 AM");
+    expect(formatCron("0 6 * * 6,0")).toBe("Cron 0 6 * * 6,0");
+    expect(formatCron("0 6 1 * 0")).toBe("Cron 0 6 1 * 0");
+    expect(presetFromCron("0 6 * * 0")).toMatchObject({ freq: "Advanced", cron: "0 6 * * 0" });
+  });
+
+  it.each(["* * 2", "* * 1", "* * 7", "* * *", "* * 1-5", "1 * *"])(
+    "falls back to cron for out-of-range clocks with %s",
+    (fields) => {
+      for (const clock of ["60 24", "60 9", "0 24"]) {
+        const cron = `${clock} ${fields}`;
+        expect(formatCron(cron)).toBe(`Cron ${cron}`);
+      }
+    },
+  );
+
+  it("formats the clock boundaries", () => {
+    expect(formatCron("0 0 * * 2")).toBe("Every Tuesday at 12:00 AM");
+    expect(formatCron("59 23 * * 2")).toBe("Every Tuesday at 11:59 PM");
   });
 });
 
@@ -266,5 +303,39 @@ describe("nextCronDateAcrossStrict", () => {
     const from = new Date("2026-08-24T00:00:00.000Z");
     expect(nextCronDateAcrossStrict([ONCE_ROUTINE_CRON], from, "UTC")).toBeNull();
     expect(nextCronDateAcrossStrict([], from, "UTC")).toBeNull();
+  });
+});
+
+describe("cronIntervalAmounts", () => {
+  it.each(["minutes", "hours", "days"] as const)("only offers runnable %s amounts", (unit) => {
+    for (const n of cronIntervalAmounts(unit)) {
+      const cron = cronFromPreset({ freq: "Interval", n, unit });
+      expect(() => nextCronDate(cron, new Date("2026-01-01T00:00:00Z"))).not.toThrow();
+    }
+  });
+
+  it("clamps an amount that is too large for the new unit", () => {
+    expect(clampIntervalAmount(45, "hours")).toBe(15);
+    expect(clampIntervalAmount(45, "days")).toBe(30);
+    expect(clampIntervalAmount(45, "minutes")).toBe(45);
+  });
+
+  it("keeps a custom amount that fits the unit", () => {
+    expect(clampIntervalAmount(7, "hours")).toBe(7);
+    expect(clampIntervalAmount(23, "hours")).toBe(23);
+    expect(clampIntervalAmount(31, "days")).toBe(31);
+    expect(clampIntervalAmount(59, "minutes")).toBe(59);
+  });
+
+  it("lists a saved custom amount only when it fits the unit", () => {
+    expect(cronIntervalAmounts("minutes", 7)).toContain(7);
+    expect(cronIntervalAmounts("hours", 4)).toContain(4);
+    expect(cronIntervalAmounts("hours", 4)).toEqual([1, 2, 3, 4, 5, 10, 15]);
+    expect(cronIntervalAmounts("hours", 45)).not.toContain(45);
+    for (const unit of ["minutes", "hours", "days"] as const) {
+      const n = CRON_INTERVAL_MAX[unit];
+      expect(cronIntervalAmounts(unit, n)).toContain(n);
+      expect(cronIntervalAmounts(unit, n + 1)).not.toContain(n + 1);
+    }
   });
 });

@@ -1,6 +1,15 @@
 import { Cron } from "croner";
 
 const WEEKDAYS = "1-5";
+const WEEKDAY_NAMES = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+] as const;
 
 export const ONCE_ROUTINE_CRON = "@once";
 
@@ -54,6 +63,23 @@ export type CronPresetInput = {
 
 export function defaultCronPreset(): CronPreset {
   return { freq: "Every day", n: 3, unit: "minutes", time: "9:00 AM", cron: "" };
+}
+
+const INTERVAL_AMOUNTS = [1, 2, 3, 5, 10, 15, 30, 45];
+export const CRON_INTERVAL_MAX: Record<CronUnit, number> = { minutes: 59, hours: 23, days: 31 };
+
+// Cron steps cannot exceed the field's range, so offer only amounts that fit.
+export function cronIntervalAmounts(unit: CronUnit, current?: number): number[] {
+  const amounts = INTERVAL_AMOUNTS.filter((n) => n <= CRON_INTERVAL_MAX[unit]);
+  if (current === undefined || current > CRON_INTERVAL_MAX[unit] || amounts.includes(current)) {
+    return amounts;
+  }
+  return [...amounts, current].sort((a, b) => a - b);
+}
+
+export function clampIntervalAmount(n: number, unit: CronUnit): number {
+  if (n <= CRON_INTERVAL_MAX[unit]) return n;
+  return cronIntervalAmounts(unit).at(-1) ?? 1;
 }
 
 export function cronFromPreset(input: CronPresetInput): string {
@@ -111,7 +137,7 @@ export function presetFromCron(cron: string): CronPreset {
   if (minute === "0" && hour === "0" && dayStep && dow === "*") {
     return { ...base, freq: "Interval", n: dayStep, unit: "days" };
   }
-  if (!isInt(minute) || !isInt(hour)) {
+  if (!isCronClock(minute, hour)) {
     return { ...base, freq: "Advanced", cron: trimmed };
   }
 
@@ -160,6 +186,13 @@ export function formatSchedule(preset: CronPreset): string {
 
 export function formatCron(cron: string): string {
   if (isOneShotRoutineCron(cron)) return "One-time";
+  // The editor presets only represent Monday; cron also aliases Sunday as 7.
+  const weekly = /^(\d+)\s+(\d+)\s+\*\s+\*\s+([0-7])$/.exec(cron.trim());
+  if (weekly && isCronClock(weekly[1] ?? "", weekly[2] ?? "")) {
+    const time = formatClock(Number(weekly[2]), Number(weekly[1]));
+    const weekday = Number(weekly[3]) % 7;
+    return `Every ${WEEKDAY_NAMES[weekday]} at ${time}`;
+  }
   return formatSchedule(presetFromCron(cron));
 }
 
@@ -262,4 +295,8 @@ function stepValue(expr: string): number | null {
 
 function isInt(expr: string): boolean {
   return /^\d+$/.test(expr);
+}
+
+function isCronClock(minute: string, hour: string): boolean {
+  return isInt(minute) && Number(minute) <= 59 && isInt(hour) && Number(hour) <= 23;
 }

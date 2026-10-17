@@ -77,6 +77,8 @@ describe.skipIf(!databaseAvailable)("offline Slack customer-support eval", () =>
           modelId: model.model.id,
           baseUrl: model.baseUrl,
           apiKey: fixtureKey,
+          contextWindow: 160_000,
+          maxTokens: 4096,
         },
         timeoutMs: 20_000,
         maxToolCalls: 8,
@@ -103,6 +105,11 @@ describe.skipIf(!databaseAvailable)("offline Slack customer-support eval", () =>
       });
 
       model.assertComplete();
+      expect(
+        model.requests.some((request) =>
+          JSON.stringify(request.messages).includes("You were just created"),
+        ),
+      ).toBe(false);
       expect(result).toMatchObject({
         status: "passed",
         category: null,

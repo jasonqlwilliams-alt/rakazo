@@ -1,9 +1,11 @@
-import type { JobPublisher } from "@rakazo/adapter-kit";
+import type { JobPublisher, NotificationProvider } from "@rakazo/adapter-kit";
 import { messagingDeliverJob, routineWakeupJob, runContinueJob } from "@rakazo/adapter-kit";
-import type { Pool, PrismaClient } from "@rakazo/db";
+import type { Pool, PrismaClient, ThreadEvents } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import type { PoolClient } from "pg";
+import { dueBotMessageOutcomeWhere } from "./bot-outcome-reconciliation.js";
 import { scheduleComputerControlExpiry } from "./computer-control.js";
+import { reconcileStuckWork } from "./stuck-work.js";
 
 const DEFAULT_INTERVAL_MS = 30_000;
 const DEFAULT_BATCH_SIZE = 100;
@@ -95,6 +97,8 @@ export function createJobReconciler(
   deps: {
     prisma: PrismaClient;
     jobs: JobPublisher;
+    events?: ThreadEvents;
+    notifications?: NotificationProvider;
     leadership?: ReconciliationLeadership;
     reconcileComputerUpdates?: () => Promise<void>;
     reconcileCloudAgents?: () => Promise<void>;
@@ -106,6 +110,7 @@ export function createJobReconciler(
   const batchSize = options.batchSize ?? DEFAULT_BATCH_SIZE;
   let timer: ReturnType<typeof setInterval> | undefined;
   let reconciling: Promise<void> | undefined;
+  let stuckCursor: Cursor | undefined;
   let runCursor: Cursor | undefined;
   let routineCursor: Cursor | undefined;
   let controlCursor: ControlCursor | undefined;
@@ -127,6 +132,19 @@ export function createJobReconciler(
       }
 
       const now = new Date();
+      try {
+        stuckCursor = await reconcileStuckWork({
+          prisma: deps.prisma,
+          jobs: deps.jobs,
+          events: deps.events,
+          notifications: deps.notifications,
+          now,
+          batchSize,
+          cursor: stuckCursor,
+        });
+      } catch (error) {
+        getLogger().error("stuck work reconciliation", error);
+      }
       controlScanDeadline ??= new Date(now.getTime() + CONTROL_LOOKAHEAD_MS);
       const runCursorFilter = runCursor
         ? {
@@ -234,13 +252,7 @@ export function createJobReconciler(
       ]);
 
       const outcomes = await deps.prisma.run.findMany({
-        where: {
-          trigger: "bot_message",
-          status: { in: ["completed", "failed"] },
-          botOutcomeReturnedAt: null,
-          botOutcomeFailedAt: null,
-          OR: [{ botOutcomeNextAttemptAt: null }, { botOutcomeNextAttemptAt: { lte: now } }],
-        },
+        where: dueBotMessageOutcomeWhere(now),
         orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
         take: batchSize,
         select: { id: true },
