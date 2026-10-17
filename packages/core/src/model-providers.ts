@@ -71,6 +71,9 @@ export type ConnectedModelOption = {
   label: string;
 };
 
+/** Model picker value for the router. Not a provider id. */
+export const MODEL_ROUTER_KEY = "auto";
+
 export function modelOptionKey(provider: string, modelId: string) {
   return `${provider}::${modelId}`;
 }

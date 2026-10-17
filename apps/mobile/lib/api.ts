@@ -686,6 +686,7 @@ export type MobileBot = Pick<
   | "modelProvider"
   | "modelId"
   | "thinkingLevel"
+  | "modelRouting"
 > &
   Partial<Pick<Bot, "parentBotId" | "spaceId">>;
 

@@ -309,6 +309,13 @@ GitHub Actions to create pull requests, and those pull requests do not start CI.
 `PI_BUMP_TOKEN` repository secret with contents and pull-request write access to open them as that
 token instead and run CI.
 
+A bot whose model is **Auto** (new bots, and bots that had no pinned model) is updated on each run
+after that catalog is deployed. The router stays on that workspace's default provider, and on a
+catalog that resells many vendors it stays inside the brand of the saved model. It then chooses the
+newest model in the tier the turn needs — a fast model at low effort for a short question, a
+flagship at high effort for a hard task — and writes that model and effort onto the bot. Pick a
+specific model, or Space default, to keep a bot still.
+
 Do not commit `.env`. Never put `COMPOSIO_API_KEY`, OpenRouter keys, or provider tokens in git, logs, or chat.
 
 Optional messaging platforms (iMessage, Slack, Discord, WhatsApp, Telegram, Feishu/Lark) mount when their env credentials are set — see `.env.example`. Discord inbound is a Gateway WebSocket started by the API process only (the worker must not open one); turn on the Message Content intent for the bot. Discord needs `DISCORD_BOT_TOKEN`, `DISCORD_APPLICATION_ID`, and `DISCORD_RESPOND_TO_CHANNEL_IDS` (the only channels the bot answers) together; a partial `DISCORD_*` set fails at startup. With `TEAM_CHAT_BOT_ID`, set Slack or Discord, not both; startup fails otherwise. Point a Feishu/Lark bot event subscription at `/api/v1/messaging/webhook/lark` (webhook/HTTP inbound only; do not enable long connection). Group chats work only on iMessage, Slack, and Discord.

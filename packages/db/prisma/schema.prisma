@@ -355,6 +355,8 @@ model Bot {
   modelProvider     String?
   modelId           String?
   thinkingLevel     String?
+  // When set, runs replace modelProvider, modelId, and thinkingLevel. A pinned model leaves this off.
+  modelRouting      Boolean           @default(false)
   webhookSecretId   String?
   teamChatAmbientEnabled Boolean @default(false)
   teamChatRules          String  @default("")

@@ -42,6 +42,7 @@ export const RU_MESSAGES: Record<string, string> = {
   "Set up Executor on your server in the web app.":
     "Настройте Executor на сервере в веб-приложении.",
   "Space default": "Пространство по умолчанию",
+  Auto: "Авто",
   "Stop all workers and confirm that provider operations have stopped before releasing this computer.":
     "Остановите всех воркеров и убедитесь, что операции провайдера остановлены, прежде чем освобождать этот компьютер.",
   "Stored securely. Never shown here.": "Хранится безопасно. Здесь не отображается.",

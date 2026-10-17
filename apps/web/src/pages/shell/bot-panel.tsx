@@ -16,7 +16,12 @@ import {
   BOT_NAME_MAX_LENGTH,
   BOT_TITLE_MAX_LENGTH,
 } from "@rakazo/contracts";
-import { connectedModelOptions, modelOptionKey, parseModelOptionKey } from "@rakazo/core";
+import {
+  connectedModelOptions,
+  MODEL_ROUTER_KEY,
+  modelOptionKey,
+  parseModelOptionKey,
+} from "@rakazo/core";
 import {
   BotAvatar,
   Button,
@@ -214,6 +219,7 @@ export function BotSettings({
     modelProvider?: string | null;
     modelId?: string | null;
     thinkingLevel?: ThinkingLevel | null;
+    modelRouting?: boolean;
   }) => Promise<void>;
   onExport: () => Promise<void>;
   onClear: () => void;
@@ -231,7 +237,11 @@ export function BotSettings({
   const [voiceId, setVoiceId] = useState(bot.voiceId ?? "");
   const [voices, setVoices] = useState<VoiceInfo[]>([]);
   const [modelKey, setModelKey] = useState(
-    bot.modelProvider && bot.modelId ? modelOptionKey(bot.modelProvider, bot.modelId) : "",
+    bot.modelRouting
+      ? MODEL_ROUTER_KEY
+      : bot.modelProvider && bot.modelId
+        ? modelOptionKey(bot.modelProvider, bot.modelId)
+        : "",
   );
   const [thinkingLevel, setThinkingLevel] = useState(bot.thinkingLevel ?? "");
   const [credentials, setCredentials] = useState<ModelCredential[]>([]);
@@ -370,13 +380,16 @@ export function BotSettings({
               setThinkingLevel("");
             }}
           >
+            <NativeSelectOption value={MODEL_ROUTER_KEY}>{t`Auto`}</NativeSelectOption>
             <NativeSelectOption value="">
               {t`Space default`}
               {me?.defaultModel
                 ? ` (${catalogLabel(catalog, me.defaultProvider, me.defaultModel) ?? me.defaultModel})`
                 : ""}
             </NativeSelectOption>
-            {modelKey && !connectedOptions.some((option) => option.key === modelKey) ? (
+            {modelKey &&
+            modelKey !== MODEL_ROUTER_KEY &&
+            !connectedOptions.some((option) => option.key === modelKey) ? (
               <NativeSelectOption value={modelKey}>
                 {parseModelOptionKey(modelKey)?.modelId ?? modelKey}
               </NativeSelectOption>
@@ -388,7 +401,7 @@ export function BotSettings({
             ))}
           </NativeSelect>
         </label>
-        {thinkingOptions.length ? (
+        {modelKey !== MODEL_ROUTER_KEY && thinkingOptions.length ? (
           <label htmlFor={`${ids}-thinking`} className={fieldLabelClass}>
             <Trans>Thinking</Trans>
             <NativeSelect
@@ -472,7 +485,8 @@ export function BotSettings({
           onClick={() => {
             setSaving(true);
             setError(null);
-            const selected = modelKey ? parseModelOptionKey(modelKey) : null;
+            const routing = modelKey === MODEL_ROUTER_KEY;
+            const selected = routing || !modelKey ? null : parseModelOptionKey(modelKey);
             const nextName = name.trim();
             const nextTitle = title.trim();
             const nextDescription = description.trim();
@@ -495,17 +509,24 @@ export function BotSettings({
               memoryScope,
               autoSpeak,
               voiceId: voiceId || null,
-              modelProvider: selected?.provider ?? null,
-              modelId: selected?.modelId ?? null,
-              // Only clear thinking when catalog metadata is available; otherwise
-              // preserve the stored override if models.list failed or is still loading.
-              ...(modelMetaReady
-                ? {
-                    thinkingLevel: thinkingOptions.length
-                      ? ((thinkingLevel || null) as ThinkingLevel | null)
-                      : null,
-                  }
-                : {}),
+              ...(routing
+                ? bot.modelRouting
+                  ? {}
+                  : { modelRouting: true }
+                : {
+                    modelRouting: false,
+                    modelProvider: selected?.provider ?? null,
+                    modelId: selected?.modelId ?? null,
+                    // Only clear thinking when catalog metadata is available; otherwise
+                    // preserve the stored override if models.list failed or is still loading.
+                    ...(modelMetaReady
+                      ? {
+                          thinkingLevel: thinkingOptions.length
+                            ? ((thinkingLevel || null) as ThinkingLevel | null)
+                            : null,
+                        }
+                      : {}),
+                  }),
             })
               .catch((err) => setError(err instanceof Error ? err.message : t`Could not save`))
               .finally(() => setSaving(false));

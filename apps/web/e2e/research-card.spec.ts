@@ -81,6 +81,7 @@ async function openFixture(
     modelProvider: null,
     modelId: null,
     thinkingLevel: null,
+    modelRouting: false,
     teamChatAmbientEnabled: false,
     teamChatRules: "",
     webhookConfigured: false,

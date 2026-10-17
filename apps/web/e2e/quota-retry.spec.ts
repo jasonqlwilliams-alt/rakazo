@@ -73,6 +73,7 @@ for (const scenario of cases) {
       modelProvider: null,
       modelId: null,
       thinkingLevel: null,
+      modelRouting: false,
       teamChatAmbientEnabled: false,
       teamChatRules: "",
       webhookConfigured: false,

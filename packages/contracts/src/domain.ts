@@ -84,6 +84,8 @@ export const BotSchema = z.object({
   modelProvider: z.string().nullable(),
   modelId: z.string().nullable(),
   thinkingLevel: ThinkingLevelSchema.nullable(),
+  /** When true, runs choose the model and effort. A pinned model is false. */
+  modelRouting: z.boolean(),
   teamChatAmbientEnabled: z.boolean(),
   teamChatRules: z.string(),
   webhookConfigured: z.boolean(),
@@ -341,6 +343,7 @@ export const UpdateBotInput = z
     modelProvider: z.string().trim().min(1).max(80).nullable().optional(),
     modelId: z.string().trim().min(1).max(200).nullable().optional(),
     thinkingLevel: ThinkingLevelSchema.nullable().optional(),
+    modelRouting: z.boolean().optional(),
     teamChatAmbientEnabled: z.boolean().optional(),
     teamChatRules: z.string().max(TEAM_CHAT_RULES_MAX_LENGTH).optional(),
   })
