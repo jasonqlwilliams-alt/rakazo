@@ -59,6 +59,7 @@ import {
   provisionComputer,
   queueComputerUpdate,
   type RemoteConnectorDependencies,
+  refreshRoutedBotModel,
   releaseComputerExecutionLease,
   replaceComputer,
   resolveAutoReviewChecker,
@@ -968,6 +969,7 @@ export function createRouter(deps: RouterDeps) {
             modelProvider: source.modelProvider,
             modelId: source.modelId,
             thinkingLevel: source.thinkingLevel,
+            modelRouting: source.modelRouting,
           })
           .catch((error: unknown) => {
             throw mapSpaceLifecycleError(error);
@@ -1031,7 +1033,7 @@ export function createRouter(deps: RouterDeps) {
           }
         }
         const thinkingLevel = input.thinkingLevel;
-        if (input.thinkingLevel) {
+        if (input.thinkingLevel && input.modelRouting !== true) {
           const provider =
             input.modelProvider !== undefined ? input.modelProvider : existing.modelProvider;
           const modelId = input.modelId !== undefined ? input.modelId : existing.modelId;
@@ -1093,16 +1095,32 @@ export function createRouter(deps: RouterDeps) {
             sectionId: input.sectionId,
             voiceId: input.voiceId,
             autoSpeak: input.autoSpeak,
-            ...(input.modelProvider !== undefined
+            ...(input.modelRouting !== undefined ? { modelRouting: input.modelRouting } : {}),
+            ...(input.modelRouting !== true && input.modelProvider !== undefined
               ? { modelProvider: input.modelProvider, modelId: input.modelId ?? null }
               : {}),
-            ...(input.thinkingLevel !== undefined ? { thinkingLevel } : {}),
+            ...(input.modelRouting !== true && input.thinkingLevel !== undefined
+              ? { thinkingLevel }
+              : {}),
             ...(input.teamChatAmbientEnabled !== undefined
               ? { teamChatAmbientEnabled: input.teamChatAmbientEnabled }
               : {}),
             ...(input.teamChatRules !== undefined ? { teamChatRules: input.teamChatRules } : {}),
           },
         });
+        if (input.modelRouting === true) {
+          await refreshRoutedBotModel(
+            { prisma: deps.prisma, secretStore: deps.secrets },
+            context.actor,
+            {
+              id: input.botId,
+              modelProvider: existing.modelProvider,
+              modelId: existing.modelId,
+              thinkingLevel: existing.thinkingLevel,
+            },
+            { prompt: "", instructions: input.instructions ?? existing.instructions },
+          ).catch((error: unknown) => getLogger().error("model router", error));
+        }
         const bots = await repos.listBots(context.actor);
         const bot = bots.find((b) => b.id === input.botId);
         if (!bot) throw new IsolationError();

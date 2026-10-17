@@ -193,6 +193,7 @@ describe("contracts", () => {
         modelId: "grok-4.6",
       }).success,
     ).toBe(true);
+    expect(UpdateBotInput.safeParse({ botId: "bot-1", modelRouting: true }).success).toBe(true);
   });
 
   it("normalizes group names and rejects duplicate members", () => {

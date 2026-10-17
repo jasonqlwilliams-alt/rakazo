@@ -53,6 +53,7 @@ function mapBot(
     modelProvider?: string | null;
     modelId?: string | null;
     thinkingLevel?: string | null;
+    modelRouting?: boolean;
     teamChatAmbientEnabled?: boolean;
     teamChatRules?: string;
     webhookSecretId?: string | null;
@@ -90,6 +91,7 @@ function mapBot(
     modelProvider: bot.modelProvider ?? null,
     modelId: bot.modelId ?? null,
     thinkingLevel: (bot.thinkingLevel as Bot["thinkingLevel"]) ?? null,
+    modelRouting: bot.modelRouting ?? false,
     teamChatAmbientEnabled: bot.teamChatAmbientEnabled ?? false,
     teamChatRules: bot.teamChatRules ?? "",
     webhookConfigured: Boolean(bot.webhookSecretId),
@@ -349,6 +351,7 @@ export function createRepos(prisma: PrismaClient) {
         modelProvider?: string | null;
         modelId?: string | null;
         thinkingLevel?: string | null;
+        modelRouting?: boolean;
         initialMessage?: {
           role: "user" | "bot" | "system";
           blocks: MessageBlock[];
@@ -366,6 +369,7 @@ export function createRepos(prisma: PrismaClient) {
       let modelProvider = input.modelProvider ?? null;
       let modelId = input.modelId ?? null;
       let thinkingLevel = input.thinkingLevel ?? null;
+      let modelRouting = input.modelRouting ?? true;
       if (input.parentBotId) {
         const parent = await prisma.bot.findFirst({
           where: {
@@ -375,6 +379,7 @@ export function createRepos(prisma: PrismaClient) {
           },
         });
         if (!parent) throw new IsolationError();
+        if (input.modelRouting === undefined) modelRouting = parent.modelRouting;
         if (!modelId) {
           modelProvider = parent.modelProvider ?? null;
           modelId = parent.modelId ?? null;
@@ -418,6 +423,7 @@ export function createRepos(prisma: PrismaClient) {
               modelProvider,
               modelId,
               thinkingLevel,
+              modelRouting,
             },
           });
           const thread = await tx.thread.create({

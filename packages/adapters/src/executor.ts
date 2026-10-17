@@ -220,6 +220,7 @@ import {
 import { loadAgentMemoryContext } from "./memory-context.js";
 import type { MemoryProviderResolver } from "./memory-provider-factory.js";
 import { selectMemoryTools } from "./memory-tools.js";
+import { refreshRoutedBotModel } from "./model-router.js";
 import {
   isCatalogModelChoice,
   selectConfiguredModel,
@@ -1512,9 +1513,41 @@ export function createRunExecutor(deps: ExecutorDeps) {
         }
         const runDeployment = deps.deploymentModelKey ? resolveDeploymentModel() : null;
         const runtimeFallback = runtimeFallbackModel(deps.runtime);
+        let modelBot = bot;
+        let modelCredential = overrideCredential;
+        if (bot.modelRouting) {
+          try {
+            const route = await refreshRoutedBotModel(
+              deps,
+              { userId: run.userId, spaceId: run.spaceId },
+              bot,
+              {
+                prompt: task.prompt,
+                instructions: bot.instructions,
+                needsVision: (currentTurnImages?.length ?? 0) > 0,
+              },
+            );
+            if (route) {
+              modelBot = {
+                ...bot,
+                modelProvider: route.provider,
+                modelId: route.id,
+                thinkingLevel: route.thinkingLevel,
+              };
+              modelCredential = await findModelCredential(
+                deps.prisma,
+                run,
+                route.provider,
+                route.id,
+              );
+            }
+          } catch (error) {
+            getLogger().error("model router", error);
+          }
+        }
         const selected = selectConfiguredModel({
-          bot,
-          overrideCredential,
+          bot: modelBot,
+          overrideCredential: modelCredential,
           defaultCredential,
           settings,
           deployment: runDeployment,

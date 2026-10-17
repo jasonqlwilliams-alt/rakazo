@@ -7,7 +7,12 @@ import {
   normalizeCreateBotProfile,
   type ThinkingLevel,
 } from "@rakazo/contracts";
-import { connectedModelOptions, modelOptionKey, parseModelOptionKey } from "@rakazo/core";
+import {
+  connectedModelOptions,
+  MODEL_ROUTER_KEY,
+  modelOptionKey,
+  parseModelOptionKey,
+} from "@rakazo/core";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { Pressable, ScrollView, Text, TextInput, View } from "react-native";
@@ -67,9 +72,11 @@ export default function BotSettingsScreen() {
         setColor(next.color);
         setComputerMode(next.computerMode);
         setModelKey(
-          next.modelProvider && next.modelId
-            ? modelOptionKey(next.modelProvider, next.modelId)
-            : "",
+          next.modelRouting
+            ? MODEL_ROUTER_KEY
+            : next.modelProvider && next.modelId
+              ? modelOptionKey(next.modelProvider, next.modelId)
+              : "",
         );
         setThinkingLevel(next.thinkingLevel ?? "");
       })
@@ -126,8 +133,15 @@ export default function BotSettingsScreen() {
     : t("Space default");
 
   const modelChoices: PickerChoice[] = useMemo(() => {
-    const choices: PickerChoice[] = [{ key: "", label: spaceDefaultLabel }];
-    if (modelKey && !connectedOptions.some((option) => option.key === modelKey)) {
+    const choices: PickerChoice[] = [
+      { key: MODEL_ROUTER_KEY, label: t("Auto") },
+      { key: "", label: spaceDefaultLabel },
+    ];
+    if (
+      modelKey &&
+      modelKey !== MODEL_ROUTER_KEY &&
+      !connectedOptions.some((option) => option.key === modelKey)
+    ) {
       choices.push({
         key: modelKey,
         label: parseModelOptionKey(modelKey)?.modelId ?? modelKey,
@@ -137,7 +151,7 @@ export default function BotSettingsScreen() {
       choices.push({ key: option.key, label: option.label });
     }
     return choices;
-  }, [connectedOptions, modelKey, spaceDefaultLabel]);
+  }, [connectedOptions, modelKey, spaceDefaultLabel, t]);
 
   const thinkingChoices: PickerChoice[] = useMemo(
     () => [
@@ -193,7 +207,8 @@ export default function BotSettingsScreen() {
     setError(null);
     try {
       const profile = normalizeCreateBotProfile({ name, title, description });
-      const selected = modelKey ? parseModelOptionKey(modelKey) : null;
+      const routing = modelKey === MODEL_ROUTER_KEY;
+      const selected = routing || !modelKey ? null : parseModelOptionKey(modelKey);
       const input: {
         botId: string;
         name?: string;
@@ -203,6 +218,7 @@ export default function BotSettingsScreen() {
         modelProvider?: string | null;
         modelId?: string | null;
         thinkingLevel?: ThinkingLevel | null;
+        modelRouting?: boolean;
       } = { botId };
       if (profile.name !== bot.name) input.name = profile.name;
       if (profile.title !== bot.title) input.title = profile.title;
@@ -214,11 +230,12 @@ export default function BotSettingsScreen() {
         (selected?.provider ?? null) !== (bot.modelProvider ?? null) ||
         (selected?.modelId ?? null) !== (bot.modelId ?? null);
       const thinkingChanged = (thinkingLevel || null) !== (bot.thinkingLevel ?? null);
-      if (modelChanged) {
+      if (routing !== Boolean(bot.modelRouting)) input.modelRouting = routing;
+      if (!routing && modelChanged) {
         input.modelProvider = selected?.provider ?? null;
         input.modelId = selected?.modelId ?? null;
       }
-      if (modelMetaReady && (modelChanged || thinkingChanged)) {
+      if (!routing && modelMetaReady && (modelChanged || thinkingChanged)) {
         input.thinkingLevel = thinkingOptions.length
           ? ((thinkingLevel || null) as ThinkingLevel | null)
           : null;
@@ -377,7 +394,7 @@ export default function BotSettingsScreen() {
             >
               <Text style={{ color: tokens.foreground }}>{selectedModelLabel}</Text>
             </Pressable>
-            {thinkingOptions.length ? (
+            {modelKey !== MODEL_ROUTER_KEY && thinkingOptions.length ? (
               <>
                 <Text
                   style={{

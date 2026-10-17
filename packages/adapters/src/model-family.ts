@@ -36,6 +36,17 @@ function compareVersions(a: readonly number[], b: readonly number[]) {
   return 0;
 }
 
+/** Family key and version for ranking. A date-like component is not a version. */
+export function modelFamilyParts(modelId: string): { key: string; version: number[] } | undefined {
+  const family = modelFamily(modelId.trim());
+  if (!family) return undefined;
+  return { key: family.key, version: family.version.filter((part) => part < 1000) };
+}
+
+export function compareModelVersions(a: readonly number[], b: readonly number[]) {
+  return compareVersions(a, b);
+}
+
 type Sibling<T> = { model: T; version: number[]; sameStage: boolean };
 
 /** Whether `candidate` is closer than `current`, where `direction` 1 wants the newer version. */
