@@ -4,9 +4,9 @@
     "slug": "rakazo",
     "owner": "inbox-zero",
     "scheme": "rakazo",
-    "version": "1.0.3",
-    "orientation": "portrait",
-    "userInterfaceStyle": "dark",
+    "version": "1.0.5",
+    "orientation": "default",
+    "userInterfaceStyle": "automatic",
     "icon": "./assets/icon.png",
     "plugins": [
       [
@@ -19,15 +19,27 @@
       ],
       "expo-router",
       "expo-secure-store",
-      ["expo-audio", { "enableBackgroundPlayback": false }],
+      [
+        "expo-audio",
+        {
+          "enableBackgroundPlayback": false,
+          "microphonePermission": "Rakazo uses the microphone for voice calls with your bots."
+        }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "speechRecognitionPermission": "Rakazo turns your speech into messages during voice calls.",
+          "microphonePermission": "Rakazo uses the microphone for voice calls with your bots."
+        }
+      ],
       "expo-localization",
       "@react-native-vector-icons/ionicons",
       "@react-native-vector-icons/material-design-icons",
       [
         "expo-notifications",
         {
-          "icon": "./assets/notification-icon.png",
-          "color": "#2965EC"
+          "icon": "./assets/notification-icon.png"
         }
       ],
       [
@@ -35,11 +47,12 @@
         {
           "photosPermission": "Rakazo uses your photo library so you can attach images to a bot message.",
           "cameraPermission": "Rakazo uses the camera so you can attach photos to a bot message.",
-          "microphonePermission": false
+          "microphonePermission": "Rakazo uses the microphone for voice calls with your bots."
         }
       ],
       "expo-sharing",
-      "./plugins/with-worklets-headers"
+      "./plugins/with-worklets-headers",
+      "./plugins/with-scene-lifecycle"
     ],
     "ios": {
       "bundleIdentifier": "com.rakazo.app",

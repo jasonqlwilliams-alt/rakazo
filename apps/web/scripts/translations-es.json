@@ -1,4 +1,5 @@
 {
+  "Today": "Hoy",
   " (unread)": " (sin leer)",
   "macOS will not ask for extra permission if you let bots run on this Mac. They run as you.": "MacOS no pedirá permisos extra si dejas que los bots se ejecuten en esta Mac: se ejecutan como tú.",
   "Your OS will not ask for extra permission if you let bots run on {hostLabel}. They run as you.": "Tu sistema operativo no pedirá permisos extra si dejas que los bots se ejecuten en {hostLabel}: se ejecutan como tú.",
@@ -727,5 +728,7 @@
   "Authorize this server so agents can use its tools. A popup opens.": "Autoriza este servidor para que tus agentes usen sus herramientas. Se abre una ventana emergente.",
   "Make sure nothing is still running on this computer.": "Asegúrate de que no quede nada en ejecución en este ordenador.",
   "Nothing is still running": "No queda nada en ejecución",
-  "Credentials are encrypted and never sent to the model.": "Las credenciales se cifran y nunca se envían al modelo."
+  "Credentials are encrypted and never sent to the model.": "Las credenciales se cifran y nunca se envían al modelo.",
+  "Rename section": "Renombrar sección",
+  "Could not rename section": "No se pudo renombrar la sección"
 }

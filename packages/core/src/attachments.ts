@@ -1,10 +1,9 @@
+import type { AttachmentMimeType, MessageBlock } from "@rakazo/contracts";
 import {
   ATTACHMENT_MAX_BASE64_LENGTH,
   ATTACHMENT_MAX_BYTES,
-  type AttachmentMimeType,
   isAllowedAttachmentMimeType,
   isAttachmentImageMimeType,
-  type MessageBlock,
 } from "@rakazo/contracts";
 
 export class AttachmentValidationError extends Error {
@@ -14,16 +13,32 @@ export class AttachmentValidationError extends Error {
   }
 }
 
+/**
+ * Validates base64 without a grouped-repetition regex over the whole string.
+ * `/^(?:[A-Za-z0-9+/]{4})*(...)?$/` stack-overflows V8's regex engine on
+ * inputs in the megabytes-of-characters range — reproduced directly: a 5 MiB
+ * string throws `RangeError: Maximum call stack size exceeded` on `.test()`.
+ * At the current 10 MiB attachment limit, base64 expansion (4/3) puts any
+ * attachment over ~3.75 MiB squarely in that range, so this crashes on a
+ * routine, non-malicious upload. A flat, ungrouped `[chars]*` quantifier does
+ * not have this problem; padding is checked separately since it can only
+ * ever be the trailing 0-2 characters.
+ */
+function isWellFormedBase64(value: string): boolean {
+  const paddingMatch = /={1,2}$/.exec(value);
+  const paddingLength = paddingMatch ? paddingMatch[0].length : 0;
+  const body = paddingLength > 0 ? value.slice(0, value.length - paddingLength) : value;
+  if (body.includes("=")) return false;
+  return /^[A-Za-z0-9+/]*$/.test(body);
+}
+
 export function decodeAttachmentBase64(contentBase64: string): Uint8Array {
   const normalized = contentBase64.trim();
   if (!normalized) throw new AttachmentValidationError("Attachment content is empty");
   if (normalized.length > ATTACHMENT_MAX_BASE64_LENGTH) {
     throw new AttachmentValidationError("Attachment exceeds the 10 MiB limit");
   }
-  if (
-    normalized.length % 4 !== 0 ||
-    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(normalized)
-  ) {
+  if (normalized.length % 4 !== 0 || !isWellFormedBase64(normalized)) {
     throw new AttachmentValidationError("Attachment content is not valid base64");
   }
   let bytes: Buffer;
@@ -122,7 +137,10 @@ const EXTENSION_MIME_TYPES: Record<string, AttachmentMimeType> = {
   ".md": "text/markdown",
   ".markdown": "text/markdown",
   ".csv": "text/csv",
+  ".html": "text/html",
+  ".htm": "text/html",
   ".json": "application/json",
+  ".zip": "application/zip",
 };
 
 const MIME_TYPE_EXTENSIONS: Record<AttachmentMimeType, string> = {
@@ -134,13 +152,22 @@ const MIME_TYPE_EXTENSIONS: Record<AttachmentMimeType, string> = {
   "text/plain": ".txt",
   "text/markdown": ".md",
   "text/csv": ".csv",
+  "text/html": ".html",
   "application/json": ".json",
+  "application/zip": ".zip",
 };
 
 export function inferAttachmentMimeType(
   name: string,
   reportedType?: string,
 ): AttachmentMimeType | null {
+  if (
+    reportedType === "application/x-zip-compressed" ||
+    reportedType === "application/x-zip" ||
+    reportedType === "multipart/x-zip"
+  ) {
+    return "application/zip";
+  }
   const dot = name.lastIndexOf(".");
   const extensionType = dot < 0 ? undefined : EXTENSION_MIME_TYPES[name.slice(dot).toLowerCase()];
   // Some browsers and native document pickers report Markdown as text/plain.
@@ -171,21 +198,13 @@ export function attachmentsForBot<T extends { botId: string }>(
   return attachments.filter((attachment) => attachment.botId === botId);
 }
 
-export function userTurnBlocksForRun(
-  trigger: string,
-  runId: string,
-  messages: Array<{
-    id?: string;
-    role: string;
-    runId?: string | null;
-    blocks: MessageBlock[];
-  }>,
-  sourceMessageId?: string | null,
-): MessageBlock[] | undefined {
+export function userTurnMessageForRun<
+  T extends { id?: string; role: string; runId?: string | null; blocks: MessageBlock[] },
+>(trigger: string, runId: string, messages: T[], sourceMessageId?: string | null): T | undefined {
   if (trigger !== "user") return undefined;
   return messages.find(
     (message) =>
       message.role === "user" &&
       (sourceMessageId ? message.id === sourceMessageId : message.runId === runId),
-  )?.blocks;
+  );
 }

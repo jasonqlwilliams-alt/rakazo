@@ -23,6 +23,7 @@ import type {
   SandboxProvider,
   ScreenRequest,
   ScreenSession,
+  TerminalRequest,
 } from "@rakazo/adapter-kit";
 import { boundedSandboxCommandTimeoutMs } from "@rakazo/core";
 import { boxResponseError, wrapBoxCall } from "./box-errors.js";
@@ -32,6 +33,7 @@ import {
   shouldSkipPortableWorkspaceFile,
 } from "./computer-workspace.js";
 import { LinuxDesktop, PREPARE_LINUX_DESKTOP } from "./linux-desktop.js";
+import { sandboxCommandArgv } from "./sandbox-command-environment.js";
 import { withAbort } from "./web-ssrf.js";
 
 const BOX_API_BASE = "https://ascii.dev/api/box/v1";
@@ -252,7 +254,10 @@ export class BoxSandboxProvider implements SandboxProvider {
       return;
     }
     const timeoutMs = boundedSandboxCommandTimeoutMs(request.timeoutMs);
-    const argv = request.argv.length ? request.argv : ["true"];
+    const argv = sandboxCommandArgv({
+      ...request,
+      argv: request.argv.length ? request.argv : ["true"],
+    });
     const environment = Object.entries(request.env ?? {}).map(([key, value]) => `${key}=${value}`);
     const command = [...(environment.length ? ["env", ...environment] : []), ...argv]
       .map(shellQuote)
@@ -294,6 +299,9 @@ export class BoxSandboxProvider implements SandboxProvider {
     context: AdapterContext,
   ): Promise<ScreenSession> {
     return this.desktops.connectScreen(computer, request, context);
+  }
+  async connectTerminal(computer: ComputerRef, request: TerminalRequest, context: AdapterContext) {
+    return this.desktops.connectTerminal(computer, request, context);
   }
   async setScreenControl(
     computer: ComputerRef,

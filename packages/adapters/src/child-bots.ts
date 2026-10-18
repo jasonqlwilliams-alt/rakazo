@@ -1,4 +1,5 @@
-import { rm } from "node:fs/promises";
+import { lstat, realpath, rm, unlink } from "node:fs/promises";
+import path from "node:path";
 import type {
   AdapterContext,
   AgentHomeStore,
@@ -20,8 +21,15 @@ import {
   withTransactionRetry,
 } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
+import { BrowserStoppedReleaseError } from "./computer-screens.js";
 import { toComputerRef } from "./computer-support.js";
-import { checkpointAndRecordComputerWorkspace } from "./computer-workspace.js";
+import {
+  checkpointAndRecordComputerWorkspace,
+  isTeamBotFolderName,
+  removeComputerWorkspaceDirectories,
+  teamBrowserProfileName,
+  withCleanupDeadline,
+} from "./computer-workspace.js";
 import { resolveAgentHomePath } from "./home.js";
 import { removePiBotSessions } from "./pi-session.js";
 
@@ -358,7 +366,9 @@ export async function destroyBot(
     ...activeRuns.map((run) => deps.jobs.cancel(runJobKey(run.id))),
     ...routines.map((routine) => deps.jobs.cancel(routineJobKey(routine.id))),
   ]);
-  await releaseTeamComputerScreen(deps, bot, dedicated?.id, context);
+  const sharedComputer = await releaseTeamComputerScreen(deps, bot, dedicated?.id, context, {
+    cancelRunWork: true,
+  });
   if (dedicated?.providerRef) {
     await deps.sandbox.destroy(toComputerRef(dedicated), context).catch(() => undefined);
   }
@@ -454,6 +464,10 @@ export async function destroyBot(
       force: true,
     }).catch(() => undefined);
   }
+  await removeTeamBrowserProfile(deps, bot.id, sharedComputer, context);
+  await removeTeamBotWorkspace(deps, bot, context).catch((error) => {
+    getLogger().error("team bot folder cleanup", error);
+  });
   const artifactStore = deps.artifacts;
   if (artifactStore) {
     await removeStoredArtifacts(artifactStore, deletion.artifactKeys, context);
@@ -582,9 +596,155 @@ async function releaseTeamComputerScreen(
   bot: LifecycleBot,
   dedicatedId: string | undefined,
   context: AdapterContext,
+  options?: { cancelRunWork?: boolean },
 ) {
-  if (!bot.computerId || bot.computerId === dedicatedId) return;
+  const computer = await sharedTeamComputer(deps, bot, dedicatedId);
+  if (!computer?.providerRef) return computer;
+  // archive_bot runs inside the parent bot, and hard delete can omit botId.
+  // Release this bot's screen; the caller's lease must not veto or redirect it.
+  // Profile removal waits on the browser stop. A timed-out or failed stop can
+  // return while Chromium is still exiting, and that process would recreate
+  // the profile. A stop that succeeds and then fails while reacquiring the
+  // screen lock or clearing the slot still removes the profile.
+  try {
+    await deps.sandbox.releaseScreen?.(toComputerRef(computer), {
+      ...context,
+      botId: bot.id,
+      screenLeaseId: undefined,
+      ...(options?.cancelRunWork ? { cancelRunWork: true } : {}),
+    });
+  } catch (error) {
+    getLogger().error("team screen release", error);
+    if (error instanceof BrowserStoppedReleaseError) return computer;
+    return null;
+  }
+  return computer;
+}
+
+async function sharedTeamComputer(
+  deps: BotLifecycleDeps,
+  bot: LifecycleBot,
+  dedicatedId: string | undefined,
+) {
+  if (!bot.computerId || bot.computerId === dedicatedId) return null;
   const computer = await deps.prisma.computer.findUnique({ where: { id: bot.computerId } });
-  if (!computer?.providerRef) return;
-  await deps.sandbox.releaseScreen?.(toComputerRef(computer), context).catch(() => undefined);
+  if (computer?.scope !== "team") return null;
+  return computer;
+}
+
+const REMOTE_TEAM_SANDBOX_KINDS = new Set(["e2b", "daytona", "box", "createos"]);
+// The bot is already deleted; whatever this misses is removed when the computer next boots.
+const LIVE_CLEANUP_BUDGET_MS = 10_000;
+
+async function removeTeamBrowserProfile(
+  deps: BotLifecycleDeps,
+  botId: string,
+  computer: {
+    scope: string;
+    homeKey: string;
+    kind: string;
+    providerRef: string | null;
+    state: string;
+  } | null,
+  context: AdapterContext,
+) {
+  if (computer?.scope !== "team") return;
+  const name = teamBrowserProfileName(botId);
+  if (!name) return;
+  const profileContext = { ...context, botId, screenLeaseId: undefined };
+  // Only a running computer is cleaned now, since connecting can start a stopped one; others
+  // drop the profile on their next boot. Only a remote provider's stored copy is deleted on
+  // the server. See removeTeamBotWorkspace.
+  if (computer.providerRef && deps.sandbox.releaseScreen && computer.state === "running") {
+    await withCleanupDeadline(profileContext, LIVE_CLEANUP_BUDGET_MS, (cleanupContext) =>
+      removeComputerWorkspaceDirectories(
+        deps.sandbox,
+        toComputerRef(computer),
+        ".browser-profiles",
+        [name],
+        cleanupContext,
+      ),
+    ).catch((error) => {
+      getLogger().error("team browser profile cleanup", error);
+    });
+  }
+  if (!REMOTE_TEAM_SANDBOX_KINDS.has(computer.kind)) return;
+  const homeDir = resolveAgentHomePath(deps.home, computer.homeKey, deps.dataDir ?? "./data");
+  await removeContainedDirectory(homeDir, ".browser-profiles", name).catch((error) => {
+    getLogger().error("team browser profile cleanup", error);
+  });
+}
+
+/** A Team Computer that is not running removes the folder when it next boots. */
+async function removeTeamBotWorkspace(
+  deps: BotLifecycleDeps,
+  bot: LifecycleBot,
+  context: AdapterContext,
+) {
+  if (!isTeamBotFolderName(bot.id)) return;
+  // Look the computer up by space: a bot moved to its own computer can still have a folder here.
+  const computer = await deps.prisma.computer.findUnique({
+    where: { scopeKey: computerScopeKey("team", bot.spaceId) },
+  });
+  if (!computer) return;
+  // Remote providers keep a stored copy that only the server writes, and replacement computers
+  // restore from it. Any other home may be mounted by a running computer, where a bot could
+  // swap bots/ for a symlink between the checks and rm, so it is only cleaned inside the computer.
+  if (REMOTE_TEAM_SANDBOX_KINDS.has(computer.kind)) {
+    const homeDir = resolveAgentHomePath(deps.home, computer.homeKey, deps.dataDir ?? "./data");
+    await removeContainedDirectory(homeDir, "bots", bot.id).catch((error) => {
+      getLogger().error("team bot folder cleanup", error);
+    });
+  }
+  if (computer.state !== "running" || !computer.providerRef) return;
+  const folderContext = { ...context, botId: bot.id, screenLeaseId: undefined };
+  await withCleanupDeadline(folderContext, LIVE_CLEANUP_BUDGET_MS, (cleanupContext) =>
+    removeComputerWorkspaceDirectories(
+      deps.sandbox,
+      toComputerRef(computer),
+      "bots",
+      [bot.id],
+      cleanupContext,
+    ),
+  ).catch((error) => {
+    getLogger().error("team bot folder cleanup", error);
+  });
+}
+
+/** Delete one folder in the team home. A symlinked parent is refused; a final symlink is unlinked. */
+async function removeContainedDirectory(root: string, parent: string, name: string) {
+  const target = path.join(root, parent, name);
+  const info = await lstat(target).catch((error: unknown) => {
+    if (isMissing(error)) return null;
+    throw error;
+  });
+  if (!info) return;
+  const parentInfo = await lstat(path.dirname(target)).catch((error: unknown) => {
+    if (isMissing(error)) return null;
+    throw error;
+  });
+  if (!parentInfo || parentInfo.isSymbolicLink() || !parentInfo.isDirectory()) {
+    throw new Error("folder escapes the team home");
+  }
+  if (info.isSymbolicLink()) {
+    await unlink(target);
+    return;
+  }
+  const resolvedRoot = await realpath(root);
+  const resolvedTarget = await realpath(target);
+  const relative = path.relative(resolvedRoot, resolvedTarget);
+  if (
+    path.dirname(resolvedTarget) !== path.join(resolvedRoot, parent) ||
+    path.basename(resolvedTarget) !== name ||
+    relative === "" ||
+    relative.startsWith("..") ||
+    path.isAbsolute(relative)
+  ) {
+    throw new Error("folder escapes the team home");
+  }
+  await rm(resolvedTarget, { recursive: true, force: true });
+}
+
+function isMissing(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
 }

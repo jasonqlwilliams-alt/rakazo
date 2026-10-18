@@ -1,4 +1,5 @@
 import type {
+  CacheCapabilities as ConnectionCacheCapabilities,
   ConnectionCatalogItem,
   ResearchErrorCode,
   ResearchFindings,
@@ -52,6 +53,26 @@ export interface AgentModelOAuthCredential {
   accountId?: string;
 }
 
+/**
+ * Why a stored OAuth credential is being dropped. `terminal-refresh-failure`
+ * means the provider permanently rejected the refresh token; `account-changed`
+ * means a refreshed token belongs to a different account than the stored one.
+ */
+export type ModelCredentialRetireReason = "terminal-refresh-failure" | "account-changed";
+
+/**
+ * Identity of the stored credential material whose refresh attempt triggered
+ * retirement. Implementations compare access, refresh, and expiry to the secret
+ * still on the credential row so a concurrently persisted newer credential —
+ * same row rewritten by a successful refresh, or a reconnect — is not deleted
+ * by the stale failure.
+ */
+export interface ModelCredentialFailedState {
+  access: string;
+  refresh: string;
+  expires: number;
+}
+
 export interface PortableFile {
   path: string;
   content: Uint8Array;
@@ -65,12 +86,16 @@ export interface ComputerRef {
   providerRef: string;
   /** True when the provider created an empty replacement rather than reconnecting existing state. */
   fresh?: boolean;
+  /** True when this call started a stopped computer. Providers that cannot tell leave it unset. */
+  started?: boolean;
 }
 
 export interface CommandRequest {
   argv: string[];
   cwd?: string;
   env?: Record<string, string>;
+  /** Remove these variables after all environment overlays, including inherited values. */
+  unsetEnv?: string[];
   pty?: boolean;
   /** Maximum wall-clock runtime before the command and its descendants are terminated. */
   timeoutMs?: number;
@@ -87,6 +112,13 @@ export interface ScreenRequest {
   interactive?: boolean;
   /** Fences an interactive stream so an older lease cannot revoke its replacement. */
   controlToken?: string;
+}
+
+export interface TerminalRequest {
+  /** The active screen control token; a terminal exists only while the user holds control. */
+  controlToken: string;
+  /** Workspace-relative starting directory. */
+  cwd?: string;
 }
 
 export interface ScreenSession {
@@ -111,7 +143,8 @@ export type ComputerAction =
   | { kind: "scroll"; direction: "up" | "down"; amount?: number }
   | { kind: "wait"; ms: number }
   | { kind: "open"; path: string }
-  | { kind: "launch"; application: string; uri?: string };
+  | { kind: "launch"; application: string; uri?: string }
+  | { kind: "focus"; application: string; uri?: string };
 
 export interface ComputerObservation {
   frameId: string;
@@ -153,6 +186,17 @@ export interface AgentToolExecutionResult {
   details: unknown;
 }
 
+/** Hooks for a tool call that can report output before it returns. */
+export interface AgentToolExecutionObserver {
+  /**
+   * A shell command has already produced output and is still running.
+   * Resolves with the final redacted result when the process exits.
+   */
+  onShellStillRunning?: (
+    completion: Promise<{ stdout: string; stderr: string; code: number }>,
+  ) => void;
+}
+
 /** Ephemeral completion data for audit hooks; result contents must be redacted before persistence. */
 export interface AgentToolCompletion {
   name: string;
@@ -188,6 +232,7 @@ export interface ConnectorTool {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  /** Declared effect. `false` forces approval; `true` never relaxes the name-based gate. */
   readOnly?: boolean;
   /** In-process routing metadata. It is never exposed to the model. */
   route?: ConnectorRoute;
@@ -213,7 +258,7 @@ export interface ConnectorCall {
 export type ConnectorEvent =
   | { type: "log"; message: string }
   | { type: "result"; data: unknown }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string; logIds?: string[] };
 
 export interface ConnectorCapabilities {
   discover: boolean;
@@ -258,6 +303,10 @@ export interface MemorySearchResult {
  */
 export type MemoryCommitMode = "append" | "replace";
 
+/** A full-document save lost the race to another writer. The caller should read again. */
+export const MEMORY_REVISION_CONFLICT_ERROR =
+  "Shared memory changed since it was read. Read the latest version and save again.";
+
 export interface MemoryCommitRequest {
   scope: "bot" | "user";
   botId?: string;
@@ -265,6 +314,8 @@ export interface MemoryCommitRequest {
   content: string;
   /** Defaults to `replace` for whole-document callers such as import. */
   mode?: MemoryCommitMode;
+  /** When set, commit fails if the live document revision is no longer this value. */
+  expectedRevision?: number;
   sourceRunId?: string;
   sourceThreadId?: string;
 }
@@ -361,10 +412,18 @@ export interface AgentSteeringMessage {
   images?: AgentInputImage[];
 }
 
+/** Adapter-supplied cache policy metadata; absent fields mean unknown. */
+export type CacheCapabilities = ConnectionCacheCapabilities;
+
 export interface AgentRunModel {
+  cacheCapabilities?: CacheCapabilities;
   provider: string;
   id: string;
   apiKey?: string;
+  /** Cloudflare account id stored with a gateway BYOK credential. */
+  accountId?: string;
+  /** Cloudflare AI Gateway id stored with a gateway BYOK credential. */
+  gatewayId?: string;
   baseUrl?: string;
   /** Whether this custom connection accepts standard reasoning_effort. */
   reasoning?: boolean;
@@ -374,7 +433,7 @@ export interface AgentRunModel {
   maxImagesPerPrompt?: number;
   /** Maximum completion tokens sent to the model endpoint. */
   maxTokens?: number;
-  /** Context-window limit used when sizing prompts and completions. */
+  /** Generic connection context window, overriding catalog limits when configured. */
   contextWindow?: number;
   /** Preferred thinking effort for reasoning models; clamped to the model’s supported set. */
   thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | null;
@@ -382,27 +441,54 @@ export interface AgentRunModel {
   oauth?: {
     credential: AgentModelOAuthCredential;
     persist?: (credential: AgentModelOAuthCredential) => Promise<void>;
+    /** Drop the stored credential after a terminal provider rejection. */
+    retire?: (
+      reason: ModelCredentialRetireReason,
+      detail?: string,
+      failed?: ModelCredentialFailedState,
+    ) => Promise<boolean | undefined>;
   };
 }
 
+export type AgentContextStrategy = "current" | "retrieval" | "snapshots" | "cache-aware";
+export const DEFAULT_CONTEXT_STRATEGY: AgentContextStrategy = "retrieval";
+
 export interface AgentRunRequest {
+  /** Awaited producer-side accounting, independent of event-consumer cancellation. */
+  onUsage?: (event: Extract<AgentRuntimeEvent, { type: "usage" }>) => void | Promise<void>;
+  contextStrategy?: AgentContextStrategy;
+  /** Exclusive workflow cost bucket; retrieval tool turns are detected for answer calls. */
+  usageOperationKind?: UsageOperationKind;
   botId: string;
   threadId: string;
   runId: string;
   sourceMessageId?: string | null;
   prompt: string;
   instructions: string;
-  history: Array<{ id?: string; role: "user" | "assistant" | "system"; content: string }>;
+  history: Array<{
+    id?: string;
+    createdAt?: string;
+    role: "user" | "assistant" | "system";
+    content: string;
+    /** Images attached to this message, hydrated only for recent user turns. */
+    images?: AgentInputImage[];
+  }>;
   currentTurnImages?: AgentInputImage[];
   tools: ConnectorTool[];
   model: AgentRunModel;
+  /** Ordered, user-selected models eligible after provider unavailability. */
+  fallbackModels?: Array<Pick<AgentRunModel, "provider" | "id">>;
+  /** Resolve one configured backup lazily so healthy primary turns do no extra auth work. */
+  resolveFallbackModel?: (provider: string, modelId: string) => Promise<AgentRunModel>;
+  /** Persist the selected backup against the active run lease before requesting it. */
+  onModelChange?: (provider: string, modelId: string) => Promise<void>;
   /** Resolve an explicitly requested helper model within the active user and space scope. */
   resolveModel?: (provider: string, modelId: string) => Promise<AgentRunModel>;
   resumeFromCheckpoint?: string;
   script?: ScriptedTurn[];
   /**
-   * Bot-message wakes may finish with no text and no tools (FYI silence).
-   * When set, skip synthetic empty-turn fallbacks.
+   * FYI bot-message wakes and scheduled routines may finish with no text.
+   * When set, skip synthetic empty-turn fallbacks (including after tools).
    */
   allowSilentEmpty?: boolean;
   /**
@@ -419,6 +505,7 @@ export interface AgentRunRequest {
     args: Record<string, unknown>,
     executionId: string,
     route?: ConnectorRoute,
+    observer?: AgentToolExecutionObserver,
   ) => Promise<unknown>;
   /** Called after a tool returns; implementations must not persist raw result contents. */
   onToolCompleted?: (completion: AgentToolCompletion) => Promise<void> | void;
@@ -429,7 +516,11 @@ export interface AgentRunRequest {
 export interface ScriptedTurn {
   assistant?: string;
   toolCalls?: Array<{ name: string; args: Record<string, unknown> }>;
-  ask?: { text: string; detail?: string; actions?: Array<{ id: string; label: string }> };
+  ask?: {
+    text: string;
+    detail?: string;
+    actions?: Array<{ id: string; label: string }>;
+  };
   takeover?: { reason: string };
   files?: Array<{ path: string; content: string }>;
   memory?: Array<{
@@ -439,6 +530,37 @@ export interface ScriptedTurn {
     mode?: MemoryCommitMode;
   }>;
   complete?: boolean;
+}
+
+/** Provider-neutral per-call measurements. Null means unavailable, never free/zero.
+ * Input excludes cache buckets. Reasoning is already included in output.
+ */
+export interface AgentUsage {
+  inputTokens: number | null;
+  outputTokens: number | null;
+  cacheReadTokens?: number | null;
+  cacheWriteTokens?: number | null;
+  cacheWrite1hTokens?: number | null;
+  reasoningTokens?: number | null;
+  totalTokens?: number | null;
+  costUsd?: number | null;
+  costSource?: string | null;
+  pricingVersion?: string | null;
+  usageSource?: string | null;
+}
+
+export type UsageOperationKind = "answer" | "setup" | "retrieval" | "subagent" | "compaction";
+
+export interface ModelCallObserver {
+  beforeCall(call: {
+    provider: string;
+    modelId: string;
+    inputTokensEstimate: number;
+    maxOutputTokens: number;
+    /** Explicit adapter-known write bucket required by this request, not a billing prediction. */
+    cacheWriteRetention?: "1h";
+  }): string | Promise<string>;
+  afterCall(reservationId: string, usage: AgentUsage | null): void | Promise<void>;
 }
 
 export type AgentRuntimeEvent =
@@ -455,7 +577,12 @@ export type AgentRuntimeEvent =
       /** Provider-generated tool status rather than assistant-authored narration. */
       activity?: true;
     }
-  | { type: "tool"; name: string; args: Record<string, unknown>; executionId: string }
+  | {
+      type: "tool";
+      name: string;
+      args: Record<string, unknown>;
+      executionId: string;
+    }
   | {
       type: "ask";
       text: string;
@@ -463,7 +590,16 @@ export type AgentRuntimeEvent =
       actions?: Array<{ id: string; label: string }>;
     }
   | { type: "takeover"; reason: string }
-  | { type: "usage"; inputTokens: number; outputTokens: number; provider: string; model: string }
+  | ({
+      type: "usage";
+      /** Producer-side onUsage completed; consumers must not account it again. */
+      accounted?: boolean;
+      provider: string;
+      model: string;
+      callId?: string;
+      operationKind?: UsageOperationKind;
+      agentId?: string;
+    } & AgentUsage)
   | { type: "checkpoint"; blob: string }
   | {
       type: "subagent";
@@ -509,6 +645,8 @@ export interface VoiceSynthesizeRequest {
   text: string;
   voiceId: string;
   apiKey: string;
+  /** Connection speech model. Fish uses this, then `FISH_TTS_MODEL`, then s2.1-pro. */
+  model?: string;
   signal?: AbortSignal;
 }
 
@@ -542,6 +680,8 @@ export type BackgroundJob = {
     payload: BackgroundJobPayloads[Name];
     availableAt?: Date;
     replaceKey?: string;
+    /** Cap retried executions; omit to use the job queue's default. */
+    maxAttempts?: number;
   };
 }[BackgroundJobName];
 
@@ -551,8 +691,17 @@ export type BackgroundJobHandlers = {
 
 export interface SecretRecord {
   id: string;
+  /** Opaque reference; persisted in the existing ciphertext column. */
+  ref: string;
   ciphertext: string;
 }
+
+export type SecretContext = string | { recordId: string; signal?: AbortSignal };
+export interface SecretPutOptions {
+  recordId?: string;
+  ephemeral?: boolean;
+}
+export type SecretChangeListener = (ref: string) => void;
 
 export interface ArtifactPut {
   name: string;
@@ -566,6 +715,8 @@ export interface NotificationMessage {
   body: string;
   botId: string;
   threadId: string;
+  /** Group chat that owns threadId, so a tap does not open the bot's direct thread. */
+  groupId?: string;
 }
 
 /** A product-authored transactional email, independent of its delivery vendor. */
@@ -765,7 +916,13 @@ export type BrowserActKind = "click" | "fill" | "type";
 
 export type BrowserActStep =
   | { kind: "click"; ref: string }
-  | { kind: "fill" | "type"; ref: string; text: string };
+  | {
+      kind: "fill" | "type";
+      ref: string;
+      text: string;
+      /** Refuse the step unless the page is on this origin when it is applied. */
+      origin?: string;
+    };
 
 export interface BrowserActRequest {
   actions: BrowserActStep[];
@@ -908,4 +1065,77 @@ export interface ResearchObservation {
   findings?: ResearchFindings;
   errorCode?: ResearchErrorCode;
   receipt: ResearchReceipt;
+}
+
+/**
+ * Optional auto-allow check for a consequential tool call. Core still runs when
+ * no hosted verifier is configured; the LLM judge is the default adapter.
+ */
+export interface AutoReviewCapabilities {
+  /** True when the adapter never leaves the process (tests / Playwright). */
+  offline?: boolean;
+  /** True when a hosted vendor key is not required. */
+  keyless?: boolean;
+}
+
+export type AutoReviewDecision = "pass" | "ask" | "error";
+
+export interface AutoReviewMatchingRule {
+  effect: string;
+  matchKind: string;
+  matchValue: string;
+}
+
+export interface AutoReviewRequest {
+  toolName: string;
+  connectorKind: string;
+  /** Caller must already redact secrets and sensitive keys. */
+  args: Record<string, unknown>;
+  userTask: string;
+  botDescription: string;
+  matchingRules: AutoReviewMatchingRule[];
+}
+
+export interface AutoReviewResult {
+  decision: AutoReviewDecision;
+  reason?: string;
+  model: string;
+}
+
+/** Provider-neutral subscription state. Vendor-specific states map onto these. */
+export type BillingSubscriptionStatus =
+  | "trialing"
+  | "active"
+  | "past_due"
+  | "incomplete"
+  | "canceled";
+
+export interface BillingPrice {
+  /** Minor currency units, e.g. cents. */
+  amount: number;
+  currency: string;
+  interval: "day" | "week" | "month" | "year";
+  intervalCount: number;
+}
+
+/** Full subscription state for one billing customer, re-fetched from the provider on every sync. */
+export interface BillingSubscriptionSnapshot {
+  subscriptionId: string;
+  subscriptionItemId: string;
+  priceId: string;
+  status: BillingSubscriptionStatus;
+  seats: number;
+  trialEndsAt: Date | null;
+  currentPeriodEndsAt: Date | null;
+  cancelAtPeriodEnd: boolean;
+  endedAt: Date | null;
+}
+
+export interface BillingCheckoutRequest {
+  customerId: string;
+  seats: number;
+  /** Omitted when the customer has already used its trial. */
+  trialDays?: number;
+  successUrl: string;
+  cancelUrl: string;
 }
