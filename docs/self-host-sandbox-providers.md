@@ -10,7 +10,7 @@ for the sharing and persistence contract.
 | --- | --- | --- |
 | Local Docker computers | `SANDBOX_PROVIDER=docker` | `SANDBOX_SUPERVISOR_TOKEN`, computer image, Docker socket for supervisor |
 | UI only, no computers | `SANDBOX_PROVIDER=none` | No provider credential; published-images Compose still requires `SANDBOX_SUPERVISOR_TOKEN` |
-| Managed remote desktop | `e2b` / `daytona` / `box` | `SANDBOX_SUPERVISOR_TOKEN` (published-images Compose), matching API key (and optional URL knobs for Daytona/Box) |
+| Managed remote desktop | See [remote providers](./self-host.md#choosing-a-computer-provider) | `SANDBOX_SUPERVISOR_TOKEN` (published-images Compose) and the provider's API key |
 
 Published-images [Compose](../infra/compose/docker-compose.images.yml) defaults to **`docker`**.
 It always starts the supervisor and requires `SANDBOX_SUPERVISOR_TOKEN`, including for `none`
@@ -45,13 +45,9 @@ Runs API/web without provisioning bot computers.
 
 ## Remote providers
 
-Set `SANDBOX_PROVIDER` to exactly one of:
-
-| Value | Credential | Notes |
-| --- | --- | --- |
-| `e2b` | `E2B_API_KEY` | Hosted sandboxes |
-| `daytona` | `DAYTONA_API_KEY` | Optional `DAYTONA_API_URL`, `DAYTONA_TARGET`, `DAYTONA_SNAPSHOT` |
-| `box` | `BOX_API_KEY` | Optional `BOX_API_URL` (see `.env.example`) |
+Choose the provider and its credentials in the
+[self-hosting guide](./self-host.md#choosing-a-computer-provider). See
+[`.env.example`](../.env.example) for optional settings.
 
 Remote paths still need a working API/worker; they do not replace Postgres or
 the web UI. They require egress to the provider. For air-gapped hosts prefer
@@ -67,7 +63,7 @@ docker compose --env-file .env -f docker-compose.images.yml up -d
 curl -fsS http://127.0.0.1:3100/internal/health
 ```
 
-Confirm `sandbox` equals the intended provider (`e2b`, `daytona`, or `box`).
+Confirm `sandbox` equals the intended provider.
 HTTP 200 alone does not verify a remote provider: a missing API key falls back to `sandbox: "none"`.
 A present but invalid key still reports the selected provider. Open a bot's computer to verify
 provisioning and desktop access.

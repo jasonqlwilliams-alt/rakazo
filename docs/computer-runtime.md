@@ -3,7 +3,7 @@
 Rakazo keeps the agent runtime and the computer runtime separate:
 
 ```text
-chat/API -> one Pi agent session -> Rakazo computer tools -> SandboxProvider -> E2B / Daytona / Box
+chat/API -> one Pi agent session -> Rakazo computer tools -> SandboxProvider -> E2B / Daytona / CreateOS / Box
                                                    |-> Docker
                                                    |-> desktop/fake
 
@@ -18,7 +18,7 @@ Each workspace gets one Team Computer by default. Bots share its files and insta
 
 Each active Team bot gets its own X display and Chrome process, with a persistent Chrome profile keyed to the bot's identity. Logins, cookies, and browser history are independent. Profiles are never cloned from another bot, merged, or deleted when a desktop is released. Both bots keep their changes; reopening a bot uses its existing profile even when its display slot changes. Team runs use fenced per-bot database leases: different bots can operate concurrently, and one bot has only one computer driver at a time.
 
-Docker, E2B, Daytona, and Box use the same Linux desktop lifecycle commands. Remote adapters share allocation, observation, actions, and control handling; provider code supplies command execution, persistent workspace paths, and screen URLs. Box exposes the shared runtime through protected `host <port> --private` routes instead of its default desktop API. View and control use separate revocable websocket capabilities; teardown disconnects clients before a display slot is reused. A failed teardown keeps the slot reserved for retry.
+Docker, E2B, Daytona, and Box use the same Linux desktop lifecycle commands. CreateOS implements the same `SandboxProvider` contract through its desktop API. Box exposes the shared runtime through protected `host <port> --private` routes instead of its default desktop API. View and control use separate revocable websocket capabilities; teardown disconnects clients before a display slot is reused. A failed teardown keeps the slot reserved for retry.
 
 Desktop stacks start lazily when a bot uses graphical tools. There is no configured desktop cap by default; a computer can host 100 or more bot profiles, and simultaneous desktops are bounded by its RAM, CPU, process capacity, and available local debugger ports. Docker operators can set a positive `SANDBOX_TEAM_SCREEN_LIMIT` to cap active desktops (`0` leaves it unset). Requests beyond an explicit limit return `MULTI_SCREEN_UNAVAILABLE`; shell and file tools remain available. All desktops share one token-protected screen gateway, so adding desktops does not require publishing more ports. Each view/control capability targets a unique local Unix socket; recycling a display cannot redirect an old connection to its next bot. Inactive bots do not each run Chrome. Closing a viewer leaves the desktop intact. Run completion releases that bot's desktop, and whole-computer idle shutdown stops remaining processes while preserving the workspace. There is no separate inactivity timer per desktop. Persistent profiles consume disk but do not require a running Chrome process.
 

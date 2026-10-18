@@ -164,11 +164,6 @@ your first bot.
 For deployment, provider selection, backups, and upgrades, see the
 [self-hosting guide](./docs/self-host.md).
 
-To use CreateOS, set `SANDBOX_PROVIDER=createos` and `CREATEOS_SANDBOX_API_KEY`.
-Optional `CREATEOS_SANDBOX_BASE_URL`, `CREATEOS_SANDBOX_SHAPE`, and
-`CREATEOS_SANDBOX_ROOTFS` default to `https://api.sb.createos.sh`, `s-2vcpu-2gb`,
-and `desktop:1`.
-
 ## Desktop and mobile
 
 The Electron and Expo apps are clients of the same Rakazo API used by the web app.
