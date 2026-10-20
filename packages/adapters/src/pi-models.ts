@@ -119,10 +119,11 @@ function buildPiCatalog(): PiCatalogEntry[] {
     const oauth = Boolean(provider.auth.oauth);
     const auth: PiCatalogAuth = apiKey && oauth ? "both" : oauth ? "oauth" : "api-key";
     const signInMeta = SUBSCRIPTION_SIGN_IN_PROVIDERS[provider.id];
+    const providerName = signInMeta?.providerName ?? provider.name;
     const oauthLabel =
       signInMeta?.loginLabel ?? provider.auth.oauth?.loginLabel ?? provider.auth.oauth?.name;
     const subscription = Boolean(provider.auth.oauth?.isSubscription);
-    const billing = catalogBilling(provider.id, provider.name, {
+    const billing = catalogBilling(provider.id, providerName, {
       apiKey,
       oauth,
     });
@@ -134,7 +135,7 @@ function buildPiCatalog(): PiCatalogEntry[] {
       const thinkingLevels = getSupportedThinkingLevels(model) as ThinkingLevel[];
       entries.push({
         provider: provider.id,
-        providerName: provider.name,
+        providerName,
         id: model.id,
         label: catalogModelLabel(model.id, model.name, modelIds),
         billing,

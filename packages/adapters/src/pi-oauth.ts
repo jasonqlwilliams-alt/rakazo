@@ -39,9 +39,13 @@ export const SUBSCRIPTION_SIGN_IN_PROVIDERS: Record<
     loginLabel: string;
     hint: string;
     billing: string;
+    /** Display name when it differs from Pi's provider name. */
+    providerName?: string;
   }
 > = {
   [CHATGPT_OAUTH_PROVIDER]: {
+    // Pi labels this provider "(legacy)", but it is Rakazo's ChatGPT sign-in.
+    providerName: "OpenAI Codex",
     mode: "device-code",
     loginLabel: "Sign in with ChatGPT Plus/Pro",
     hint: "ChatGPT Plus/Pro",
