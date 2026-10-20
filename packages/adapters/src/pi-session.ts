@@ -1,9 +1,8 @@
 import type { Dirent } from "node:fs";
-import { readdir, rm, stat } from "node:fs/promises";
+import { appendFile, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { type AgentMessage, type Branch, JsonlSessionRepo } from "@earendil-works/pi-agent-core";
-import { BACKGROUND_CONTEXT } from "@earendil-works/pi-agent-core/harness/context";
-import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { uuidv7 } from "@earendil-works/pi-ai";
 import { getLogger } from "@rakazo/logging";
 
 export const PI_SESSION_RETENTION_DAYS = 30;
@@ -146,34 +145,66 @@ export interface PiSessionRecorder {
 }
 
 /**
- * Persists the low-level Agent transcript using Pi's native JSONL session format.
+ * Pi's version-4 JSONL session format, frozen as pi-agent-core 0.87.1 wrote it.
+ * Pi 1.0 dropped this storage; keeping the format means transcripts written
+ * before and after that upgrade share one layout and one set of helpers.
+ */
+const PI_SESSION_FORMAT_VERSION = 4;
+const PI_SESSION_STORAGE_VERSION = 1;
+
+function sessionDirectoryName(cwd: string): string {
+  return `--${cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
+}
+
+function sessionFileSuffix(runId: string): string {
+  return `_${encodeURIComponent(runId)}.jsonl`;
+}
+
+function sessionFileName(createdAt: number, runId: string): string {
+  return `${new Date(createdAt).toISOString().replace(/[:.]/g, "-")}${sessionFileSuffix(runId)}`;
+}
+
+function branchTip(seq: number, value: string | null) {
+  return { kind: "value", op: "set", seq, namespace: "pi.branch.tip", key: "main", value };
+}
+
+/**
+ * Persists the low-level Agent transcript in Pi's version-4 JSONL session format:
+ * a header line, the opening branch tip, then one `[entry, branchTip]` line per entry.
  * This is deliberately a recorder only: Rakazo remains responsible for running
  * the agent and for its product history in Postgres.
  */
 export class PiJsonlSessionRecorder implements PiSessionRecorder {
   private readonly cwd: string;
   private readonly sessionsRoot: string;
-  private readonly fs: NodeExecutionEnv;
 
   constructor(sessionsRoot: string, cwd = process.cwd()) {
     this.cwd = path.resolve(cwd);
     this.sessionsRoot = path.resolve(sessionsRoot);
-    this.fs = new NodeExecutionEnv({ cwd: this.cwd });
   }
 
   async start(input: PiSessionStart): Promise<PiSessionHandle> {
     const sessionsRoot = piSessionBotRoot(this.sessionsRoot, input.userId, input.botId);
-    const repo = new JsonlSessionRepo({
-      fileSystem: this.fs,
-      sessionsRoot,
+    const directory = path.join(sessionsRoot, sessionDirectoryName(this.cwd));
+    await mkdir(directory, { recursive: true });
+    const suffix = sessionFileSuffix(input.runId);
+    if ((await readdir(directory)).some((name) => name.endsWith(suffix))) {
+      throw new Error(`Pi session already exists: ${input.runId}`);
+    }
+    const createdAt = Date.now();
+    const file = path.join(directory, sessionFileName(createdAt, input.runId));
+    const header = {
+      v: PI_SESSION_FORMAT_VERSION,
+      kind: "header",
+      id: input.runId,
+      storageVersion: PI_SESSION_STORAGE_VERSION,
+      createdAt,
+      cwd: this.cwd,
+    };
+    // Exclusive create: a duplicate run id fails instead of overwriting a transcript.
+    await writeFile(file, `${JSON.stringify(header)}\n${JSON.stringify(branchTip(1, null))}\n`, {
+      flag: "wx",
     });
-    const session = await repo.create(
-      {
-        id: input.runId,
-        cwd: this.cwd,
-      },
-      BACKGROUND_CONTEXT,
-    );
     try {
       await prunePiSessionFiles(sessionsRoot);
     } catch (error) {
@@ -183,10 +214,7 @@ export class PiJsonlSessionRecorder implements PiSessionRecorder {
         error,
       });
     }
-    const handle = new BestEffortPiSession(
-      await session.createBranch("main", null, BACKGROUND_CONTEXT),
-      input.runId,
-    );
+    const handle = new BestEffortPiSession(file, input.runId);
 
     await handle.appendCustomEntry("rakazo_context", {
       rakazoUserId: input.userId,
@@ -209,26 +237,44 @@ export class PiJsonlSessionRecorder implements PiSessionRecorder {
 
 class BestEffortPiSession implements PiSessionHandle {
   private failureLogged = false;
+  private seq = 1;
+  private tip: string | null = null;
+  private pending: Promise<void> = Promise.resolve();
 
   constructor(
-    private readonly session: Branch,
+    private readonly file: string,
     private readonly runId: string,
   ) {}
 
-  async appendMessage(message: AgentMessage): Promise<void> {
-    try {
-      await this.session.appendMessage(message, BACKGROUND_CONTEXT);
-    } catch (error) {
-      this.logFailure("message", error);
-    }
+  appendMessage(message: AgentMessage): Promise<void> {
+    return this.append("message", { type: "message", message });
   }
 
-  async appendCustomEntry(customType: string, data: Record<string, string>): Promise<void> {
-    try {
-      await this.session.appendCustomEntry(customType, data, BACKGROUND_CONTEXT);
-    } catch (error) {
-      this.logFailure("context", error);
-    }
+  appendCustomEntry(customType: string, data: Record<string, string>): Promise<void> {
+    return this.append("context", { type: "custom", customType, data });
+  }
+
+  /** Appends are chained so `seq` and `parentId` stay ordered when calls overlap. */
+  private append(kind: string, body: Record<string, unknown>): Promise<void> {
+    this.pending = this.pending.then(async () => {
+      try {
+        const id = uuidv7();
+        const entry = {
+          kind: "entry",
+          id,
+          parentId: this.tip,
+          ...body,
+          seq: this.seq + 1,
+          timestamp: Date.now(),
+        };
+        await appendFile(this.file, `${JSON.stringify([entry, branchTip(this.seq + 2, id)])}\n`);
+        this.seq += 2;
+        this.tip = id;
+      } catch (error) {
+        this.logFailure(kind, error);
+      }
+    });
+    return this.pending;
   }
 
   private logFailure(kind: string, error: unknown): void {
