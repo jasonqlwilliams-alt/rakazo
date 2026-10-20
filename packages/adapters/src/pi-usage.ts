@@ -74,7 +74,7 @@ export function normalizePiUsage(
         : null),
     costSource:
       providerCost !== undefined ? "provider-reported" : costKnown ? "pi-catalog-estimate" : null,
-    pricingVersion: providerCost !== undefined ? null : costKnown ? "pi-ai-0.87.1" : null,
+    pricingVersion: providerCost !== undefined ? null : costKnown ? "pi-ai-1.3.0" : null,
     usageSource: reported.size ? "provider-reported-via-pi" : "pi-normalized",
   };
 }

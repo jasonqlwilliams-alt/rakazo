@@ -1,5 +1,7 @@
 import { once } from "node:events";
+import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import path from "node:path";
 import type { Api, Context, Model } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import type { AgentRuntimeEvent } from "@rakazo/adapter-kit";
@@ -492,6 +494,24 @@ describe("Pi usage accounting", () => {
       pricingVersion: null,
       cacheWriteTokens: null,
     });
+  });
+  it("stamps catalog estimates with the pinned Pi price table", async () => {
+    const manifest = JSON.parse(
+      await readFile(path.join(import.meta.dirname, "../package.json"), "utf8"),
+    ) as { dependencies: Record<string, string> };
+    const pinned = manifest.dependencies["@earendil-works/pi-ai"];
+    expect(pinned).toMatch(/^\d+\.\d+\.\d+$/);
+    // A Pi bump that leaves this stamp behind would mislabel which prices estimated a row.
+    expect(
+      normalizePiUsage(
+        {
+          input: 10,
+          output: 2,
+          cost: { input: 0.00001, output: 0.00004, cacheRead: 0, cacheWrite: 0, total: 0.00005 },
+        },
+        { cost: { input: 1, output: 20, cacheRead: 0, cacheWrite: 0 } },
+      ),
+    ).toMatchObject({ costSource: "pi-catalog-estimate", pricingVersion: `pi-ai-${pinned}` });
   });
   it("keeps compatible zero pricing unknown", () => {
     expect(
