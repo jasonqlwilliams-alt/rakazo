@@ -879,7 +879,8 @@ describe("Pi runtime ordered model fallback", () => {
       expect(providerState.stream).toHaveBeenCalledTimes(1);
       expect(appendMessage).toHaveBeenCalledWith(
         emptyTerminal
-          ? { ...targetMessage, content: [{ type: "text", text: "partial" }] }
+          ? // Pi records the requested thinking level on each assistant message.
+            { ...targetMessage, content: [{ type: "text", text: "partial" }], thinkingLevel: "off" }
           : targetMessage,
       );
       expect(
