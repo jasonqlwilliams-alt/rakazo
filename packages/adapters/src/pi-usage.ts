@@ -53,7 +53,7 @@ export function normalizePiUsage(
       : null;
   const costKnown =
     !!model.cost &&
-    Object.values(model.cost).some((rate) => rate > 0) &&
+    Object.values(model.cost).some((rate) => typeof rate === "number" && rate > 0) &&
     inputTokens !== null &&
     outputTokens !== null &&
     (model.cost.cacheRead === 0 || cacheReadTokens !== null) &&
