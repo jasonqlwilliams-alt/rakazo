@@ -1,33 +1,54 @@
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { describe, expect, it } from "vitest";
-import { supplementPiModels } from "./pi-current-models.js";
-import { listPiCatalog } from "./pi-models.js";
+import { resolveProviderModel } from "./model-family.js";
+import { listPiCatalog, resolveCatalogEntry } from "./pi-models.js";
 import { modelsForRequest } from "./pi-runtime.js";
 
 describe("current model compatibility", () => {
   it.each([
-    ["anthropic", "claude-sonnet-5-5"],
-    ["openai-codex", "gpt-6.1-sol"],
-  ])("exposes %s/%s in the picker and runtime with valid efforts", (provider, id) => {
-    const model = modelsForRequest(
-      { model: { provider, id } } as Parameters<typeof modelsForRequest>[0],
-      provider,
-    ).getModel(provider, id);
-    expect(model).toBeDefined();
-    expect(getSupportedThinkingLevels(model!)).toEqual(["low", "medium", "high", "xhigh", "max"]);
-    expect(model?.input).toContain("image");
-    expect(
-      listPiCatalog().find((entry) => entry.provider === provider && entry.id === id)
-        ?.thinkingLevels,
-    ).toEqual(["low", "medium", "high", "xhigh", "max"]);
-  });
-  it("does not replace a provider library model when applying the supplement again", () => {
-    const models = supplementPiModels(builtinModels());
-    const model = models.getModel("anthropic", "claude-sonnet-5-5");
-    supplementPiModels(models);
-    expect(models.getModel("anthropic", "claude-sonnet-5-5")).toBe(model);
-    expect(model?.compat).toMatchObject({
+    [
+      "anthropic",
+      "claude-sonnet-5-5",
+      "Claude Sonnet 5.5",
+      ["low", "medium", "high", "xhigh", "max"],
+    ],
+    [
+      "anthropic",
+      "claude-haiku-5-5",
+      "Claude Haiku 5.5",
+      ["off", "low", "medium", "high", "xhigh", "max"],
+    ],
+    ["google", "gemini-4-argon", "Gemini 4 Argon", ["low", "medium", "high"]],
+    // Codex maps minimal to low upstream, as it already does for gpt-6-sol.
+    [
+      "openai-codex",
+      "gpt-6.1-sol",
+      "GPT-6.1 Sol",
+      ["minimal", "low", "medium", "high", "xhigh", "max"],
+    ],
+  ])(
+    "resolves %s/%s from the Pi catalog in the picker and runtime",
+    (provider, id, name, levels) => {
+      const models = modelsForRequest(
+        { model: { provider, id } } as Parameters<typeof modelsForRequest>[0],
+        provider,
+      );
+      const model = models.getModel(provider, id);
+      expect(model).toMatchObject({ provider, id, name });
+      // The catalog lists the id itself, so lookup never falls back to a cloned sibling.
+      expect(resolveProviderModel(models, provider, id)).toBe(model);
+      expect(getSupportedThinkingLevels(model!)).toEqual(levels);
+      expect(model?.input).toContain("image");
+
+      const entry = listPiCatalog().find((item) => item.provider === provider && item.id === id);
+      expect(entry).toMatchObject({ provider, id, thinkingLevels: levels });
+      expect(resolveCatalogEntry(provider, id)).toEqual(entry);
+    },
+  );
+
+  it("keeps Claude Sonnet 5.5's adaptive-thinking compatibility from the provider library", () => {
+    expect(builtinModels().getModel("anthropic", "claude-sonnet-5-5")?.compat).toMatchObject({
       forceAdaptiveThinking: true,
       supportsTemperature: false,
       supportsStrictTools: true,
