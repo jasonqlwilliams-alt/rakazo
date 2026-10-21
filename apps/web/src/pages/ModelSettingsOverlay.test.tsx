@@ -1,151 +1,471 @@
-/**
- * @vitest-environment jsdom
- */
+// @vitest-environment jsdom
+
+import type { ComponentProps, ReactNode } from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-vi.mock("@lingui/core/macro", () => ({
-  t: (strings: TemplateStringsArray, ...values: unknown[]) =>
-    String.raw({ raw: strings }, ...values),
-}));
-vi.mock("@lingui/react/macro", () => ({
-  useLingui: () => ({
-    t: (strings: TemplateStringsArray, ...values: unknown[]) =>
-      String.raw({ raw: strings }, ...values),
-  }),
-  Trans: ({ children }: { children?: unknown }) => children,
-  Plural: ({ value }: { value: number }) => `${value}`,
+const models = vi.hoisted(() => ({
+  list: vi.fn(),
+  backups: vi.fn(async () => []),
+  setBackups: vi.fn(async () => ({ ok: true })),
+  credentials: vi.fn(),
+  connect: vi.fn(),
+  disconnect: vi.fn(),
+  setDefault: vi.fn(),
+  probeOpenAiCompatible: vi.fn(),
+  beginOAuth: vi.fn(),
+  cancelOAuth: vi.fn(),
+  completeOAuth: vi.fn(),
+  finishOAuth: vi.fn(),
+  submitOAuthCode: vi.fn(),
 }));
 
-const rpcMock = vi.hoisted(() => ({
-  models: {
-    list: vi.fn(),
-    credentials: vi.fn(),
-    setDefault: vi.fn(),
-    connect: vi.fn(),
+vi.mock("../lib/rpc", () => ({
+  selectedSpaceId: () => "space-1",
+  rpc: {
+    models,
+    me: vi.fn(),
   },
-  me: vi.fn(),
 }));
-vi.mock("../lib/rpc", () => ({ rpc: rpcMock }));
+vi.mock("../lib/localized-provider-hint", () => ({
+  localizedProviderHint: () => "API key",
+}));
+vi.mock("@lingui/react/macro", () => {
+  const t = (parts: TemplateStringsArray, ...values: unknown[]) =>
+    parts.reduce(
+      (text, part, index) => `${text}${index > 0 ? String(values[index - 1]) : ""}${part}`,
+      "",
+    );
+  return {
+    useLingui: () => ({ t }),
+    Trans: ({ children }: { children?: ReactNode }) => children,
+    Plural: ({ one, other, value }: { one: string; other: string; value: number }) =>
+      value === 1 ? one : other,
+  };
+});
+vi.mock("@rakazo/ui-web", () => {
+  const Pass = ({ children }: { children?: ReactNode }) => <div>{children}</div>;
+  return {
+    AlertDialog: ({ open, children }: { open?: boolean; children?: ReactNode }) =>
+      open ? <div>{children}</div> : null,
+    AlertDialogAction: ({
+      children,
+      onClick,
+      disabled,
+    }: {
+      children?: ReactNode;
+      onClick?: () => void;
+      disabled?: boolean;
+    }) => (
+      <button type="button" disabled={disabled} onClick={onClick}>
+        {children}
+      </button>
+    ),
+    AlertDialogCancel: ({ children, onClick }: { children?: ReactNode; onClick?: () => void }) => (
+      <button type="button" onClick={onClick}>
+        {children}
+      </button>
+    ),
+    AlertDialogContent: Pass,
+    AlertDialogDescription: Pass,
+    AlertDialogFooter: Pass,
+    AlertDialogHeader: Pass,
+    AlertDialogTitle: Pass,
+    Button: ({
+      children,
+      onClick,
+      disabled,
+      variant: _variant,
+      size: _size,
+      ...props
+    }: ComponentProps<"button"> & { variant?: string; size?: string }) => (
+      <button type="button" disabled={disabled} onClick={onClick} {...props}>
+        {children}
+      </button>
+    ),
+    Dialog: Pass,
+    DialogClose: Pass,
+    DialogContent: Pass,
+    DialogDescription: Pass,
+    DialogHeader: Pass,
+    DialogTitle: Pass,
+    Input: (props: ComponentProps<"input">) => <input {...props} />,
+    ModelThinkingOptions: () => null,
+    NativeSelect: (props: ComponentProps<"select">) => <select {...props} />,
+    NativeSelectOption: (props: ComponentProps<"option">) => <option {...props} />,
+  };
+});
 
+import { rpc } from "../lib/rpc";
 import { ModelSettingsOverlay } from "./ModelSettingsOverlay";
 
-const xaiEntry = (id: string, label: string) => ({
-  provider: "xai",
-  providerName: "xAI",
-  id,
-  label,
-  billing: "Uses your xAI API key.",
+const STORED_PLACEHOLDER = "Paste a replacement key";
+const deepseekEntry = {
+  provider: "deepseek",
+  providerName: "DeepSeek",
+  id: "deepseek-chat",
+  label: "DeepSeek Chat",
+  billing: "API key",
   auth: "api-key" as const,
-  subscription: false,
-});
+  authHint: "API key",
+};
+const compatibleEntry = {
+  provider: "openai-compatible",
+  providerName: "OpenAI-compatible",
+  id: "custom",
+  label: "Custom model",
+  billing: "Your server",
+  auth: "api-key" as const,
+  authHint: "Custom server",
+  placeholder: true,
+};
 
-let container: HTMLDivElement;
-let root: ReturnType<typeof createRoot>;
-
-beforeEach(() => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  rpcMock.models.list.mockResolvedValue([
-    xaiEntry("grok-4.6", "Grok 4.6"),
-    xaiEntry("grok-4.7", "Grok 4.7"),
-  ]);
-  rpcMock.models.credentials.mockResolvedValue([
-    { id: "c1", provider: "xai", label: "xAI", hasKey: true, isDefault: true, modelId: "grok-4.8" },
-  ]);
-  rpcMock.me.mockResolvedValue({ defaultProvider: "xai", defaultModel: "grok-4.8" });
-  rpcMock.models.setDefault.mockResolvedValue({ ok: true });
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-});
-
-afterEach(() => {
-  act(() => root.unmount());
-  container.remove();
-  vi.clearAllMocks();
-});
-
-async function settle() {
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
+function account(provider: string, modelId: string) {
+  return {
+    userId: "user-1",
+    email: "ada@example.test",
+    name: "Ada",
+    spaceId: "space-1",
+    isDeploymentOwner: false,
+    needsModel: false,
+    defaultProvider: provider,
+    defaultModel: modelId,
+    hostCredentialProvider: null,
+    hostCredentialSource: null,
+    computerHost: null,
+    canChooseHostComputer: false,
+    sandboxProvider: "docker",
+    avatarStyle: "robot" as const,
+    billingEnabled: false,
+    ticketBoardEnabled: false,
+  };
 }
 
-function button(name: string) {
-  const found = [...container.querySelectorAll("button")].find(
-    (element) => element.textContent === name,
+function buttons(container: HTMLElement, text: string) {
+  const found = [...container.querySelectorAll("button")].filter((entry) =>
+    entry.textContent?.includes(text),
   );
-  if (!found) throw new Error(`No button named ${name}`);
+  if (found.length === 0) throw new Error(`Missing button: ${text}`);
   return found;
 }
 
-function modelIdInput() {
-  return container.querySelector<HTMLInputElement>('input[aria-label="Model id"]');
+function keyField(container: HTMLElement) {
+  const input = container.querySelector("#model-api-key");
+  if (!(input instanceof HTMLInputElement)) throw new Error("Missing API key field");
+  return input;
 }
 
-function typeInto(input: HTMLInputElement, value: string) {
-  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-  act(() => {
+function compatibleKeyField(container: HTMLElement) {
+  const input = [...container.querySelectorAll("input")].find(
+    (entry) => entry.getAttribute("aria-label") === "API key",
+  );
+  if (!(input instanceof HTMLInputElement)) throw new Error("Missing compatible API key field");
+  return input;
+}
+
+async function typeInto(input: HTMLInputElement, value: string) {
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
     setter?.call(input, value);
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
 
-describe("model settings with an unlisted model id", () => {
-  it("shows the saved id, switches to the list, and saves a typed id", async () => {
-    act(() => root.render(<ModelSettingsOverlay onClose={() => undefined} embedded />));
-    await settle();
-
-    expect(modelIdInput()?.value).toBe("grok-4.8");
-    expect(container.textContent).toContain("Active model");
-    expect(container.textContent).toContain("grok-4.8");
-
-    act(() => button("Use a listed model").click());
-    expect(modelIdInput()).toBeNull();
-    expect(container.querySelector('[role="combobox"][aria-label="Model"]')?.textContent).toContain(
-      "Grok 4.6",
-    );
-
-    act(() => button("Other model id").click());
-    const input = modelIdInput();
-    expect(input?.value).toBe("grok-4.8");
-    typeInto(input!, "grok-4.9");
-    act(() => button("Use this model").click());
-    await settle();
-
-    expect(rpcMock.models.setDefault).toHaveBeenCalledWith({
-      provider: "xai",
-      modelId: "grok-4.9",
-    });
+async function renderSettings() {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  await act(async () => {
+    root.render(<ModelSettingsOverlay embedded onClose={() => undefined} />);
   });
+  await act(async () => {
+    await Promise.resolve();
+  });
+  return {
+    container,
+    async unmount() {
+      await act(async () => {
+        root.unmount();
+      });
+      container.remove();
+    },
+  };
+}
+
+beforeEach(() => {
+  vi.mocked(rpc.me).mockResolvedValue(account("deepseek", "deepseek-chat"));
+  models.list.mockResolvedValue([deepseekEntry]);
+  models.credentials.mockResolvedValue([]);
+  models.connect.mockResolvedValue({});
+  models.disconnect.mockResolvedValue(undefined);
 });
 
-describe("model settings for the operator's local models", () => {
-  it("offers only the listed local models", async () => {
-    rpcMock.models.list.mockResolvedValue([
-      {
-        provider: "local",
-        providerName: "Local (Ollama / LM Studio)",
-        id: "qwen3:4b",
-        label: "qwen3:4b",
-        billing: "Runs on your own hardware.",
-        auth: "api-key" as const,
-        subscription: false,
-      },
-    ]);
-    rpcMock.models.credentials.mockResolvedValue([
-      { id: "c1", provider: "local", label: "Local", hasKey: true, isDefault: true },
-    ]);
-    rpcMock.me.mockResolvedValue({ defaultProvider: "local", defaultModel: "qwen3:4b" });
-    act(() => root.render(<ModelSettingsOverlay onClose={() => undefined} embedded />));
-    await settle();
+afterEach(() => {
+  document.body.replaceChildren();
+  vi.clearAllMocks();
+});
 
-    expect(container.querySelector('[role="combobox"][aria-label="Model"]')?.textContent).toContain(
-      "qwen3:4b",
+it("shows a stored BYOK key when provider settings reopen", async () => {
+  models.credentials.mockResolvedValue([
+    {
+      id: "cred-deepseek",
+      provider: "deepseek",
+      label: "DeepSeek",
+      hasKey: true,
+      isDefault: true,
+      modelId: "deepseek-chat",
+    },
+  ]);
+
+  const view = await renderSettings();
+  try {
+    const input = keyField(view.container);
+    expect(input.value).toBe("");
+    expect(input.placeholder).toBe(STORED_PLACEHOLDER);
+    expect(input.type).toBe("password");
+    expect(view.container.textContent).not.toContain("sk-");
+
+    await typeInto(input, "sk-replacement-key");
+    expect(keyField(view.container).value).toBe("sk-replacement-key");
+
+    await typeInto(keyField(view.container), "");
+    expect(keyField(view.container).value).toBe("");
+    expect(keyField(view.container).placeholder).toBe(STORED_PLACEHOLDER);
+
+    await typeInto(keyField(view.container), "sk-replacement-key");
+    await act(async () => {
+      buttons(view.container, "Replace API key")[0]?.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(models.connect).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "deepseek", apiKey: "sk-replacement-key" }),
     );
-    const labels = [...container.querySelectorAll("button")].map((element) => element.textContent);
+    expect(keyField(view.container).value).toBe("");
+    expect(keyField(view.container).placeholder).toBe(STORED_PLACEHOLDER);
+
+    models.credentials.mockResolvedValue([]);
+    await act(async () => {
+      buttons(view.container, "Disconnect")[0]?.click();
+    });
+    const confirm = buttons(view.container, "Disconnect");
+    await act(async () => {
+      confirm[confirm.length - 1]?.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(models.disconnect).toHaveBeenCalledWith({ provider: "deepseek" });
+    expect(keyField(view.container).value).toBe("");
+    expect(keyField(view.container).placeholder).toBe("sk-…");
+  } finally {
+    await view.unmount();
+  }
+});
+
+it("leaves the key field empty until a key is saved", async () => {
+  const view = await renderSettings();
+  try {
+    const input = keyField(view.container);
+    expect(input.value).toBe("");
+    expect(input.placeholder).toBe("sk-…");
+    expect(view.container.textContent).not.toContain(STORED_PLACEHOLDER);
+  } finally {
+    await view.unmount();
+  }
+});
+
+it("shows Cloudflare account and gateway fields for a new and a saved connection", async () => {
+  const entry = {
+    provider: "cloudflare-ai-gateway",
+    providerName: "Cloudflare AI Gateway",
+    id: "workers-ai/@cf/meta/llama-3.1-8b-instruct",
+    label: "Llama",
+    billing: "API key",
+    auth: "api-key" as const,
+    authHint: "API key",
+  };
+  vi.mocked(rpc.me).mockResolvedValue(account(entry.provider, entry.id));
+  models.list.mockResolvedValue([entry]);
+  models.credentials.mockResolvedValue([]);
+
+  const fresh = await renderSettings();
+  try {
+    const accountId = fresh.container.querySelector("#cloudflare-account-id");
+    const gatewayId = fresh.container.querySelector("#cloudflare-gateway-id");
+    expect(accountId).toBeInstanceOf(HTMLInputElement);
+    expect(gatewayId).toBeInstanceOf(HTMLInputElement);
+    expect((accountId as HTMLInputElement).value).toBe("");
+    expect((gatewayId as HTMLInputElement).value).toBe("");
+    expect(fresh.container.textContent).toContain("Account ID");
+    expect(fresh.container.textContent).toContain("Gateway ID");
+  } finally {
+    await fresh.unmount();
+  }
+
+  models.credentials.mockResolvedValue([
+    {
+      id: "cred-cf",
+      provider: entry.provider,
+      label: "Cloudflare AI Gateway",
+      hasKey: true,
+      isDefault: true,
+      accountId: "acct1234",
+      gatewayId: "gateway-1",
+      modelId: entry.id,
+    },
+  ]);
+  const saved = await renderSettings();
+  try {
+    expect(
+      (saved.container.querySelector("#cloudflare-account-id") as HTMLInputElement).value,
+    ).toBe("acct1234");
+    expect(
+      (saved.container.querySelector("#cloudflare-gateway-id") as HTMLInputElement).value,
+    ).toBe("gateway-1");
+  } finally {
+    await saved.unmount();
+  }
+});
+
+it("shows a stored OpenAI-compatible key and stays empty when none is saved", async () => {
+  vi.mocked(rpc.me).mockResolvedValue(account("openai-compatible", "deepseek-chat"));
+  models.list.mockResolvedValue([compatibleEntry]);
+  models.credentials.mockResolvedValue([
+    {
+      id: "cred-compatible",
+      provider: "openai-compatible",
+      label: "DeepSeek",
+      hasKey: true,
+      isDefault: true,
+      baseUrl: "https://api.deepseek.com/v1",
+      modelId: "deepseek-chat",
+    },
+  ]);
+
+  const stored = await renderSettings();
+  try {
+    const input = compatibleKeyField(stored.container);
+    expect(input.value).toBe("");
+    expect(input.placeholder).toBe(STORED_PLACEHOLDER);
+  } finally {
+    await stored.unmount();
+  }
+
+  models.credentials.mockResolvedValue([
+    {
+      id: "cred-compatible",
+      provider: "openai-compatible",
+      label: "Local",
+      hasKey: false,
+      isDefault: true,
+      baseUrl: "http://127.0.0.1:8000/v1",
+      modelId: "local-model",
+    },
+  ]);
+  const empty = await renderSettings();
+  try {
+    const input = compatibleKeyField(empty.container);
+    expect(input.value).toBe("");
+    expect(input.placeholder).toBe("Optional");
+  } finally {
+    await empty.unmount();
+  }
+});
+
+function xaiEntry(id: string, label: string) {
+  return {
+    provider: "xai",
+    providerName: "xAI",
+    id,
+    label,
+    billing: "API key",
+    auth: "api-key" as const,
+    authHint: "API key",
+  };
+}
+
+function modelIdInput(container: HTMLElement) {
+  return container.querySelector<HTMLInputElement>('input[aria-label="Model id"]');
+}
+
+function modelPicker(container: HTMLElement) {
+  return container.querySelector('[role="combobox"][aria-label="Model"]');
+}
+
+it("shows a saved model id newer than the catalog, switches to the list, and saves a typed id", async () => {
+  vi.mocked(rpc.me).mockResolvedValue(account("xai", "grok-4.8"));
+  models.list.mockResolvedValue([
+    xaiEntry("grok-4.6", "Grok 4.6"),
+    xaiEntry("grok-4.7", "Grok 4.7"),
+  ]);
+  models.credentials.mockResolvedValue([
+    { id: "c1", provider: "xai", label: "xAI", hasKey: true, isDefault: true, modelId: "grok-4.8" },
+  ]);
+  models.setDefault.mockResolvedValue({ ok: true });
+
+  const view = await renderSettings();
+  try {
+    expect(modelIdInput(view.container)?.value).toBe("grok-4.8");
+    expect(view.container.textContent).toContain("Active model");
+    expect(view.container.textContent).toContain("grok-4.8");
+
+    await act(async () => {
+      buttons(view.container, "Use a listed model")[0]?.click();
+    });
+    expect(modelIdInput(view.container)).toBeNull();
+    expect(modelPicker(view.container)?.textContent).toContain("Grok 4.6");
+
+    await act(async () => {
+      buttons(view.container, "Other model id")[0]?.click();
+    });
+    const input = modelIdInput(view.container);
+    expect(input?.value).toBe("grok-4.8");
+    await typeInto(input!, "grok-4.9");
+    await act(async () => {
+      buttons(view.container, "Use this model")[0]?.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(models.setDefault).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "xai", modelId: "grok-4.9" }),
+    );
+  } finally {
+    await view.unmount();
+  }
+});
+
+it("offers only the listed models for the operator's local provider", async () => {
+  vi.mocked(rpc.me).mockResolvedValue(account("local", "qwen3:4b"));
+  models.list.mockResolvedValue([
+    {
+      provider: "local",
+      providerName: "Local (Ollama / LM Studio)",
+      id: "qwen3:4b",
+      label: "qwen3:4b",
+      billing: "Runs on your own hardware.",
+      auth: "api-key" as const,
+      authHint: "Local",
+    },
+  ]);
+  models.credentials.mockResolvedValue([
+    { id: "c1", provider: "local", label: "Local", hasKey: true, isDefault: true },
+  ]);
+
+  const view = await renderSettings();
+  try {
+    expect(modelPicker(view.container)?.textContent).toContain("qwen3:4b");
+    const labels = [...view.container.querySelectorAll("button")].map(
+      (element) => element.textContent,
+    );
     expect(labels).not.toContain("Other model id");
-    expect(modelIdInput()).toBeNull();
-  });
+    expect(modelIdInput(view.container)).toBeNull();
+  } finally {
+    await view.unmount();
+  }
 });

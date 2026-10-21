@@ -18,12 +18,25 @@ const TEST_NETWORK = {
   resolveHostname: async () => [{ address: "203.0.113.10", family: 4 }],
 };
 
+function logicalHref(input: string | URL | Request, init?: RequestInit): string {
+  const url = new URL(
+    typeof input === "string" || input instanceof URL ? String(input) : input.url,
+  );
+  const host = new Headers(input instanceof Request ? input.headers : init?.headers).get("host");
+  if (host) url.host = host;
+  return url.href;
+}
+
 describe("MCP transport seam", () => {
   it("rejects unsafe URLs and oversized URLs before network access", () => {
     expect(() => validateUrl("http://remote.example/mcp")).toThrow("HTTPS");
     expect(() => validateUrl("https://user:pass@example.com/mcp")).toThrow("credentials");
     expect(() => validateUrl(`https://example.com/${"x".repeat(2_100)}`)).toThrow("exceeds");
     expect(() => validateUrl("http://127.0.0.1:1234/mcp")).toThrow("HTTPS");
+    expect(() => validateUrl("http://10.0.0.8:3927/mcp")).toThrow("HTTPS");
+    expect(validateUrl("http://10.0.0.8:3927/mcp", { allowPrivateEndpoint: true }).hostname).toBe(
+      "10.0.0.8",
+    );
     expect(validateUrl("http://127.0.0.1:1234/mcp", { allowHttpLocalhost: true }).hostname).toBe(
       "127.0.0.1",
     );
@@ -155,7 +168,7 @@ describe("MCP transport seam", () => {
       const resolveHostname = vi.fn();
       const safeFetch = secureFetch(
         new URL(`${origin}/mcp`),
-        { allowHttpLocalhost: true },
+        { allowHttpLocalhost: true, allowPrivateEndpoint: true },
         {},
         { fetch: fetchImpl, resolveHostname },
       );
@@ -168,6 +181,28 @@ describe("MCP transport seam", () => {
         ).resolves.toHaveProperty("ok", true);
         expect(fetchImpl).toHaveBeenCalledTimes(2);
         expect(resolveHostname).not.toHaveBeenCalled();
+      } finally {
+        await safeFetch.close();
+      }
+    },
+  );
+
+  it.each(["localhost", "127.0.0.1", "[::1]"])(
+    "refuses HTTP %s without the private-endpoint escape even when the hostname is local",
+    async (host) => {
+      const origin = `http://${host}:3100`;
+      const fetchImpl = vi.fn(async () => Response.json({ ok: true }));
+      const safeFetch = secureFetch(
+        new URL(`${origin}/api/auth/get-session`),
+        { allowHttpLocalhost: true, allowLocalHttpCredentials: true },
+        {},
+        { fetch: fetchImpl, resolveHostname: vi.fn() },
+      );
+      try {
+        await expect(
+          safeFetch(`${origin}/api/auth/get-session`, { method: "POST", body: "{}" }),
+        ).rejects.toThrow("HTTPS");
+        expect(fetchImpl).not.toHaveBeenCalled();
       } finally {
         await safeFetch.close();
       }
@@ -221,13 +256,13 @@ describe("MCP transport seam", () => {
     try {
       await expect(
         (await safeFetch("https://mcp.example.test/mcp", { headers })).json(),
-      ).resolves.toEqual(headers);
+      ).resolves.toEqual({ ...headers, host: "mcp.example.test" });
       await expect(
         (await safeFetch("https://auth.example.test/discovery", { headers })).json(),
-      ).resolves.toEqual({});
+      ).resolves.toEqual({ host: "auth.example.test" });
       await expect(
         (await safeFetch("https://mcp.example.test:8443/discovery", { headers })).json(),
-      ).resolves.toEqual({});
+      ).resolves.toEqual({ host: "mcp.example.test:8443" });
     } finally {
       await safeFetch.close();
     }
@@ -240,7 +275,7 @@ describe("MCP transport seam", () => {
       "fetch",
       vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
         const request = input instanceof Request ? input : new Request(input, init);
-        const url = new URL(request.url);
+        const url = new URL(logicalHref(input, init));
         if (url.href === "https://auth.example.test/token") {
           return Response.json({
             access_token: "fresh-access",
@@ -311,7 +346,7 @@ describe("MCP transport seam", () => {
     expect(resourceHeaders[0]).toBe("Bearer stale-access");
     expect(resourceHeaders.slice(1)).not.toHaveLength(0);
     expect(resourceHeaders.slice(1).every((value) => value === "Bearer fresh-access")).toBe(true);
-    expect(provider.tokens()).toMatchObject({
+    expect(await provider.tokens()).toMatchObject({
       access_token: "fresh-access",
       refresh_token: "rotated-refresh",
     });
@@ -325,16 +360,17 @@ describe("MCP transport seam", () => {
       "fetch",
       vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
         const request = input instanceof Request ? input : new Request(input, init);
-        if (request.url === "https://auth.example.test/token") {
+        const url = logicalHref(input, init);
+        if (url === "https://auth.example.test/token") {
           return Response.json(
             { error: "invalid_grant", error_description: "refresh token revoked" },
             { status: 400 },
           );
         }
-        if (request.url === "https://mcp.example.test/mcp") {
+        if (url === "https://mcp.example.test/mcp") {
           return new Response(null, { status: 401, headers: { "WWW-Authenticate": "Bearer" } });
         }
-        throw new Error(`Unexpected request: ${request.method} ${request.url}`);
+        throw new Error(`Unexpected request: ${request.method} ${url}`);
       }),
     );
     const provider = new StoredMcpOAuthProvider(
@@ -379,7 +415,7 @@ describe("MCP transport seam", () => {
       }),
     ).rejects.toThrow("Reconnect this server");
 
-    expect(provider.tokens()).toBeUndefined();
+    expect(await provider.tokens()).toBeUndefined();
     expect(persisted.length).toBeGreaterThanOrEqual(1);
   });
 
@@ -426,7 +462,7 @@ describe("MCP transport seam", () => {
           url: `http://127.0.0.1:${port}/mcp`,
           authProvider: provider,
           fallbackToSse: false,
-          urlPolicy: { allowHttpLocalhost: true },
+          urlPolicy: { allowHttpLocalhost: true, allowPrivateEndpoint: true },
         }),
       ).rejects.toThrow("Reconnect this server");
     } finally {
@@ -479,7 +515,7 @@ describe("MCP transport seam", () => {
     let seen: Record<string, string> = {};
     const safeFetch = secureFetch(
       new URL("http://localhost:8123/mcp"),
-      { allowHttpLocalhost: true },
+      { allowHttpLocalhost: true, allowPrivateEndpoint: true },
       {
         allowedHeaders: ["authorization", "x-api-key"],
         headers: { Authorization: "Bearer stored", "X-Api-Key": "stored-key" },

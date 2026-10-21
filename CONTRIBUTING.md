@@ -30,6 +30,10 @@ whose database name has `test` as its own word, such as `rakazo_test`. The test 
 other name before it connects, refuses a database marked as production, creates the test database
 when it is missing, and applies any pending migrations.
 
+Ordinary test processes (`NODE_ENV=test`) do not load the checkout's `.env`.
+Verification CLIs load configuration before starting isolated test processes;
+live canaries explicitly enabled with `VERIFY_PROVIDERS` also opt into loading it.
+
 ## Adding a UI language
 
 The web and Electron-hosted UI use Lingui catalogs. To add a locale, register it in

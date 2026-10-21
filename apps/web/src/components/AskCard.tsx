@@ -2,9 +2,11 @@ import { t } from "@lingui/core/macro";
 import { Trans, useLingui } from "@lingui/react/macro";
 import { ChatMarkdown } from "@rakazo/chat-ui/web";
 import type { ThreadMessage } from "@rakazo/contracts";
+import { commandVariableName } from "@rakazo/contracts";
 import { isApprovalAskBlock, isSecretAskBlock, selectedAskActionLabel } from "@rakazo/core";
 import { Button, Input } from "@rakazo/ui-web";
 import { useState } from "react";
+import { errorText } from "../lib/user-error";
 
 export type AskBlock = Extract<ThreadMessage["blocks"][number], { kind: "ask" }>;
 
@@ -52,31 +54,41 @@ export function AskCard({
 }: {
   block: AskBlock;
   canAnswer: boolean;
-  onAnswer: (text: string) => Promise<void>;
+  onAnswer: (text: string, username?: string) => Promise<void>;
 }) {
   const { t } = useLingui();
   const [editing, setEditing] = useState(false);
   const [answer, setAnswer] = useState("");
+  const [username, setUsername] = useState("");
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const submitting = pendingAction !== null;
   const approvalActions = isApprovalAskBlock(block) ? block.actions : undefined;
   const askActions = block.actions;
   const secretInput = isSecretAskBlock(block);
-  const secretLabel = secretFieldLabel(block.purpose);
+  const loginInput = secretInput && block.credential?.auth.type === "login";
+  const secretLabel = loginInput ? t`Password` : secretFieldLabel(block.purpose);
 
   async function submitAnswer(value: string) {
     if (submitting) return;
     if (secretInput ? value.length === 0 : !value.trim()) return;
+    const submitUsername = loginInput ? username.trim() : undefined;
+    if (loginInput && !submitUsername) return;
     const submitValue = secretInput ? value : value.trim();
     setPendingAction(secretInput ? "submit" : submitValue);
     setError(null);
-    if (secretInput) setAnswer("");
+    if (secretInput) {
+      setAnswer("");
+      setUsername("");
+    }
     try {
-      await onAnswer(submitValue);
+      await onAnswer(submitValue, submitUsername);
     } catch (err) {
+      // A secret answer's failure may echo the secret, so never show its message.
       setError(
-        !secretInput && err instanceof Error ? err.message : t`Could not submit this answer`,
+        secretInput
+          ? t`Could not submit this answer`
+          : errorText(err, t`Could not submit this answer`),
       );
     } finally {
       setPendingAction(null);
@@ -92,8 +104,13 @@ export function AskCard({
         <ChatMarkdown>{block.text}</ChatMarkdown>
       </div>
       {secretInput && block.credential ? (
-        <div className="mt-2 break-all text-[13px] text-muted-foreground">
-          {block.credential.origin}
+        <div
+          data-testid="secret-ask-destination"
+          className="mt-2 break-all text-[13px] text-muted-foreground"
+        >
+          {block.credential.auth.type === "command"
+            ? `${t`Command variable`} · $${commandVariableName(block.credential.name)}`
+            : block.credential.origin}
         </div>
       ) : null}
       {block.detail && !secretInput ? (
@@ -143,6 +160,17 @@ export function AskCard({
             void submitAnswer(answer);
           }}
         >
+          {loginInput ? (
+            <Input
+              aria-label={t`Username`}
+              autoComplete="off"
+              spellCheck={false}
+              disabled={submitting}
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              placeholder={t`Username`}
+            />
+          ) : null}
           <Input
             aria-label={secretLabel}
             type="password"
@@ -153,7 +181,11 @@ export function AskCard({
             onChange={(event) => setAnswer(event.target.value)}
             placeholder={secretLabel}
           />
-          <Button type="submit" className="self-start" disabled={answer.length === 0 || submitting}>
+          <Button
+            type="submit"
+            className="self-start"
+            disabled={answer.length === 0 || (loginInput && !username.trim()) || submitting}
+          >
             {submitting ? <Trans>Saving…</Trans> : <Trans>Save</Trans>}
           </Button>
         </form>

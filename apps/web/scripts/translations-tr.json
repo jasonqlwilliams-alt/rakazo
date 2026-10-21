@@ -1,4 +1,5 @@
 {
+  "Today": "Bugün",
   " (unread)": " (okunmadı)",
   "macOS will not ask for extra permission if you let bots run on this Mac. They run as you.": "Botların bu Mac'te çalışmasına izin verirsen macOS ek izin istemez. Botlar senin adına çalışır.",
   "Your OS will not ask for extra permission if you let bots run on {hostLabel}. They run as you.": "Botların {hostLabel} üzerinde çalışmasına izin verirsen işletim sistemin ek izin istemez. Botlar senin adına çalışır.",
@@ -581,5 +582,7 @@
   "Authorize this server so agents can use its tools. A popup opens.": "Agent'ların araçlarını kullanabilmesi için bu sunucuyu yetkilendir. Bir açılır pencere açılır.",
   "Make sure nothing is still running on this computer.": "Bu bilgisayarda hâlâ çalışan bir şey olmadığından emin ol.",
   "Nothing is still running": "Hâlâ çalışan bir şey yok",
-  "Credentials are encrypted and never sent to the model.": "Kimlik bilgileri şifrelenir ve modele asla gönderilmez."
+  "Credentials are encrypted and never sent to the model.": "Kimlik bilgileri şifrelenir ve modele asla gönderilmez.",
+  "Rename section": "Bölümü yeniden adlandır",
+  "Could not rename section": "Bölüm yeniden adlandırılamadı"
 }

@@ -24,6 +24,7 @@
         display: flex;
         gap: 8px;
       }
+      #mobile-paste,
       #mobile-keyboard,
       #mobile-trackpad {
         box-sizing: border-box;
@@ -41,6 +42,7 @@
         outline: 3px solid Highlight;
         outline-offset: 1px;
       }
+      #mobile-paste svg,
       #mobile-keyboard svg,
       #mobile-trackpad svg {
         width: 100%;
@@ -49,13 +51,54 @@
       #screen.trackpad-active {
         touch-action: none;
       }
+      #mobile-key-bar {
+        position: fixed;
+        left: max(8px, env(safe-area-inset-left));
+        right: max(8px, env(safe-area-inset-right));
+        top: calc(
+          var(--mobile-visual-top, 0px) + var(--mobile-visual-height, 100dvh) - 108px -
+            env(safe-area-inset-bottom)
+        );
+        z-index: 2;
+        display: flex;
+        gap: 6px;
+      }
+      #mobile-key-bar[hidden] {
+        display: none;
+      }
+      #mobile-key-bar button {
+        flex: 1;
+        min-width: 0;
+        height: 40px;
+        padding: 0 4px;
+        border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
+        border-radius: 10px;
+        background: Canvas;
+        color: CanvasText;
+        font: 600 13px/1 system-ui, sans-serif;
+        box-shadow: 0 2px 10px color-mix(in srgb, CanvasText 25%, transparent);
+      }
+      #mobile-key-bar button.active {
+        outline: 3px solid Highlight;
+        outline-offset: 1px;
+      }
       #mobile-keyboard-input {
         position: fixed;
-        left: -40px;
+        left: 0;
+        bottom: 0;
         width: 1px;
         height: 1px;
+        margin: 0;
+        padding: 0;
         border: 0;
-        opacity: 0;
+        outline: none;
+        resize: none;
+        opacity: 0.02;
+        font-size: 16px;
+        color: transparent;
+        background: transparent;
+        caret-color: transparent;
+        z-index: 1;
       }
       .mobile-keyboard-open #screen {
         position: fixed;
@@ -65,7 +108,12 @@
       }
     </style>
     <script type="module">
-      import { attachHostClipboardPaste } from "./clipboard-bridge.js";
+      import {
+        attachHostClipboardPaste,
+        attachMobilePaste,
+        attachRemoteClipboardCopy,
+        pasteHostText,
+      } from "./clipboard-bridge.js";
       import Keyboard from "./core/input/keyboard.js";
       import KeyTable from "./core/input/keysym.js";
       import keysyms from "./core/input/keysymdef.js";
@@ -92,14 +140,22 @@
       rfb.viewOnly = flag("view_only");
       rfb.scaleViewport = true;
       rfb.clipViewport = false;
+      attachRemoteClipboardCopy(rfb);
       if (!rfb.viewOnly) attachHostClipboardPaste(rfb);
-      if (!rfb.viewOnly && isTouchBrowser()) {
+      if (!rfb.viewOnly && (isTouchBrowser() || window.__rakazoNativeKeys)) {
+        const keyboardInput = document.getElementById("mobile-keyboard-input");
+        attachMobilePaste(rfb, {
+          button: document.getElementById("mobile-paste"),
+          fallbackFocus: keyboardInput,
+        });
         attachMobileKeyboard(rfb, {
           button: document.getElementById("mobile-keyboard"),
-          input: document.getElementById("mobile-keyboard-input"),
+          input: keyboardInput,
+          keyBar: document.getElementById("mobile-key-bar"),
           Keyboard,
           backspaceKeysym: KeyTable.XK_BackSpace,
           lookupKeysym: keysyms.lookup,
+          pasteText: (text) => pasteHostText(rfb, text),
         });
         attachMobileTrackpad(rfb, {
           button: document.getElementById("mobile-trackpad"),
@@ -110,7 +166,22 @@
   </head>
   <body>
     <div id="screen"></div>
+    <div id="mobile-key-bar" hidden>
+      <button type="button" data-key="Escape" aria-label="Escape">Esc</button>
+      <button type="button" data-key="Tab" aria-label="Tab">Tab</button>
+      <button type="button" data-key="Control" aria-label="Ctrl" aria-pressed="false">Ctrl</button>
+      <button type="button" data-key="ArrowLeft" aria-label="Left">←</button>
+      <button type="button" data-key="ArrowDown" aria-label="Down">↓</button>
+      <button type="button" data-key="ArrowUp" aria-label="Up">↑</button>
+      <button type="button" data-key="ArrowRight" aria-label="Right">→</button>
+    </div>
     <div id="mobile-controls">
+      <button id="mobile-paste" type="button" aria-label="Paste" title="Paste" hidden>
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="8" y="2" width="8" height="4" rx="1" />
+          <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+        </svg>
+      </button>
       <button
         id="mobile-keyboard"
         type="button"
@@ -142,6 +213,7 @@
     <textarea
       id="mobile-keyboard-input"
       aria-label="Remote computer keyboard input"
+      aria-hidden="true"
       autocapitalize="off"
       autocomplete="off"
       spellcheck="false"

@@ -9,6 +9,7 @@ export type DemoMessage =
   | { type: "user"; text: string }
   | { type: "bot"; text: string }
   | { type: "typing" }
+  | { type: "computer"; text: string }
   | { type: "card"; lines: DemoCardLine[] };
 
 export type DemoRoutine = {
@@ -112,6 +113,7 @@ export const DEMO_BOTS: DemoBot[] = [
         type: "bot",
         text: "understood. i will research, score, and draft. everything lands in a review list at 6am.",
       },
+      { type: "computer", text: "Scoring the list in HubSpot." },
       { type: "meta", text: "Created routine ◷ Overnight sourcing" },
       { type: "time", text: "3:10 AM" },
       {
@@ -151,6 +153,7 @@ export const DEMO_BOTS: DemoBot[] = [
         type: "bot",
         text: "on it. 41 unread since friday. archiving the noise, drafting the rest.",
       },
+      { type: "computer", text: "Sweeping Gmail back to friday." },
       { type: "time", text: "12:11 AM" },
       {
         type: "card",
@@ -333,10 +336,10 @@ export const DEMO_ROSTER: RosterBot[] = [
     desc: "Matches receipts to charges, files the report, asks before guessing.",
   },
   {
-    name: "Bug Triage",
-    color: "#D9508A",
-    slug: "rakazo/bug-triage",
-    desc: "Reproduces reports in a real browser and attaches steps to the issue.",
+    name: "Coding Agent",
+    color: "#5B6EE1",
+    slug: "rakazo/coding-agent",
+    desc: "Interviews you about the repo and the change, then works on your machine and checks back before going further.",
   },
   {
     name: "Account Manager",

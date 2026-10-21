@@ -1,8 +1,11 @@
 import { runContinueJob } from "@rakazo/adapter-kit";
 import type { MessageBlock } from "@rakazo/contracts";
+import { stuckWorkStatusMessages } from "@rakazo/core";
+import type { Prisma } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import { recoverBotMessageOutcome, returnBotMessageOutcome } from "./bot-messages.js";
 import type { ExecutorDeps } from "./executor.js";
+import { isLoopGuardStopText } from "./tool-loop.js";
 import { isUserProgressClientNonce } from "./user-progress.js";
 
 const MAX_ATTEMPTS = 3;
@@ -11,18 +14,29 @@ const ATTEMPT_LEASE_MS = 5 * 60_000;
 
 type OutcomeDeps = Pick<ExecutorDeps, "prisma" | "jobs" | "events">;
 
+/** Bot-message runs whose outcome is still owed and due; stuck-work cancels return too. */
+export function dueBotMessageOutcomeWhere(now: Date): Prisma.RunWhereInput {
+  return {
+    trigger: "bot_message",
+    botOutcomeReturnedAt: null,
+    botOutcomeFailedAt: null,
+    AND: [
+      {
+        OR: [
+          { status: { in: ["completed", "failed"] } },
+          { status: "cancelled", error: { in: [...stuckWorkStatusMessages()] } },
+        ],
+      },
+      { OR: [{ botOutcomeNextAttemptAt: null }, { botOutcomeNextAttemptAt: { lte: now } }] },
+    ],
+  };
+}
+
 /** Runs on the existing run.continue queue; a durable budget survives queue replacement. */
 export async function reconcileBotMessageOutcome(deps: OutcomeDeps, runId: string) {
   const now = new Date();
   const run = await deps.prisma.run.findFirst({
-    where: {
-      id: runId,
-      trigger: "bot_message",
-      status: { in: ["completed", "failed"] },
-      botOutcomeReturnedAt: null,
-      botOutcomeFailedAt: null,
-      OR: [{ botOutcomeNextAttemptAt: null }, { botOutcomeNextAttemptAt: { lte: now } }],
-    },
+    where: { id: runId, ...dueBotMessageOutcomeWhere(now) },
     include: { bot: { select: { name: true } } },
   });
   if (!run) return;
@@ -55,20 +69,32 @@ export async function reconcileBotMessageOutcome(deps: OutcomeDeps, runId: strin
   let failure = "delivery_rejected";
   let deliveryError: unknown;
   try {
+    const stuckCancel = run.status === "cancelled";
     const transcript =
-      run.status === "failed"
+      run.status === "failed" || stuckCancel
         ? { text: "", progressOnly: false }
         : await botRunOutcomeText(deps.prisma, run.id);
-    const text =
-      run.status === "failed"
+    const text = stuckCancel
+      ? (run.error ?? "")
+      : run.status === "failed"
         ? `Could not complete the delegated request: ${run.error ?? "unknown error"}`
         : transcript.text || "The delegated bot completed its turn without a written summary.";
+    // Loop-guard stops complete without an error; their persisted final text
+    // is the only marker available when the executor's outcome delivery fails.
+    const loopGuardStop = isLoopGuardStopText(transcript.text);
     const intent =
-      run.status === "failed" || !transcript.text.trim() || transcript.progressOnly
+      run.status === "failed" || stuckCancel || !transcript.text.trim() || transcript.progressOnly
         ? "status"
         : "result";
     if (
-      await returnBotMessageOutcome(deps, run, { id: run.botId, name: run.bot.name }, text, intent)
+      await returnBotMessageOutcome(
+        deps,
+        run,
+        { id: run.botId, name: run.bot.name },
+        text,
+        intent,
+        { forceUnread: run.status === "failed" || stuckCancel || loopGuardStop },
+      )
     )
       return;
   } catch (error) {

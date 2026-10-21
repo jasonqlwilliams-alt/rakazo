@@ -234,10 +234,13 @@ export function streamWithQuotaRetry(
         // before its SDK flattens the error. Keep the compatible URL/DNS guard
         // and its matching undici dispatcher intact.
         if (model.api === "openai-completions") {
-          const fetch =
-            options?.fetch ??
-            (model.provider === "openai-compatible" ? dispatcherFetch : globalThis.fetch);
+          const baseFetch = options?.fetch;
           attemptOptions.fetch = async (input, init) => {
+            const fetch =
+              baseFetch ??
+              ((init as { dispatcher?: unknown } | undefined)?.dispatcher
+                ? dispatcherFetch
+                : globalThis.fetch);
             const result = await fetch(input, init);
             response = {
               status: result.status,

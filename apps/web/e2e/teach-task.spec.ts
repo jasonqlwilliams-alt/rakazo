@@ -29,8 +29,9 @@ test("teach a task records interaction and saves a draft", async ({ page }, test
   await openButton.click();
   await expect(page.getByRole("button", { name: "Close computer" })).toBeVisible();
   const chrome = page.getByTestId("computer-chrome");
+  await chrome.getByRole("button", { name: "Take control", exact: true }).click();
   await expect(chrome.getByText("You have control", { exact: true })).toBeVisible();
-  await expect(chrome.getByRole("button", { name: "Release", exact: true })).toBeVisible();
+  await expect(chrome.getByRole("button", { name: "Release control", exact: true })).toBeVisible();
   await expect(chrome.getByTestId("teach-start-button")).toBeVisible();
   const more = chrome.getByTestId("computer-more-button");
   if (await more.isVisible().catch(() => false)) {
@@ -49,6 +50,11 @@ test("teach a task records interaction and saves a draft", async ({ page }, test
   await page.getByRole("button", { name: "Start recording" }).click();
   await expect(page.getByTestId("teach-recording-overlay")).toBeVisible();
   await expect(page.getByTestId("teach-capture-overlay")).toBeVisible();
+  await expect(page.getByTestId("teach-protected-input")).toBeVisible();
+  await expect(
+    page.getByTestId("teach-capture-overlay").getByTestId("teach-protected-input"),
+  ).toHaveCount(0);
+  await captureScreenshot(page, testInfo, "teach-protected-input");
   await page.getByTestId("teach-capture-overlay").click({ position: { x: 200, y: 200 } });
   await page.keyboard.type("demo");
   await page.getByTestId("teach-stop-overlay").click();

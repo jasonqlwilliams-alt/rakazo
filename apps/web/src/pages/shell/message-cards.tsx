@@ -5,10 +5,12 @@ import { Button, Dialog, DialogClose, DialogContent, DialogTitle } from "@rakazo
 import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { BuiCard, SuccessPop } from "../../components/ai/primitives";
-import { type ArtifactTarget, decodeArtifactBase64 } from "../../lib/artifact-open";
+import type { ArtifactTarget } from "../../lib/artifact-open";
 import { chartViewport } from "../../lib/chart-viewport";
 import { connectMcpOauth } from "../../lib/mcp-connect";
 import { rpc } from "../../lib/rpc";
+import { useArtifactImage } from "../../lib/use-artifact-image";
+import { errorText } from "../../lib/user-error";
 
 export function ChoiceCard({
   botId,
@@ -32,7 +34,7 @@ export function ChoiceCard({
       await rpc.onboarding.choose({ botId, optionId });
       await onBotChanged();
     } catch (err) {
-      setError(err instanceof Error ? err.message : t`Could not save this choice`);
+      setError(errorText(err, t`Could not save this choice`));
       setPending(false);
     }
   }
@@ -45,7 +47,7 @@ export function ChoiceCard({
       setLocallyDismissed(true);
       void onBotChanged().catch(() => undefined);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t`Could not dismiss`);
+      setError(errorText(err, t`Could not dismiss`));
       setPending(false);
     }
   }
@@ -67,7 +69,9 @@ export function ChoiceCard({
             <X size={16} strokeWidth={1.8} />
           </Button>
         ) : null}
-        <div className="pe-8 text-[15.5px] text-foreground/90">{block.question}</div>
+        <div className="pe-8 text-[15.5px] text-foreground/90">
+          <OnboardingFocusQuestion question={block.question} />
+        </div>
         {block.subtitle ? (
           <div className="mt-0.5 text-[13px] text-foreground/75">{block.subtitle}</div>
         ) : null}
@@ -88,7 +92,11 @@ export function ChoiceCard({
                 <span
                   className={`flex-1 text-[15px] leading-[1.35] ${block.answerId ? "text-foreground/75" : "text-foreground"}`}
                 >
-                  {option.label}
+                  <OnboardingFocusOptionLabel
+                    id={option.id}
+                    label={option.label}
+                    question={block.question}
+                  />
                 </span>
                 {block.answerId === option.id ? (
                   <span className="mt-0.5 text-foreground/75">✓</span>
@@ -100,6 +108,38 @@ export function ChoiceCard({
       </div>
     </div>
   );
+}
+
+/** First-run Chief focus card: API stores English; UI locale catalogs translate it. */
+function OnboardingFocusQuestion({ question }: { question: string }) {
+  if (question === "What do you want me on first?") {
+    return <Trans>What do you want me on first?</Trans>;
+  }
+  return question;
+}
+
+function OnboardingFocusOptionLabel({
+  id,
+  label,
+  question,
+}: {
+  id: string;
+  label: string;
+  question: string;
+}) {
+  if (question !== "What do you want me on first?") return label;
+  switch (id) {
+    case "day":
+      return <Trans>Day-to-day work</Trans>;
+    case "inbox":
+      return <Trans>Inbox & email</Trans>;
+    case "research":
+      return <Trans>Research & writing</Trans>;
+    case "everything":
+      return <Trans>A bit of everything</Trans>;
+    default:
+      return label;
+  }
 }
 
 export function AppConnectCard({
@@ -150,7 +190,7 @@ export function AppConnectCard({
       if (!controller.signal.aborted) setError(t`Authorization timed out. Please try again.`);
     } catch (error) {
       if (!controller.signal.aborted) {
-        setError(error instanceof Error ? error.message : t`Could not authorize this app`);
+        setError(errorText(error, t`Could not authorize this app`));
       }
     } finally {
       if (connectionAttempt.current === controller) {
@@ -245,7 +285,7 @@ function ChartCanvas({
         setError(null);
         ref.current.replaceChildren(parts.plotted);
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : t`Could not render chart`);
+        if (!cancelled) setError(errorText(err, t`Could not render chart`));
       }
     })();
     return () => {
@@ -288,52 +328,81 @@ function ChartCanvas({
 type McpApprovalState = "pending" | "connecting" | "connected" | "dismissed";
 
 /** Approval card for an agent-created MCP server: the user completes browser
- * OAuth (or confirms no authorization is needed) without leaving the chat. */
+ * OAuth (or confirms no authorization is needed) without leaving the chat.
+ * The decision persists on the block, so the card keeps showing it after the
+ * thread remounts. */
 export function McpApprovalCard({
   botId,
-  name,
-  serverId,
-  transport,
-  endpoint,
-  needsOAuth,
+  threadId,
+  block,
 }: {
   botId: string | undefined;
-  name: string;
-  serverId: string;
-  transport: string;
-  endpoint: string | null;
-  needsOAuth: boolean;
+  threadId: string | undefined;
+  block: Extract<MessageBlock, { kind: "mcp_approval" }>;
 }) {
   const { t } = useLingui();
-  const [state, setState] = useState<McpApprovalState>("pending");
+  const { name, serverId, transport, endpoint, needsOAuth, status: savedStatus } = block;
+  const [localStatus, setLocalStatus] = useState<McpApprovalState>("pending");
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  // A removal repaints the block to pending. Drop an in-session connected
+  // override so the card does not keep the old decision.
+  useEffect(() => {
+    if (savedStatus === "connected" || savedStatus === "dismissed") return;
+    setLocalStatus((current) =>
+      current === "connected" || current === "dismissed" ? "pending" : current,
+    );
+  }, [savedStatus]);
+  // Blocks saved before the status field existed have none and count as pending.
+  const state =
+    savedStatus === "connected" || savedStatus === "dismissed" ? savedStatus : localStatus;
 
   async function authorize() {
-    if (!botId) {
-      setError(t`This server cannot be assigned without a bot.`);
+    if (!botId || busy) {
+      if (!botId) setError(t`This server cannot be assigned without a bot.`);
       return;
     }
-    setState("connecting");
+    setBusy(true);
+    setLocalStatus("connecting");
     setError(null);
     try {
       if (needsOAuth) {
         const result = await connectMcpOauth(serverId);
         if (result === "cancelled") {
-          setState("pending");
+          setLocalStatus("pending");
           return;
         }
       }
-      await rpc.mcp.assignments.approve({ botId, serverId });
-      setState("connected");
+      await rpc.mcp.assignments.approve({ botId, serverId, threadId });
+      setLocalStatus("connected");
     } catch (err) {
-      setError(err instanceof Error ? err.message : t`Could not approve this server`);
-      setState("pending");
+      setError(errorText(err, t`Could not approve this server`));
+      setLocalStatus("pending");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function dismiss() {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      if (botId) {
+        await rpc.mcp.assignments.dismiss({ botId, serverId, threadId });
+      }
+      setLocalStatus("dismissed");
+    } catch (err) {
+      setLocalStatus("pending");
+      setError(errorText(err, t`Could not dismiss this server`));
+    } finally {
+      setBusy(false);
     }
   }
 
   const summary = endpoint ?? `stdio · ${transport}`;
   return (
-    <BuiCard className="max-w-[74%] p-4">
+    <BuiCard data-testid="mcp-approval-card" className="max-w-[74%] p-4">
       <div className="flex items-center gap-2">
         <span className="grid h-7 w-7 place-items-center rounded-lg bg-muted text-xs text-foreground">
           M
@@ -354,7 +423,7 @@ export function McpApprovalCard({
           <div className="mt-3 flex gap-2">
             <Button
               className="rounded-full"
-              disabled={state === "connecting"}
+              disabled={state !== "pending" || busy}
               onClick={() => void authorize()}
             >
               {state === "connecting" ? t`Connecting…` : needsOAuth ? t`Authorize` : t`Approve`}
@@ -362,7 +431,8 @@ export function McpApprovalCard({
             <Button
               variant="secondary"
               className="rounded-full"
-              onClick={() => setState("dismissed")}
+              disabled={state !== "pending" || busy}
+              onClick={() => void dismiss()}
             >
               <Trans>Not now</Trans>
             </Button>
@@ -457,12 +527,10 @@ export function ArtifactImage({
   name: string;
 }) {
   const { t } = useLingui();
-  const [src, setSrc] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [visible, setVisible] = useState(false);
   const container = useRef<HTMLDivElement>(null);
-  const targetBotId = "botId" in target ? target.botId : undefined;
-  const targetGroupId = "groupId" in target ? target.groupId : undefined;
+  const src = useArtifactImage(target, artifactId, visible);
 
   useEffect(() => {
     const element = container.current;
@@ -482,32 +550,6 @@ export function ArtifactImage({
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
-
-  useEffect(() => {
-    if (!visible) return;
-    let cancelled = false;
-    let objectUrl: string | null = null;
-    setSrc(null);
-    void rpc.artifacts
-      .get(
-        targetBotId
-          ? { botId: targetBotId, artifactId }
-          : { groupId: targetGroupId ?? "", artifactId },
-      )
-      .then((artifact) => {
-        const bytes = decodeArtifactBase64(artifact.contentBase64);
-        objectUrl = URL.createObjectURL(
-          new Blob([new Uint8Array(bytes)], { type: artifact.mimeType }),
-        );
-        if (cancelled) URL.revokeObjectURL(objectUrl);
-        else setSrc(objectUrl);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [artifactId, targetBotId, targetGroupId, visible]);
 
   return (
     <div ref={container}>

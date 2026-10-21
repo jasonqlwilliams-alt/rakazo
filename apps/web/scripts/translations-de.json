@@ -1,4 +1,5 @@
 {
+  "Today": "Heute",
   " (unread)": " (ungelesen)",
   "macOS will not ask for extra permission if you let bots run on this Mac. They run as you.": "Auf diesem Mac fragt macOS nicht nach zusätzlichen Berechtigungen, wenn Bots dort ausgeführt werden. Sie handeln mit deinen Rechten.",
   "Your OS will not ask for extra permission if you let bots run on {hostLabel}. They run as you.": "Auf {hostLabel} fragt dein Betriebssystem nicht nach zusätzlichen Berechtigungen, wenn Bots dort ausgeführt werden. Sie handeln mit deinen Rechten.",
@@ -584,5 +585,7 @@
   "Authorize this server so agents can use its tools. A popup opens.": "Autorisiere diesen Server, damit Agents seine Tools nutzen können. Ein Pop-up öffnet sich.",
   "Make sure nothing is still running on this computer.": "Stelle sicher, dass auf diesem Computer nichts mehr läuft.",
   "Nothing is still running": "Nichts läuft mehr",
-  "Credentials are encrypted and never sent to the model.": "Zugangsdaten werden verschlüsselt und dem Modell nie gesendet."
+  "Credentials are encrypted and never sent to the model.": "Zugangsdaten werden verschlüsselt und dem Modell nie gesendet.",
+  "Rename section": "Abschnitt umbenennen",
+  "Could not rename section": "Abschnitt konnte nicht umbenannt werden"
 }

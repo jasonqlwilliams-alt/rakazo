@@ -1,5 +1,5 @@
 import type { Sandbox } from "@daytona/sdk";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DaytonaSandboxProvider, type DaytonaSandboxSdk } from "./daytona-sandbox.js";
 import { desktopCommandResponder } from "./linux-desktop.test-support.js";
 
@@ -12,6 +12,56 @@ const context = {
 };
 
 describe("DaytonaSandboxProvider", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("forwards an optional snapshot name to create()", async () => {
+    const fixture = daytonaFixture();
+    const provider = new DaytonaSandboxProvider(
+      { apiKey: "test-key", snapshot: "rakazo-computer" },
+      fixture.client,
+    );
+    await provider.provision({ botId: "bot-a", homePath: "/unused" }, context);
+    expect(fixture.create).toHaveBeenCalledWith(
+      expect.objectContaining({ snapshot: "rakazo-computer" }),
+      { timeout: 120 },
+    );
+  });
+
+  it("falls back to DAYTONA_SNAPSHOT when config.snapshot is unset", async () => {
+    vi.stubEnv("DAYTONA_SNAPSHOT", " env-snapshot ");
+    const fixture = daytonaFixture();
+    const provider = new DaytonaSandboxProvider({ apiKey: "test-key" }, fixture.client);
+    await provider.provision({ botId: "bot-a", homePath: "/unused" }, context);
+    expect(fixture.create).toHaveBeenCalledWith(
+      expect.objectContaining({ snapshot: "env-snapshot" }),
+      { timeout: 120 },
+    );
+  });
+
+  it("prefers config.snapshot over DAYTONA_SNAPSHOT", async () => {
+    vi.stubEnv("DAYTONA_SNAPSHOT", "env-snapshot");
+    const fixture = daytonaFixture();
+    const provider = new DaytonaSandboxProvider(
+      { apiKey: "test-key", snapshot: " config-snapshot " },
+      fixture.client,
+    );
+    await provider.provision({ botId: "bot-a", homePath: "/unused" }, context);
+    expect(fixture.create).toHaveBeenCalledWith(
+      expect.objectContaining({ snapshot: "config-snapshot" }),
+      { timeout: 120 },
+    );
+  });
+
+  it("omits snapshot from create() when unset", async () => {
+    vi.stubEnv("DAYTONA_SNAPSHOT", "   ");
+    const fixture = daytonaFixture();
+    const provider = new DaytonaSandboxProvider({ apiKey: "test-key" }, fixture.client);
+    await provider.provision({ botId: "bot-a", homePath: "/unused" }, context);
+    expect(fixture.create.mock.calls[0]?.[0]).not.toHaveProperty("snapshot");
+  });
+
   it("preserves desktop command output in failures", async () => {
     const fixture = daytonaFixture();
     const provider = new DaytonaSandboxProvider({ apiKey: "test-key" }, fixture.client);
@@ -43,7 +93,11 @@ describe("DaytonaSandboxProvider", () => {
     );
 
     const events = [];
-    for await (const event of provider.execute(computer, { argv: ["echo", "hello"] }, context)) {
+    for await (const event of provider.execute(
+      computer,
+      { argv: ["echo", "hello"], unsetEnv: ["FAILED"] },
+      context,
+    )) {
       events.push(event);
     }
     expect(events).toEqual([
@@ -51,7 +105,7 @@ describe("DaytonaSandboxProvider", () => {
       { type: "exit", code: 0 },
     ]);
     expect(fixture.executeCommand).toHaveBeenCalledWith(
-      "'echo' 'hello'",
+      "'env' '-u' 'FAILED' '--' 'echo' 'hello'",
       "/home/daytona/rakazo-home",
       undefined,
       300,
@@ -333,7 +387,7 @@ function daytonaFixture(options: { id?: string; state?: string; prepareFails?: b
       const registryResult = screenRegistry(command);
       if (registryResult)
         return { exitCode: registryResult.exitCode, result: registryResult.stdout };
-      if (command === "'echo' 'hello'") return { exitCode: 0, result: "hello\n" };
+      if (command.endsWith("'echo' 'hello'")) return { exitCode: 0, result: "hello\n" };
       if (options.prepareFails && command.startsWith("mkdir -p -- ")) {
         return { exitCode: 1, result: "could not create Daytona workspace" };
       }
@@ -422,7 +476,7 @@ function daytonaFixture(options: { id?: string; state?: string; prepareFails?: b
     stop,
     delete: deleteSandbox,
   } as unknown as Sandbox;
-  const create = vi.fn(async () => sandbox);
+  const create = vi.fn(async (_config?: object, _opts?: object) => sandbox);
   const get = vi.fn(async () => sandbox);
   return {
     sandbox,

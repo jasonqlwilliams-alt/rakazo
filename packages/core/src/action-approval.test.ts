@@ -31,6 +31,7 @@ describe("toolRequiresApproval", () => {
     expect(toolRequiresApproval("research_cancel", false)).toBe(false);
     expect(toolRequiresApproval("create_space", false)).toBe(true);
     expect(toolRequiresExplicitApproval("create_space")).toBe(true);
+    expect(toolRequiresExplicitApproval("save_shared_memory")).toBe(false);
     expect(toolRequiresExplicitApproval("archive_bot")).toBe(false);
   });
 
@@ -42,6 +43,7 @@ describe("toolRequiresApproval", () => {
       "write_file",
       "shell",
       "remember",
+      "save_shared_memory",
       "spawn_bot",
       "run_subagent",
     ]) {
@@ -69,6 +71,38 @@ describe("connectorToolRequiresApproval", () => {
   it("matches read-only connector tool names", () => {
     expect(connectorToolRequiresApproval("list_items")).toBe(false);
     expect(connectorToolRequiresApproval("send_message")).toBe(true);
+  });
+
+  it("requires approval for a declared write whatever its name says", () => {
+    expect(connectorToolRequiresApproval("read_profile_card", false)).toBe(true);
+    expect(connectorToolRequiresApproval("find_validator_record", false)).toBe(true);
+    expect(connectorToolRequiresApproval("read_profile_card", true)).toBe(false);
+    expect(connectorToolRequiresApproval("read_profile_card")).toBe(false);
+  });
+
+  it("never lets a declared read relax a mutating or ambiguous name", () => {
+    expect(connectorToolRequiresApproval("delete_item", true)).toBe(true);
+    expect(connectorToolRequiresApproval("get_or_create_contact", true)).toBe(true);
+    expect(connectorToolRequiresApproval("profile_card", true)).toBe(true);
+  });
+});
+
+describe("resolveActionApprovalDetail", () => {
+  it("applies category rules to declared writes with read-looking names", () => {
+    const rules = [
+      {
+        effect: "require_approval" as const,
+        matchKind: "category" as const,
+        matchValue: "email",
+      },
+    ];
+    const base = {
+      toolName: "gmail_read_thread",
+      connectorKind: "gmail",
+      rules,
+    };
+    expect(resolveActionApprovalDetail(base).decision).toBe("allow");
+    expect(resolveActionApprovalDetail({ ...base, readOnly: false }).decision).toBe("ask");
   });
 });
 
@@ -102,6 +136,22 @@ describe("unattendedTriggerToolRequiresApproval", () => {
     expect(unattendedTriggerToolRequiresApproval("user", "shell", false)).toBe(false);
   });
 
+  it("forces approval for webhook-triggered declared writes with read-looking names", () => {
+    for (const name of ["read_profile_card", "find_validator_record", "get_status"]) {
+      expect(unattendedTriggerToolRequiresApproval("webhook", name, true, false)).toBe(true);
+      expect(toolRequiresApproval(name, true, false)).toBe(true);
+    }
+    expect(unattendedTriggerToolRequiresApproval("webhook", "read_profile_card", true, true)).toBe(
+      false,
+    );
+    expect(unattendedTriggerToolRequiresApproval("webhook", "delete_record", true, true)).toBe(
+      true,
+    );
+    expect(unattendedTriggerToolRequiresApproval("user", "read_profile_card", true, false)).toBe(
+      false,
+    );
+  });
+
   const PACKET_ROUTER_TOOLS = [
     "shell",
     "message_bot",
@@ -113,7 +163,7 @@ describe("unattendedTriggerToolRequiresApproval", () => {
   it("parks webhook shell when the bound routine has no allowlist", () => {
     expect(unattendedTriggerToolRequiresApproval("webhook", "shell", false)).toBe(true);
     expect(
-      unattendedTriggerToolRequiresApproval("webhook", "shell", false, {
+      unattendedTriggerToolRequiresApproval("webhook", "shell", false, undefined, {
         active: true,
         webhookEnabled: true,
         unattendedTools: [],
@@ -128,13 +178,21 @@ describe("unattendedTriggerToolRequiresApproval", () => {
       unattendedTools: [...PACKET_ROUTER_TOOLS],
     };
     for (const name of PACKET_ROUTER_TOOLS) {
-      expect(unattendedTriggerToolRequiresApproval("webhook", name, false, routine)).toBe(false);
+      expect(
+        unattendedTriggerToolRequiresApproval("webhook", name, false, undefined, routine),
+      ).toBe(false);
     }
-    expect(unattendedTriggerToolRequiresApproval("webhook", "write_file", false, routine)).toBe(
-      true,
-    );
     expect(
-      unattendedTriggerToolRequiresApproval("webhook", "github_create_issue", true, routine),
+      unattendedTriggerToolRequiresApproval("webhook", "write_file", false, undefined, routine),
+    ).toBe(true);
+    expect(
+      unattendedTriggerToolRequiresApproval(
+        "webhook",
+        "github_create_issue",
+        true,
+        undefined,
+        routine,
+      ),
     ).toBe(true);
   });
 
@@ -144,17 +202,21 @@ describe("unattendedTriggerToolRequiresApproval", () => {
       webhookEnabled: true,
       unattendedTools: [...PACKET_ROUTER_TOOLS],
     };
-    expect(unattendedTriggerToolRequiresApproval("user", "shell", false, routine)).toBe(false);
-    expect(unattendedTriggerToolRequiresApproval("routine", "shell", false, routine)).toBe(false);
+    expect(unattendedTriggerToolRequiresApproval("user", "shell", false, undefined, routine)).toBe(
+      false,
+    );
     expect(
-      unattendedTriggerToolRequiresApproval("webhook", "shell", false, {
+      unattendedTriggerToolRequiresApproval("routine", "shell", false, undefined, routine),
+    ).toBe(false);
+    expect(
+      unattendedTriggerToolRequiresApproval("webhook", "shell", false, undefined, {
         active: false,
         webhookEnabled: true,
         unattendedTools: [...PACKET_ROUTER_TOOLS],
       }),
     ).toBe(true);
     expect(
-      unattendedTriggerToolRequiresApproval("webhook", "shell", false, {
+      unattendedTriggerToolRequiresApproval("webhook", "shell", false, undefined, {
         active: true,
         webhookEnabled: false,
         unattendedTools: [...PACKET_ROUTER_TOOLS],
@@ -230,13 +292,21 @@ describe("connectorKindFromToolName", () => {
 
 describe("resolveActionApproval", () => {
   const alwaysAllowDestination: ActionApprovalRule[] = [
-    { effect: "always_allow", matchKind: "tool", matchValue: "destination.write" },
+    {
+      effect: "always_allow",
+      matchKind: "tool",
+      matchValue: "destination.write",
+    },
   ];
   const requireEmail: ActionApprovalRule[] = [
     { effect: "require_approval", matchKind: "category", matchValue: "email" },
   ];
   const requireDestination: ActionApprovalRule[] = [
-    { effect: "require_approval", matchKind: "tool", matchValue: "destination.write" },
+    {
+      effect: "require_approval",
+      matchKind: "tool",
+      matchValue: "destination.write",
+    },
   ];
 
   it("skips approval when always-allow matches", () => {
@@ -270,7 +340,13 @@ describe("resolveActionApproval", () => {
     expect(
       resolveActionApproval({
         toolName: "shell",
-        rules: [{ effect: "require_approval", matchKind: "tool", matchValue: "shell" }],
+        rules: [
+          {
+            effect: "require_approval",
+            matchKind: "tool",
+            matchValue: "shell",
+          },
+        ],
       }),
     ).toBe("ask");
   });
@@ -305,7 +381,11 @@ describe("resolveActionApproval", () => {
         toolName: "gmail_send_email",
         rules: [
           ...requireEmail,
-          { effect: "always_allow", matchKind: "tool", matchValue: "gmail_send_email" },
+          {
+            effect: "always_allow",
+            matchKind: "tool",
+            matchValue: "gmail_send_email",
+          },
         ],
       }),
     ).toBe("allow");

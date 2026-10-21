@@ -5,6 +5,7 @@ import {
   Brain,
   CloudDownload,
   Cpu,
+  CreditCard,
   Gauge,
   Monitor,
   Search,
@@ -12,7 +13,8 @@ import {
   Volume2,
   XIcon,
 } from "lucide-react";
-import { type ComponentType, useEffect, useRef, useState } from "react";
+import type { ComponentType } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { computersAreUnavailable } from "../components/ComputersUnavailableHint";
 import {
   ComputerSettingsPanel,
@@ -20,6 +22,7 @@ import {
   UpdatesSettingsPanel,
   UsageSettingsPanel,
 } from "./AccountSettingsOverlay";
+import { BillingSettingsPanel } from "./BillingSettingsPanel";
 import { MemorySettingsOverlay } from "./MemorySettingsOverlay";
 import { ModelSettingsOverlay } from "./ModelSettingsOverlay";
 import { ResearchSettingsOverlay } from "./ResearchSettingsOverlay";
@@ -33,6 +36,7 @@ export type SettingsSection =
   | "voice"
   | "usage"
   | "computer"
+  | "billing"
   | "updates";
 
 type NavItem = {
@@ -45,11 +49,14 @@ export function SettingsOverlay({
   email,
   name,
   usage,
+  onUsageOpen,
   initialSection = "general",
   avatarStyle,
   onAvatarStyleChange,
   isDeploymentOwner = false,
+  billingEnabled = false,
   sandboxProvider,
+  onSandboxProviderChange,
   messagingEnabled = false,
   onOpenMessaging,
   memoryConfig,
@@ -61,12 +68,20 @@ export function SettingsOverlay({
 }: {
   email?: string | null;
   name: string;
-  usage?: { runs: number; inputTokens: number; outputTokens: number } | null;
+  usage?: {
+    runs: number;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    totalTokens?: number | null;
+  } | null;
+  onUsageOpen: () => void;
   initialSection?: SettingsSection;
   avatarStyle: AvatarStyle;
   onAvatarStyleChange: (style: AvatarStyle) => Promise<void>;
   isDeploymentOwner?: boolean;
+  billingEnabled?: boolean;
   sandboxProvider?: string | null;
+  onSandboxProviderChange?: (sandboxProvider: string) => void;
   messagingEnabled?: boolean;
   onOpenMessaging?: () => void;
   memoryConfig: SpaceMemoryConfig | null | undefined;
@@ -83,18 +98,48 @@ export function SettingsOverlay({
   const [memoryBusy, setMemoryBusy] = useState(false);
   const [researchBusy, setResearchBusy] = useState(false);
   const [voiceBusy, setVoiceBusy] = useState(false);
-  const showComputer = isDeploymentOwner && computersAreUnavailable(sandboxProvider);
+  const [keepComputerRecovery, setKeepComputerRecovery] = useState(false);
+  const recoveryHoldTimer = useRef<number | undefined>(undefined);
+  const showComputer =
+    keepComputerRecovery || (isDeploymentOwner && computersAreUnavailable(sandboxProvider));
   const panelBusy = memoryBusy || researchBusy || voiceBusy;
+  const releaseComputerRecovery = useCallback(() => {
+    window.clearTimeout(recoveryHoldTimer.current);
+    recoveryHoldTimer.current = undefined;
+    setKeepComputerRecovery(false);
+  }, []);
+  const holdComputerRecovery = useCallback(() => {
+    setKeepComputerRecovery(true);
+    window.clearTimeout(recoveryHoldTimer.current);
+    recoveryHoldTimer.current = window.setTimeout(() => {
+      recoveryHoldTimer.current = undefined;
+      setKeepComputerRecovery(false);
+    }, 4000);
+  }, []);
 
   useEffect(() => {
     setSection(initialSection);
   }, [initialSection]);
 
   useEffect(() => {
+    if (!showComputer && section === "computer") setSection("general");
+  }, [showComputer, section]);
+
+  useEffect(() => {
+    if (!billingEnabled && section === "billing") setSection("general");
+  }, [billingEnabled, section]);
+
+  useEffect(() => {
+    if (section !== "computer") releaseComputerRecovery();
+  }, [section, releaseComputerRecovery]);
+  useEffect(() => () => window.clearTimeout(recoveryHoldTimer.current), []);
+
+  useEffect(() => {
     if (section === "usage") {
+      onUsageOpen();
       usageRef.current?.focus();
     }
-  }, [section]);
+  }, [section, onUsageOpen]);
 
   const navItems: NavItem[] = [
     { id: "general", label: t`General`, icon: Settings },
@@ -104,6 +149,7 @@ export function SettingsOverlay({
     { id: "voice", label: t`Voice`, icon: Volume2 },
     { id: "usage", label: t`Usage`, icon: Gauge },
     ...(showComputer ? [{ id: "computer" as const, label: t`Computer`, icon: Monitor }] : []),
+    ...(billingEnabled ? [{ id: "billing" as const, label: t`Billing`, icon: CreditCard }] : []),
     { id: "updates", label: t`Updates`, icon: CloudDownload },
   ];
 
@@ -230,7 +276,17 @@ export function SettingsOverlay({
               {section === "usage" ? (
                 <UsageSettingsPanel usage={usage} panelRef={usageRef} />
               ) : null}
-              {section === "computer" && showComputer ? <ComputerSettingsPanel /> : null}
+              {section === "computer" && showComputer ? (
+                <ComputerSettingsPanel
+                  sandboxProvider={sandboxProvider}
+                  onSandboxProviderChange={(next) => {
+                    onSandboxProviderChange?.(next);
+                    holdComputerRecovery();
+                  }}
+                  onRecoveryDismissed={releaseComputerRecovery}
+                />
+              ) : null}
+              {section === "billing" && billingEnabled ? <BillingSettingsPanel /> : null}
               {section === "updates" ? (
                 <UpdatesSettingsPanel isDeploymentOwner={isDeploymentOwner} />
               ) : null}

@@ -212,6 +212,36 @@ describe("lingui catalogs", () => {
     expect(i18n._({ id: "Cancel", message: "Cancel" })).toBe("Cancelar");
   });
 
+  it("ships Simplified Chinese translations for the Chief onboarding focus card", () => {
+    const catalog = readFileSync(
+      fileURLToPath(new URL("../locales/zh-CN/messages.po", import.meta.url)),
+      "utf8",
+    );
+
+    expect(catalog).toContain('msgid "What do you want me on first?"\nmsgstr "你想让我先做什么？"');
+    expect(catalog).toContain('msgid "Day-to-day work"\nmsgstr "日常工作"');
+    expect(catalog).toContain('msgid "Inbox & email"\nmsgstr "收件箱和邮件"');
+    expect(catalog).toContain('msgid "Research & writing"\nmsgstr "调研和写作"');
+    expect(catalog).toContain('msgid "A bit of everything"\nmsgstr "什么都做一点"');
+
+    i18n.load("zh-CN", {
+      "What do you want me on first?": "你想让我先做什么？",
+      "Day-to-day work": "日常工作",
+      "Inbox & email": "收件箱和邮件",
+      "Research & writing": "调研和写作",
+      "A bit of everything": "什么都做一点",
+    });
+    i18n.activate("zh-CN");
+    expect(
+      i18n._({
+        id: "What do you want me on first?",
+        message: "What do you want me on first?",
+      }),
+    ).toBe("你想让我先做什么？");
+    expect(i18n._({ id: "Day-to-day work", message: "Day-to-day work" })).toBe("日常工作");
+    expect(i18n._({ id: "Inbox & email", message: "Inbox & email" })).toBe("收件箱和邮件");
+  });
+
   it("ships the Russian runtime catalog with translated chrome and Russian plurals", () => {
     const catalog = readFileSync(
       fileURLToPath(new URL("../locales/ru/messages.po", import.meta.url)),
@@ -227,5 +257,112 @@ describe("lingui catalogs", () => {
     expect(catalog).toContain(
       'msgstr "{0, plural, one {# модель} few {# модели} many {# моделей} other {# модели}}"',
     );
+  });
+
+  it("ships the French runtime catalog with translated chrome and French plurals", () => {
+    const catalog = readFileSync(
+      fileURLToPath(new URL("../locales/fr/messages.po", import.meta.url)),
+      "utf8",
+    );
+
+    expect(catalog).toContain('msgid "Settings"\nmsgstr "Paramètres"');
+    expect(catalog).toContain('msgid "Language"\nmsgstr "Langue"');
+    expect(catalog).toContain('msgid "Cancel"\nmsgstr "Annuler"');
+    expect(catalog).toContain(
+      'msgid "{0} runs · {1} tokens"\nmsgstr "{0} exécutions · {1} jetons"',
+    );
+    expect(catalog).toContain('msgstr "{0, plural, one {# modèle} other {# modèles}}"');
+    expect(catalog).toContain(
+      'msgid "Configure a plugin catalog on the server to connect apps."\nmsgstr "Configurez un catalogue de plugins sur le serveur pour connecter des applications."',
+    );
+  });
+
+  it("translates command credential controls in every locale", () => {
+    const messages = [
+      "Command variable",
+      "Available to this bot's shell commands as {commandVariable}",
+      "{commandVariable} is reserved and cannot be used as a command variable. Choose another name.",
+      "Values are encrypted and never shown again.",
+    ];
+    for (const locale of ["en", "de", "es", "fr", "hi", "ko", "pt-BR", "ru", "tr", "zh-CN"]) {
+      const catalog = readFileSync(
+        fileURLToPath(new URL(`../locales/${locale}/messages.po`, import.meta.url)),
+        "utf8",
+      );
+      for (const message of messages) {
+        const entry = catalog
+          .split("\n\n")
+          .find((block) => block.includes(`msgid ${JSON.stringify(message)}\n`));
+        expect(entry, `${locale}: ${message}`).toMatch(/msgstr ".+"/);
+        if (message.includes("{commandVariable}")) {
+          expect(entry?.split("msgstr ")[1]).toContain("{commandVariable}");
+        }
+      }
+    }
+  });
+
+  it("translates model connection preflight feedback in every non-English catalog", () => {
+    const locales = ["de", "es", "fr", "hi", "ko", "pt-BR", "ru", "tr", "zh-CN"];
+    const messages = [
+      "A subscription credential is stored securely.",
+      'Model "{modelId}" was not listed.',
+      "Models list OK. {modelCount, plural, one {# model} other {# models}} available. " +
+        "Chat was not tested.",
+      "Connection test failed.",
+      "Test API key",
+      "Testing…",
+    ];
+    for (const locale of locales) {
+      const catalog = readFileSync(
+        fileURLToPath(new URL(`../locales/${locale}/messages.po`, import.meta.url)),
+        "utf8",
+      );
+      for (const msgid of messages) {
+        const needle = `msgid ${JSON.stringify(msgid)}\nmsgstr "`;
+        const at = catalog.indexOf(needle);
+        expect(at, `${locale} ${msgid}`).toBeGreaterThanOrEqual(0);
+        const end = catalog.indexOf('"\n', at + needle.length);
+        const translated = catalog.slice(at + needle.length, end);
+        expect(translated.length, `${locale} ${msgid}`).toBeGreaterThan(0);
+        expect(translated, `${locale} ${msgid}`).not.toBe(msgid);
+        if (msgid.includes("{modelId}")) expect(translated).toContain("{modelId}");
+        if (msgid.includes("{modelCount")) {
+          expect(translated).toContain("{modelCount, plural,");
+          expect(translated).toContain("#");
+        }
+      }
+    }
+
+    const russian = readFileSync(
+      fileURLToPath(new URL("../locales/ru/messages.po", import.meta.url)),
+      "utf8",
+    );
+    expect(russian).toContain(
+      "msgstr " +
+        '"Список моделей в порядке. {modelCount, plural, one {Доступна # модель} ' +
+        "few {Доступны # модели} many {Доступно # моделей} other {Доступно # модели}}. " +
+        'Чат не проверялся."',
+    );
+  });
+
+  it("translates the terminal empty state in every non-English catalog", () => {
+    const translations: Record<string, string> = {
+      de: "Noch keine Bot-Aktivität.",
+      es: "Aún no hay actividad del bot.",
+      fr: "Aucune activité du bot pour le moment.",
+      hi: "अभी तक कोई बॉट गतिविधि नहीं।",
+      ko: "아직 봇 활동이 없습니다.",
+      "pt-BR": "Ainda não há atividade do bot.",
+      ru: "Активности бота пока нет.",
+      tr: "Henüz bot etkinliği yok.",
+      "zh-CN": "还没有机器人活动。",
+    };
+    for (const [locale, msgstr] of Object.entries(translations)) {
+      const catalog = readFileSync(
+        fileURLToPath(new URL(`../locales/${locale}/messages.po`, import.meta.url)),
+        "utf8",
+      );
+      expect(catalog).toContain(`msgid "No bot activity yet."\nmsgstr "${msgstr}"`);
+    }
   });
 });

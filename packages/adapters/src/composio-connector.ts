@@ -125,6 +125,93 @@ export function executeSessionKey(
   return accountKey ? `${toolkitKey}|${accountKey}` : toolkitKey;
 }
 
+const COMPOSIO_MULTI_EXECUTE_TOOL = "COMPOSIO_MULTI_EXECUTE_TOOL";
+/** Folder listings treat a missing path as the account root. */
+const DROPBOX_FOLDER_LIST_TOOLS = new Set(["DROPBOX_LIST_FILES_IN_FOLDER", "DROPBOX_LIST_FOLDERS"]);
+
+export type ComposioExecutionCall = {
+  tool: string;
+  args: Record<string, unknown>;
+  account?: string;
+};
+
+/**
+ * `COMPOSIO_MULTI_EXECUTE_TOOL` nests each tool under `tools[]`. Dropbox folder
+ * listing reads `arguments.path` and otherwise returns the account root, so a
+ * path passed beside `arguments` or as a JSON string never selects the folder.
+ * Those listing tools run directly with the folder path on the listing call.
+ */
+export function expandComposioMultiExecute(
+  tool: string,
+  args: Record<string, unknown>,
+): ComposioExecutionCall[] {
+  if (tool !== COMPOSIO_MULTI_EXECUTE_TOOL || !Array.isArray(args.tools)) {
+    return [{ tool, args }];
+  }
+  const calls: ComposioExecutionCall[] = [];
+  let pending: unknown[] = [];
+  const flushPending = () => {
+    if (pending.length === 0) return;
+    calls.push({ tool, args: { ...args, tools: pending } });
+    pending = [];
+  };
+  for (const item of args.tools) {
+    const listing = dropboxFolderListCall(item);
+    if (listing) {
+      flushPending();
+      calls.push(listing);
+    } else {
+      pending.push(item);
+    }
+  }
+  flushPending();
+  if (calls.length === 0 || (calls.length === 1 && calls[0]?.tool === tool)) {
+    return [{ tool, args }];
+  }
+  return calls;
+}
+
+function dropboxFolderListCall(item: unknown): ComposioExecutionCall | undefined {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return undefined;
+  const record = item as Record<string, unknown>;
+  const slug = typeof record.tool_slug === "string" ? record.tool_slug.trim() : "";
+  if (!slug || !DROPBOX_FOLDER_LIST_TOOLS.has(slug.toUpperCase())) return undefined;
+  const toolArgs = objectArguments(record.arguments);
+  if (!toolArgs) {
+    throw new Error("Dropbox folder listing arguments must be a JSON object.");
+  }
+  const path = nonEmptyPath(record.path);
+  if (path && !nonEmptyPath(toolArgs.path)) toolArgs.path = path;
+  const account = typeof record.account === "string" ? record.account.trim() : "";
+  return account ? { tool: slug, args: toolArgs, account } : { tool: slug, args: toolArgs };
+}
+
+function objectArguments(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return {};
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return { ...(parsed as Record<string, unknown>) };
+      }
+    } catch {
+      return undefined;
+    }
+    return undefined;
+  }
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return { ...(value as Record<string, unknown>) };
+  }
+  return {};
+}
+
+function nonEmptyPath(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 export type PluginConnectionRow = {
   id: string;
   provider: string;
@@ -147,7 +234,8 @@ export function mergeConnectedPlugins(
     const include =
       row.status === "connected" ||
       row.status === undefined ||
-      live.has(composioSlugKey(row.provider));
+      ((row.status === "pending" || row.status === "error") &&
+        live.has(composioSlugKey(row.provider)));
     if (!include) continue;
     const current = byProvider.get(composioSlugKey(row.provider));
     if (!current || composioSlugKey(current.displayName) === composioSlugKey(current.provider)) {
@@ -158,6 +246,16 @@ export function mergeConnectedPlugins(
     }
   }
   return [...byProvider.values()];
+}
+
+/** Reuse a revoked/error row only when this provider has no live sibling. */
+export function pickReusableConnection<T extends { id: string; status: string }>(
+  rows: T[],
+): T | undefined {
+  if (rows.some((row) => row.status === "connected" || row.status === "pending")) {
+    return undefined;
+  }
+  return rows.find((row) => row.status === "revoked" || row.status === "error");
 }
 
 export function planLiveConnectionSync(
@@ -172,10 +270,10 @@ export function planLiveConnectionSync(
   for (const slug of live) {
     if (connectedProviders.has(slug)) continue;
     const matches = rows.filter((row) => composioSlugKey(row.provider) === slug);
-    const reusable =
-      matches.find((row) => row.status === "pending" || row.status === "error") ??
-      matches.find((row) => row.status === "revoked") ??
-      matches[0];
+    // Recover in-flight pending/error rows only. A revoked sibling stays
+    // revoked even when another row (or the upstream listing) is live for
+    // the same slug — reviving it would reattach a dead providerRef.
+    const reusable = matches.find((row) => row.status === "pending" || row.status === "error");
     if (!reusable) continue;
     connectIds.push(reusable.id);
     connectedProviders.add(slug);
@@ -246,6 +344,7 @@ export class ComposioConnector implements ComposioProvider {
     const canonicalByKey = new Map(
       canonicalToolkits.map((toolkit) => [composioSlugKey(toolkit), toolkit]),
     );
+    const liveAccountIds = await this.listActiveAccountIds(userId, canonicalToolkits);
     const accountIdsByToolkit = new Map<string, Set<string>>();
     for (const connection of connections) {
       const accountId = connection.providerRef?.trim();
@@ -253,6 +352,14 @@ export class ComposioConnector implements ComposioProvider {
       // No-auth and legacy rows store the toolkit slug rather than a remote
       // connected-account id. Only concrete account ids can scope a session.
       if (composioSlugKey(accountId) === composioSlugKey(connection.externalId)) continue;
+      // Drop refs the provider no longer lists as ACTIVE so a revoked sibling
+      // with a deleted account cannot fail the whole tool-router session.
+      if (liveAccountIds && !liveAccountIds.has(accountId)) {
+        getLogger().warn("composio connected account missing; skipping", {
+          "composio.connected_account_id": accountId,
+        });
+        continue;
+      }
       const toolkit = canonicalByKey.get(composioSlugKey(connection.externalId));
       if (!toolkit) continue;
       const ids = accountIdsByToolkit.get(toolkit) ?? new Set<string>();
@@ -263,8 +370,7 @@ export class ComposioConnector implements ComposioProvider {
     for (const [toolkit, ids] of accountIdsByToolkit) {
       connectedAccounts[toolkit] = [...ids].sort();
     }
-    const liveConnectedAccounts = await this.liveConnectedAccounts(connectedAccounts);
-    const key = executeSessionKey(canonicalToolkits, liveConnectedAccounts);
+    const key = executeSessionKey(canonicalToolkits, connectedAccounts);
     if (!key) return this.sessionFor(userId);
     const composio = this.sdk();
     const existing = this.executeSessions.get(userId);
@@ -278,14 +384,12 @@ export class ComposioConnector implements ComposioProvider {
     // Non-multi-account sessions cap connectedAccounts at one id per toolkit.
     // requireExplicitSelection would also break single-account / no-auth
     // execute paths that do not pass an account parameter.
-    const needsMultiAccount = Object.values(liveConnectedAccounts).some((ids) => ids.length >= 2);
+    const needsMultiAccount = Object.values(connectedAccounts).some((ids) => ids.length >= 2);
     const session = await composio.create(userId, {
       manageConnections: false,
       sandbox: { enable: false },
       toolkits: canonicalToolkits,
-      ...(Object.keys(liveConnectedAccounts).length > 0
-        ? { connectedAccounts: liveConnectedAccounts }
-        : {}),
+      ...(Object.keys(connectedAccounts).length > 0 ? { connectedAccounts } : {}),
       ...(needsMultiAccount
         ? {
             multiAccount: {
@@ -364,26 +468,51 @@ export class ComposioConnector implements ComposioProvider {
   }
 
   async *execute(call: ConnectorCall, context: AdapterContext): AsyncIterable<ConnectorEvent> {
+    const executed = [];
     try {
       const session = await this.sessionForExecute(
         context.userId,
         connectedComposioConnections(context),
       );
-      const result = await session.execute(call.tool, call.args ?? {});
-      if (result.error) {
-        yield { type: "error", message: sanitizeComposioError(result.error) };
-        return;
+      const planned = expandComposioMultiExecute(call.tool, call.args ?? {});
+      for (const item of planned) {
+        const result = await session.execute(
+          item.tool,
+          item.args,
+          item.account ? { account: item.account } : undefined,
+        );
+        if (result.error) {
+          const logIds = collectLogIds(executed);
+          yield {
+            type: "error",
+            message: sanitizeComposioError(composioResultError(result.error, result.data)),
+            ...(logIds.length > 0 ? { logIds } : {}),
+          };
+          return;
+        }
+        executed.push(result);
       }
-      const logId = collectLogIds(result)[0] ?? "";
+      const result =
+        executed.length === 1
+          ? executed[0]!
+          : { data: executed.map((item) => item.data), error: null };
+      const logIds = collectLogIds(executed.length === 1 ? result : executed);
+      const logId = logIds[0] ?? "";
       yield {
         type: "result",
         data: {
           data: sanitizePayload(result.data),
           logId,
+          ...(logIds.length > 1 ? { logIds: logIds.slice(1).map((id) => ({ logId: id })) } : {}),
         },
       };
     } catch (error) {
-      yield { type: "error", message: sanitizeComposioError(error) };
+      const logIds = collectLogIds(executed);
+      yield {
+        type: "error",
+        message: sanitizeComposioError(error),
+        ...(logIds.length > 0 ? { logIds } : {}),
+      };
     }
   }
 
@@ -470,32 +599,24 @@ export class ComposioConnector implements ComposioProvider {
     return ids[0];
   }
 
-  private async liveConnectedAccounts(
-    connectedAccounts: Record<string, string[]>,
-  ): Promise<Record<string, string[]>> {
-    const live: Record<string, string[]> = {};
-    for (const [toolkit, ids] of Object.entries(connectedAccounts)) {
-      const kept = (
-        await Promise.all(
-          ids.map(async (id) => ((await this.connectedAccountIsLive(id)) ? id : undefined)),
-        )
-      ).filter((id): id is string => Boolean(id));
-      if (kept.length > 0) live[toolkit] = kept;
-    }
-    return live;
-  }
-
-  private async connectedAccountIsLive(id: string): Promise<boolean> {
+  private async listActiveAccountIds(
+    userId: string,
+    toolkits: string[],
+  ): Promise<Set<string> | null> {
     try {
-      const account = await this.sdk().connectedAccounts.get(id);
-      if (account?.id) return true;
-    } catch (error) {
-      if (!isComposioNotFoundError(error)) throw error;
+      const listed = await this.sdk().connectedAccounts.list({
+        userIds: [userId],
+        ...(toolkits.length > 0 ? { toolkitSlugs: toolkits } : {}),
+        statuses: ["ACTIVE"],
+      });
+      // A successful list is the allowlist, including empty. Only a thrown
+      // lookup leaves filtering skipped so an outage does not strip every pin.
+      return new Set(
+        (listed.items ?? []).map((item) => item.id).filter((id): id is string => Boolean(id)),
+      );
+    } catch {
+      return null;
     }
-    getLogger().warn("composio connected account missing; skipping", {
-      "composio.connected_account_id": id,
-    });
-    return false;
   }
 
   async listConnectedAccountIds(
@@ -765,22 +886,91 @@ export function isNoAuthToolkitError(error: unknown): boolean {
   );
 }
 
+/**
+ * COMPOSIO_MULTI_EXECUTE_TOOL reports a failed batch as "N out of M tools
+ * failed" and puts each tool's real error in `data.results`. Keep those, or the
+ * model cannot tell "message not found" apart from a broken integration.
+ */
+export function composioResultError(summary: string, data: unknown): string {
+  const results = (data as { results?: unknown } | null | undefined)?.results;
+  if (!Array.isArray(results)) return summary;
+  const details = results.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const item = entry as {
+      tool_slug?: unknown;
+      error?: unknown;
+      response?: { error?: unknown } | null;
+    };
+    const error = [item.error, item.response?.error].find(
+      (value): value is string => typeof value === "string" && value.length > 0,
+    );
+    if (!error) return [];
+    const redacted = redactConnectorText(error);
+    const detail = redacted.length > 500 ? `${redacted.slice(0, 500)}…` : redacted;
+    return [typeof item.tool_slug === "string" ? `${item.tool_slug}: ${detail}` : detail];
+  });
+  if (details.length === 0) return summary;
+  const shown = details.slice(0, 5);
+  const more = details.length - shown.length;
+  return `${summary}: ${shown.join("; ")}${more > 0 ? `; +${more} more` : ""}`;
+}
+
 export function sanitizeComposioError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   return redactConnectorText(message);
 }
 
+const CREDENTIAL_FIELD_NAME =
+  "composio[_-]?api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?token|client[_-]?secret|api[_-]?key|password|passwd|secret";
+
+const CREDENTIAL_FIELD_KEY = new RegExp(`^(?:${CREDENTIAL_FIELD_NAME})$`, "i");
+
+const CREDENTIAL_ASSIGNMENT = new RegExp(
+  `(["']?\\b(?:${CREDENTIAL_FIELD_NAME})\\b["']?\\s*[=:]\\s*)` +
+    `(?:"(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*'|[^\\s,&;}]+(?:;(?![A-Za-z0-9_]+[=:])[^\\s,&;}]+)*)`,
+  "gi",
+);
+
 function sanitizePayload(data: unknown): unknown {
-  try {
-    return JSON.parse(redactConnectorText(JSON.stringify(data)));
-  } catch {
-    return { ok: true };
-  }
+  return redactConnectorData(data);
+}
+
+function redactConnectorData(data: unknown): unknown {
+  if (typeof data === "string") return redactConnectorText(data);
+  if (Array.isArray(data)) return data.map((item) => redactConnectorData(item));
+  if (!data || typeof data !== "object") return data;
+  const seen = new Map<string, number>();
+  return Object.fromEntries(
+    Object.entries(data).map(([key, value]) => [
+      distinctRedactedKey(redactSecretLiterals(key), seen),
+      isCredentialField(key) ? "[redacted]" : redactConnectorData(value),
+    ]),
+  );
+}
+
+function distinctRedactedKey(key: string, seen: Map<string, number>): string {
+  const count = (seen.get(key) ?? 0) + 1;
+  seen.set(key, count);
+  return count === 1 ? key : `${key}~${count}`;
+}
+
+function isCredentialField(key: string): boolean {
+  return CREDENTIAL_FIELD_KEY.test(key);
 }
 
 function redactConnectorText(value: string): string {
+  return redactSecretLiterals(
+    value
+      .replace(CREDENTIAL_ASSIGNMENT, '$1"[redacted]"')
+      .replace(
+        /COMPOSIO_API_KEY(?!\s*[=:])\s+(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\S+)/gi,
+        "COMPOSIO_API_KEY=[redacted]",
+      ),
+  );
+}
+
+function redactSecretLiterals(value: string): string {
   return value
-    .replace(/COMPOSIO_API_KEY[=:]?\s*\S+/gi, "COMPOSIO_API_KEY=[redacted]")
     .replace(/ak_[A-Za-z0-9]+/g, "[redacted]")
     .replace(/ck_[A-Za-z0-9]+/g, "[redacted]")
     .replace(/sk-or-v1-[A-Za-z0-9]+/g, "[redacted]")
