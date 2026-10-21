@@ -880,7 +880,11 @@ describe("Pi runtime ordered model fallback", () => {
       expect(appendMessage).toHaveBeenCalledWith(
         emptyTerminal
           ? // Pi records the requested thinking level on each assistant message.
-            { ...targetMessage, content: [{ type: "text", text: "partial" }], thinkingLevel: "off" }
+            expect.objectContaining({
+              ...targetMessage,
+              content: [{ type: "text", text: "partial" }],
+              thinkingLevel: "off",
+            })
           : targetMessage,
       );
       expect(

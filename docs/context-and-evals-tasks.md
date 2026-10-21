@@ -109,9 +109,9 @@ Completed delivery steps:
 
 ## PR integration verification
 
-Integration against the current main branch uses Pi 0.87.1 and its transcript
-system messages, preserves upstream authentication and streaming safeguards, and
-uses the existing generic `maxTokens` setting rather than a second output limit.
+That PR's integration against its then-current main branch used Pi 0.87.1 and its transcript
+system messages, preserved upstream authentication and streaming safeguards, and
+used the existing generic `maxTokens` setting rather than a second output limit.
 History selection preserves system instructions, section patches, tool deltas,
 current requests, and valid tool exchanges. Cache identity includes the transcript
 system fields. Unknown models need declared context metadata when the complete
