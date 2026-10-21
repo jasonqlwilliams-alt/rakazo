@@ -3,7 +3,6 @@ import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { acceptsNewerModelIds } from "@rakazo/core";
 import { DEFAULT_OPENROUTER_MODEL_ID } from "./deployment-model.js";
 import { resolveProviderModel } from "./model-family.js";
-import { supplementPiModels } from "./pi-current-models.js";
 import { registerLocalProvider } from "./pi-local-provider.js";
 import {
   OPENAI_COMPATIBLE_PROVIDER_ID,
@@ -53,10 +52,8 @@ export function updateModelImageCapabilities(
 let catalogModelsCache: Models | undefined;
 
 function catalogModels(): Models {
-  // Same catalog the runtime calls, including models added ahead of the bundled library.
-  catalogModelsCache ??= registerOpenAiCompatibleCatalog(
-    registerLocalProvider(supplementPiModels(builtinModels())),
-  );
+  // Same catalog the runtime calls.
+  catalogModelsCache ??= registerOpenAiCompatibleCatalog(registerLocalProvider(builtinModels()));
   return catalogModelsCache;
 }
 

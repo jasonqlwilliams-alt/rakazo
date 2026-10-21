@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { AgentRunRequest, AgentRuntimeEvent, ConnectorTool } from "@rakazo/adapter-kit";
-import { PiAgentRuntime } from "@rakazo/adapters";
+import { PiAgentRuntime, piSessionBotRoot } from "@rakazo/adapters";
 import type { MessageBlock } from "@rakazo/contracts";
 import { reduceLiveMessageBlocks } from "@rakazo/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -54,6 +54,57 @@ function latestToolResult(request: ModelEmulatorRequest) {
 }
 
 describe("real Pi against an offline model HTTP endpoint", () => {
+  it("records an opt-in bot run in Pi's version-4 JSONL layout", async () => {
+    const sessionsRoot = await mkdtemp(path.join(tmpdir(), "rakazo-pi-recorded-run-"));
+    cleanups.push(() => rm(sessionsRoot, { recursive: true, force: true }));
+    const server = await startModelEmulator({
+      steps: [{ expect() {}, response: { type: "text", text: "Hello." } }],
+    });
+    cleanups.push(() => server.close());
+    const input = runRequest(server.model, { prompt: "Say hello.", tools: [] });
+
+    const events = await collect(
+      new PiAgentRuntime({ sessionRoot: sessionsRoot }).run(input, { userId: "fixture-user" }),
+    );
+    server.assertComplete();
+    expect(events.at(-1)).toEqual({ type: "done", text: "Hello." });
+
+    const botRoot = piSessionBotRoot(sessionsRoot, "fixture-user", input.botId);
+    const [cwdDirectory] = await readdir(botRoot);
+    const [filename] = await readdir(path.join(botRoot, cwdDirectory!));
+    const lines = (await readFile(path.join(botRoot, cwdDirectory!, filename!), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(lines[0]).toMatchObject({ v: 4, kind: "header", id: input.runId, storageVersion: 1 });
+    expect(lines[1]).toMatchObject({ namespace: "pi.branch.tip", value: null });
+    expect(lines.slice(2).map(([entry]: [{ type: string }]) => entry.type)).toEqual([
+      "custom",
+      "message",
+      "message",
+    ]);
+    expect(lines[4][0].message).toMatchObject({ role: "assistant", thinkingLevel: "off" });
+    expect(lines[4][0].message.content).toContainEqual({ type: "text", text: "Hello." });
+  });
+
+  it("does not record a run without an authenticated user scope", async () => {
+    const sessionsRoot = await mkdtemp(path.join(tmpdir(), "rakazo-pi-unscoped-run-"));
+    cleanups.push(() => rm(sessionsRoot, { recursive: true, force: true }));
+    const server = await startModelEmulator({
+      steps: [{ expect() {}, response: { type: "text", text: "Hello." } }],
+    });
+    cleanups.push(() => server.close());
+
+    const events = await collect(
+      new PiAgentRuntime({ sessionRoot: sessionsRoot }).run(
+        runRequest(server.model, { prompt: "Say hello.", tools: [] }),
+      ),
+    );
+    server.assertComplete();
+    expect(events.at(-1)).toEqual({ type: "done", text: "Hello." });
+    expect(await readdir(sessionsRoot)).toEqual([]);
+  });
+
   it("keeps the original HTTP 503 diagnostic despite Retry-After", async () => {
     const server = await startModelEmulator({
       steps: [

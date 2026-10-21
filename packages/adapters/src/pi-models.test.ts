@@ -32,6 +32,7 @@ describe("Pi model catalog", () => {
       ),
     ).toBe(true);
     const chatgpt = catalog.find((entry) => entry.provider === "openai-codex");
+    expect(chatgpt?.providerName).toBe("OpenAI Codex");
     expect(chatgpt?.signIn).toBe("device-code");
     expect(chatgpt?.billing).toMatch(/ChatGPT Plus or Pro/);
     const copilot = catalog.find((entry) => entry.provider === "github-copilot");
