@@ -18,10 +18,6 @@ vi.mock("@earendil-works/pi-ai/providers/all", () => ({
   }),
 }));
 
-vi.mock("./pi-current-models.js", () => ({
-  supplementPiModels: (models: unknown) => models,
-}));
-
 vi.mock("./pi-google-models.js", () => ({
   registerGoogleModels: (models: unknown) => models,
 }));

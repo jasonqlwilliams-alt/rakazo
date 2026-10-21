@@ -3,7 +3,6 @@ import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import type { ModelOAuthSignInMode, ThinkingLevel } from "@rakazo/contracts";
 import { acceptsNewerModelIds } from "@rakazo/core";
 import { closestFamilyModel } from "./model-family.js";
-import { supplementPiModels } from "./pi-current-models.js";
 import { registerGoogleModels } from "./pi-google-models.js";
 import { LOCAL_PROVIDER_ID, registerLocalProvider } from "./pi-local-provider.js";
 import { SUBSCRIPTION_SIGN_IN_PROVIDERS } from "./pi-oauth.js";
@@ -112,7 +111,7 @@ export function resolveCatalogEntry(provider: string, modelId: string): PiCatalo
 function buildPiCatalog(): PiCatalogEntry[] {
   catalogProbeBaseUrls.clear();
   const models = registerOpenAiCompatibleCatalog(
-    registerLocalProvider(registerGoogleModels(supplementPiModels(builtinModels()))),
+    registerLocalProvider(registerGoogleModels(builtinModels())),
   );
   const entries: PiCatalogEntry[] = [];
   for (const provider of models.getProviders()) {
@@ -120,10 +119,11 @@ function buildPiCatalog(): PiCatalogEntry[] {
     const oauth = Boolean(provider.auth.oauth);
     const auth: PiCatalogAuth = apiKey && oauth ? "both" : oauth ? "oauth" : "api-key";
     const signInMeta = SUBSCRIPTION_SIGN_IN_PROVIDERS[provider.id];
+    const providerName = signInMeta?.providerName ?? provider.name;
     const oauthLabel =
       signInMeta?.loginLabel ?? provider.auth.oauth?.loginLabel ?? provider.auth.oauth?.name;
     const subscription = Boolean(provider.auth.oauth?.isSubscription);
-    const billing = catalogBilling(provider.id, provider.name, {
+    const billing = catalogBilling(provider.id, providerName, {
       apiKey,
       oauth,
     });
@@ -135,7 +135,7 @@ function buildPiCatalog(): PiCatalogEntry[] {
       const thinkingLevels = getSupportedThinkingLevels(model) as ThinkingLevel[];
       entries.push({
         provider: provider.id,
-        providerName: provider.name,
+        providerName,
         id: model.id,
         label: catalogModelLabel(model.id, model.name, modelIds),
         billing,

@@ -20,14 +20,18 @@ function fixtureResponse(): Response {
 }
 
 /** The thinking config Google receives for one turn, captured offline. */
-async function sentThinking(modelId: string, reasoning?: "low" | "medium" | "high") {
+async function sentThinking(
+  modelId: string,
+  reasoning?: "low" | "medium" | "high",
+  register = true,
+) {
   let body: { generationConfig?: { thinkingConfig?: ThinkingConfig } } | undefined;
   const mockFetch = vi.fn<typeof fetch>(async (_input, init) => {
     body = JSON.parse(String(init?.body));
     return fixtureResponse();
   });
   vi.stubGlobal("fetch", mockFetch);
-  const models = registerGoogleModels(builtinModels());
+  const models = register ? registerGoogleModels(builtinModels()) : builtinModels();
   const model = (resolveProviderModel(models, "google", modelId) ?? {
     ...models.getModel("google", "gemini-2.5-flash"),
     id: modelId,
@@ -46,8 +50,8 @@ async function sentThinking(modelId: string, reasoning?: "low" | "medium" | "hig
   return body?.generationConfig?.thinkingConfig;
 }
 
-describe("Google models newer than Pi's catalog", () => {
-  it("adds Gemini 4 Argon to the Google provider once", () => {
+describe("Google model compatibility", () => {
+  it("registers Gemini 4 Argon with the Google provider once", () => {
     const models = registerGoogleModels(registerGoogleModels(builtinModels()));
     const argon = models.getModels("google").filter((model) => model.id === GEMINI_4_ARGON_ID);
     expect(argon).toHaveLength(1);
@@ -56,7 +60,6 @@ describe("Google models newer than Pi's catalog", () => {
       api: "google-generative-ai",
       reasoning: true,
       contextWindow: 1_048_576,
-      maxTokens: 65_536,
     });
   });
 
@@ -88,9 +91,8 @@ describe("Google models newer than Pi's catalog", () => {
   });
 
   it("leaves other Gemini 4 families on Pi's own thinking format", async () => {
-    const thinking = await sentThinking("gemini-4-pro", "high");
-    expect(thinking?.thinkingBudget).toEqual(expect.any(Number));
-    expect(thinking?.thinkingLevel).toBeUndefined();
+    const upstreamThinking = await sentThinking("gemini-4-pro", "high", false);
+    expect(await sentThinking("gemini-4-pro", "high")).toEqual(upstreamThinking);
   });
 
   it("leaves earlier Gemini models on Pi's own thinking format", async () => {

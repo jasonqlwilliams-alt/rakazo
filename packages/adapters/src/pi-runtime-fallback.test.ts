@@ -41,7 +41,6 @@ vi.mock("@earendil-works/pi-ai/providers/all", () => ({
   },
 }));
 
-vi.mock("./pi-current-models.js", () => ({ supplementPiModels: (models: unknown) => models }));
 vi.mock("./pi-google-models.js", () => ({ registerGoogleModels: (models: unknown) => models }));
 vi.mock("./pi-local-provider.js", () => ({ registerLocalProvider: (models: unknown) => models }));
 vi.mock("./pi-openai-compatible-provider.js", () => ({
@@ -881,7 +880,12 @@ describe("Pi runtime ordered model fallback", () => {
       expect(providerState.stream).toHaveBeenCalledTimes(1);
       expect(appendMessage).toHaveBeenCalledWith(
         emptyTerminal
-          ? { ...targetMessage, content: [{ type: "text", text: "partial" }] }
+          ? // Pi records the requested thinking level on each assistant message.
+            expect.objectContaining({
+              ...targetMessage,
+              content: [{ type: "text", text: "partial" }],
+              thinkingLevel: "off",
+            })
           : targetMessage,
       );
       expect(
