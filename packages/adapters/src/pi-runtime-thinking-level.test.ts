@@ -90,6 +90,10 @@ vi.mock("@earendil-works/pi-ai/providers/all", () => ({
   }),
 }));
 
+vi.mock("./pi-google-models.js", () => ({
+  registerGoogleModels: (models: unknown) => models,
+}));
+
 vi.mock("./pi-local-provider.js", () => ({
   registerLocalProvider: (models: unknown) => models,
 }));

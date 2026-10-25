@@ -434,12 +434,14 @@ support. Existing token limits still apply; effort is not a separate reasoning-t
 
 ### Models newer than the catalog
 
-The model list for built-in providers comes from Pi (`@earendil-works/pi-ai`). To use a model that
-shipped after your Rakazo release, choose the provider in **Settings → Models**, pick **Other model
-id**, and enter the provider's exact id (for example `grok-4.8`). Rakazo runs it with the API,
-reasoning levels, limits, and pricing of the closest listed model in the same family (`grok-4.7`
-here), so a new family or a changed context window may need the next Pi update. An id with no listed
-family is rejected when saved, and a run that cannot resolve its model fails instead of replying.
+The model list for built-in providers comes from Pi (`@earendil-works/pi-ai`), with Gemini 4 Argon
+(`gemini-4-argon`) added to Google's list until Pi includes it. Select **Gemini 4 Argon** directly
+when connecting Google. To use another model that shipped after your Rakazo release, choose the
+provider in **Settings → Models**, pick **Other model id**, and enter the provider's exact id (for
+example `grok-4.8`). Rakazo runs it with the API, reasoning levels, limits, and pricing of the
+closest listed model in the same family (`grok-4.7` here), so a new family or a changed context
+window may need the next Pi update. An id with no listed family is rejected when saved, and a run
+that cannot resolve its model fails instead of replying.
 The local model server takes only the ids in `RAKAZO_LOCAL_MODELS`.
 
 The `pi model library update` workflow opens a pull request each week when Pi publishes a newer

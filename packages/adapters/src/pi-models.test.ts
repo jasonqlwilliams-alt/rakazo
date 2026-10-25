@@ -155,6 +155,17 @@ describe("Pi model catalog", () => {
     ).rejects.toThrow(/too large/i);
   });
 
+  it("lists Gemini 4 Argon for Google", () => {
+    const argon = listPiCatalog().find(
+      (entry) => entry.provider === "google" && entry.id === "gemini-4-argon",
+    );
+    expect(argon).toMatchObject({
+      label: "Gemini 4 Argon",
+      reasoning: true,
+      thinkingLevels: ["low", "medium", "high"],
+    });
+  });
+
   it("adds a configured OpenRouter model that is newer than the static catalog", async () => {
     vi.stubEnv("PI_DEFAULT_PROVIDER", " openrouter ");
     vi.stubEnv("PI_DEFAULT_MODEL", " rakazo-test/unknown-future-model ");
