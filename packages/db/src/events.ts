@@ -15,6 +15,7 @@ import {
   isApprovalAskBlock,
   isConversationalRun,
   isSecretAskBlock,
+  isUserProgressClientNonce,
   messagingChannelId,
   resolveAskChoice,
   sanitizeJsonValue,
@@ -371,6 +372,7 @@ export async function clearThread(
       data: { error: THREAD_CLEARED_RUN_MESSAGE },
     });
     for (const { computerId, botId, runId, fence } of dedicatedComputerWork) {
+      // This hold lasts five minutes even if screen release is still waiting.
       const expiresAt = new Date(now.getTime() + 5 * 60_000);
       await tx.computerExecutionLease.upsert({
         where: { computerId_botId: { computerId, botId } },
@@ -456,7 +458,7 @@ async function keepBotMessageSenders(tx: Prisma.TransactionClient, threadId: str
     if (!context) continue;
     const sent = await tx.message.findMany({
       where: { threadId, runId: run.id },
-      select: { role: true, blocks: true },
+      select: { role: true, blocks: true, clientNonce: true },
     });
     const explicitResult = sent.some((message) => {
       const parsed = MessageBlockSchema.array().safeParse(message.blocks);
@@ -475,6 +477,7 @@ async function keepBotMessageSenders(tx: Prisma.TransactionClient, threadId: str
       sent.some(
         (message) =>
           message.role === "bot" &&
+          !isUserProgressClientNonce(message.clientNonce) &&
           Array.isArray(message.blocks) &&
           (message.blocks as MessageBlock[]).some(
             (block) => block.kind === "text" && block.text.trim().length > 0,

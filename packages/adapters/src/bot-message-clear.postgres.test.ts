@@ -11,6 +11,7 @@ import {
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { messageBot, returnBotMessageOutcome } from "./bot-messages.js";
 import { reconcileBotMessageOutcome } from "./bot-outcome-reconciliation.js";
+import { userProgressClientNonce } from "./user-progress.js";
 
 const describePostgres =
   process.env.VERIFY_DATABASE && process.env.DATABASE_URL ? describe.sequential : describe.skip;
@@ -179,6 +180,30 @@ describePostgres("bot message outcomes across a conversation clear (PostgreSQL)"
   it("does not claim an answer was removed when a finished run wrote none", async () => {
     const h = await setup();
     await prisma.run.update({ where: { id: h.delegated.id }, data: { status: "completed" } });
+
+    await h.clear();
+    await reconcileBotMessageOutcome(h.deps, h.delegated.id);
+
+    expect(await h.notices()).toEqual([
+      expect.objectContaining({
+        fromBotId: h.recipient.id,
+        intent: "status",
+        text: "The delegated bot completed its turn without a written summary.",
+      }),
+    ]);
+  });
+
+  it("does not claim an answer was removed when only progress was cleared", async () => {
+    const h = await setup();
+    await prisma.run.update({ where: { id: h.delegated.id }, data: { status: "completed" } });
+    await createThreadMessage(prisma, {
+      threadId: h.recipient.threadId,
+      role: "bot",
+      botId: h.recipient.id,
+      runId: h.delegated.id,
+      clientNonce: userProgressClientNonce(h.delegated.id),
+      blocks: [{ kind: "text", text: "Checking the release calendar." }],
+    });
 
     await h.clear();
     await reconcileBotMessageOutcome(h.deps, h.delegated.id);

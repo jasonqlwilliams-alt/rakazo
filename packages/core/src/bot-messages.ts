@@ -6,6 +6,12 @@ import {
 
 export const BOT_MESSAGE_MAX_LENGTH = 8_000;
 
+export const USER_PROGRESS_CLIENT_NONCE_PREFIX = "user-progress:";
+
+export function isUserProgressClientNonce(clientNonce: string | null | undefined): boolean {
+  return Boolean(clientNonce?.startsWith(USER_PROGRESS_CLIENT_NONCE_PREFIX));
+}
+
 /**
  * How many bot-started deliveries may chain before the next one is refused.
  * Messaging is fire-and-forget, so nothing stops two bots replying to each

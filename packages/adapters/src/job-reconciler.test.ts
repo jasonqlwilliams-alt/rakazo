@@ -625,6 +625,50 @@ describe("createJobReconciler", () => {
     );
   });
 
+  it("uses the persisted clear marker after reading a stale answer", async () => {
+    const terminalRun = {
+      id: "run-cleared-answer",
+      spaceId: "workspace-1",
+      threadId: "thread-1",
+      botId: "bot-1",
+      userId: "user-1",
+      sourceMessageId: "message-1",
+      status: "completed",
+      error: null,
+      botOutcomeAttempts: 0,
+      botOutcomeNextAttemptAt: null,
+      bot: { name: "Researcher" },
+    };
+    const prisma = {
+      run: {
+        findFirst: vi
+          .fn()
+          .mockResolvedValueOnce(terminalRun)
+          .mockResolvedValueOnce({ botMessageSource: { answerCleared: true } }),
+        updateMany: vi.fn(async () => ({ count: 1 })),
+      },
+      message: {
+        findMany: vi.fn(async () => [
+          { blocks: [{ kind: "text", text: "It ships in March." }], clientNonce: null },
+        ]),
+      },
+    } as unknown as PrismaClient;
+    const { jobs } = publisher();
+    const events = { notify: vi.fn() } as unknown as ThreadEvents;
+    vi.mocked(returnBotMessageOutcome).mockResolvedValue(true);
+
+    await reconcileBotMessageOutcome({ prisma, jobs, events }, terminalRun.id);
+
+    expect(returnBotMessageOutcome).toHaveBeenLastCalledWith(
+      { prisma, jobs, events },
+      terminalRun,
+      { id: "bot-1", name: "Researcher" },
+      "The delegated bot completed its turn, but its written answer was removed when the chat was cleared.",
+      "status",
+      { forceUnread: false },
+    );
+  });
+
   it.each(["cancelled", "failed"])("returns a %s peer run as unread status", async (status) => {
     const terminalRun = {
       id: "run-stuck",
