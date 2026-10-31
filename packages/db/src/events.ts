@@ -82,12 +82,6 @@ export interface ClearThreadResult {
   historyCompactionGeneration: number;
   /** Sandbox work of the cancelled runs, for the caller to stop after commit. */
   computerWork: RunComputerWork;
-  dedicatedComputerWork: Array<{
-    computer: { id: string; homeKey: string; kind: string; providerRef: string | null };
-    botId: string;
-    runId: string;
-    fence: number;
-  }>;
   /** Screen control leases the cancelled takeovers held; the caller revokes each one. */
   takeoverControls: TakeoverControl[];
 }
@@ -98,6 +92,7 @@ export interface TakeoverControl {
   kind: string;
   providerRef: string | null;
   controlLeaseId: string;
+  controlBotId: string | null;
 }
 
 export class ThreadClearPreconditionError extends Error {
@@ -344,7 +339,7 @@ export async function clearThread(
         bot: {
           select: {
             computer: {
-              select: { id: true, homeKey: true, kind: true, providerRef: true, scope: true },
+              select: { id: true, scope: true },
             },
           },
         },
@@ -361,12 +356,7 @@ export async function clearThread(
         return [];
       return [
         {
-          computer: {
-            id: computer.id,
-            homeKey: computer.homeKey,
-            kind: computer.kind,
-            providerRef: computer.providerRef,
-          },
+          computerId: computer.id,
           botId: run.botId,
           runId: run.id,
           fence: run.leaseFence,
@@ -380,6 +370,14 @@ export async function clearThread(
       where: { id: { in: runIds }, trigger: "bot_message" },
       data: { error: THREAD_CLEARED_RUN_MESSAGE },
     });
+    for (const { computerId, botId, runId, fence } of dedicatedComputerWork) {
+      const expiresAt = new Date(now.getTime() + 5 * 60_000);
+      await tx.computerExecutionLease.upsert({
+        where: { computerId_botId: { computerId, botId } },
+        create: { computerId, botId, runId, fence, expiresAt },
+        update: { runId, fence, expiresAt },
+      });
+    }
     const computerWork = await findRunComputerWork(tx, runIds);
     const takeoverControls = await releaseTakeovers(tx, runIds);
     await tx.message.deleteMany({ where: { threadId: input.threadId } });
@@ -418,7 +416,6 @@ export async function clearThread(
       cancelledRunIds: runIds,
       historyCompactionGeneration: cleared.historyCompactionGeneration,
       computerWork,
-      dedicatedComputerWork,
       takeoverControls,
     };
   });
@@ -495,7 +492,14 @@ async function releaseTakeovers(
   if (runIds.length === 0) return [];
   const bound = await tx.computer.findMany({
     where: { controlRunId: { in: runIds } },
-    select: { id: true, homeKey: true, kind: true, providerRef: true, controlLeaseId: true },
+    select: {
+      id: true,
+      homeKey: true,
+      kind: true,
+      providerRef: true,
+      controlLeaseId: true,
+      controlBotId: true,
+    },
   });
   await tx.computer.updateMany({
     where: { controlRunId: { in: runIds }, controlLeaseId: null },

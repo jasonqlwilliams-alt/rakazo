@@ -225,7 +225,7 @@ describe.skipIf(!enabled)("conversation clear (PostgreSQL)", () => {
       expect(setScreenControl).toHaveBeenCalledWith(
         expect.objectContaining({ providerRef: computer.providerRef }),
         false,
-        expect.anything(),
+        expect.objectContaining({ botId }),
         "control-lease-1",
       );
       expect(execute).toHaveBeenCalledWith(
@@ -280,17 +280,48 @@ describe.skipIf(!enabled)("conversation clear (PostgreSQL)", () => {
       },
     });
     await handles.prisma.bot.update({ where: { id: botId }, data: { computerId: computer.id } });
-    const releaseScreen = vi.spyOn(handles.sandbox, "releaseScreen").mockResolvedValue(undefined);
+    let enterTeardown!: () => void;
+    let allowTeardown!: () => void;
+    const teardownEntered = new Promise<void>((resolve) => {
+      enterTeardown = resolve;
+    });
+    const teardownGate = new Promise<void>((resolve) => {
+      allowTeardown = resolve;
+    });
+    const releaseScreen = vi
+      .spyOn(handles.sandbox, "releaseScreen")
+      .mockImplementation(async () => {
+        enterTeardown();
+        await teardownGate;
+      });
     const setScreenControl = vi
       .spyOn(handles.sandbox, "setScreenControl")
       .mockResolvedValue(undefined);
     const execute = vi.spyOn(handles.sandbox, "execute").mockImplementation(async function* () {});
     try {
-      await rpc("threads/clear", { botId });
+      const clearing = rpc("threads/clear", { botId });
+      await teardownEntered;
+      await expect(
+        acquireComputerExecutionLease(handles.prisma, {
+          computerId: computer.id,
+          botId,
+          runId: "replacement-run",
+        }),
+      ).rejects.toBeInstanceOf(ComputerBusyError);
+      allowTeardown();
+      await clearing;
 
-      expect(await handles.prisma.computerExecutionLease.count({ where: { runId: run.id } })).toBe(
-        0,
-      );
+      const held = await handles.prisma.computerExecutionLease.findFirstOrThrow({
+        where: { computerId: computer.id, botId },
+      });
+      expect(held).toMatchObject({ runId: run.id, fence: 4, expiresAt: new Date(0) });
+      await expect(
+        acquireComputerExecutionLease(handles.prisma, {
+          computerId: computer.id,
+          botId,
+          runId: "replacement-run",
+        }),
+      ).resolves.toBeNull();
       expect(execute).toHaveBeenCalledWith(
         expect.objectContaining({ providerRef: computer.providerRef }),
         expect.objectContaining({
@@ -302,7 +333,14 @@ describe.skipIf(!enabled)("conversation clear (PostgreSQL)", () => {
         expect.objectContaining({ providerRef: computer.providerRef }),
         expect.objectContaining({ runId: run.id, screenLeaseId: `${run.id}:4` }),
       );
+      expect(setScreenControl).toHaveBeenCalledWith(
+        expect.objectContaining({ providerRef: computer.providerRef }),
+        false,
+        expect.objectContaining({ botId }),
+        "dedicated-control-lease",
+      );
     } finally {
+      allowTeardown();
       releaseScreen.mockRestore();
       setScreenControl.mockRestore();
       execute.mockRestore();
