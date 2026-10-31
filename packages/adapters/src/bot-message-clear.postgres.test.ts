@@ -171,7 +171,18 @@ describePostgres("bot message outcomes across a conversation clear (PostgreSQL)"
         text: "The delegated bot completed its turn, but its written answer was removed when the chat was cleared.",
       }),
     ]);
-    expect(await prisma.message.count({ where: { threadId: h.recipient.threadId } })).toBe(0);
+    expect(
+      await prisma.message.findMany({
+        where: { threadId: h.recipient.threadId },
+        select: { blocks: true },
+      }),
+    ).toEqual([
+      {
+        blocks: [
+          expect.objectContaining({ kind: "bot_message_sent", intent: "status", toBotId: h.sender.id }),
+        ],
+      },
+    ]);
     expect(await prisma.run.findUniqueOrThrow({ where: { id: h.delegated.id } })).toMatchObject({
       botMessageSource: { text: "", answerCleared: true },
     });
