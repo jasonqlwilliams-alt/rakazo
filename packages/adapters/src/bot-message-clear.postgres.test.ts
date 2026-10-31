@@ -179,7 +179,11 @@ describePostgres("bot message outcomes across a conversation clear (PostgreSQL)"
     ).toEqual([
       {
         blocks: [
-          expect.objectContaining({ kind: "bot_message_sent", intent: "status", toBotId: h.sender.id }),
+          expect.objectContaining({
+            kind: "bot_message_sent",
+            intent: "status",
+            toBotId: h.sender.id,
+          }),
         ],
       },
     ]);

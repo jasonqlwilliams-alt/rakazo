@@ -430,9 +430,9 @@ export const appContract = {
     clear: oc
       .input(
         threadTarget.safeExtend({
-          /** Clear only if no message arrived after the one before this seq. */
+          /** Clear only if the thread's next message sequence still equals this value. */
           expectedNextMessageSeq: z.number().int().nonnegative().optional(),
-          /** Clear only if nothing is still running in the conversation. */
+          /** Clear only if no run, cloud agent, or research job is active in the thread. */
           ifIdle: z.literal(true).optional(),
         }),
       )

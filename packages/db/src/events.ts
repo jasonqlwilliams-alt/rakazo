@@ -80,7 +80,7 @@ export interface ClearThreadInput {
 export interface ClearThreadResult {
   event: ProductEvent;
   cancelledRunIds: string[];
-  /** The generation the clear started; the cleared conversation's is the one before it. */
+  /** The new generation; the cleared conversation belongs to the previous one. */
   historyCompactionGeneration: number;
   /** Sandbox work of the cancelled runs, for the caller to stop after commit. */
   computerWork: RunComputerWork;
@@ -486,7 +486,11 @@ async function keepBotMessageSenders(tx: Prisma.TransactionClient, threadId: str
     await tx.run.update({
       where: { id: run.id },
       data: {
-        botMessageSource: { ...context, text: "", ...(answerCleared ? { answerCleared: true } : {}) },
+        botMessageSource: {
+          ...context,
+          text: "",
+          ...(answerCleared ? { answerCleared: true } : {}),
+        },
         ...(explicitResult ? { botOutcomeReturnedAt: new Date() } : {}),
       },
     });
