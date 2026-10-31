@@ -145,4 +145,33 @@ describePostgres("bot message outcomes across a conversation clear (PostgreSQL)"
       expect.objectContaining({ fromBotId: h.recipient.id, intent: "status" }),
     ]);
   });
+
+  it("does not replace an explicit result with a cancellation after clear", async () => {
+    const h = await setup();
+    await prisma.run.update({ where: { id: h.delegated.id }, data: { status: "running" } });
+    expect(
+      await messageBot(
+        h.deps,
+        h.delegated,
+        { id: h.recipient.id, name: h.recipient.name },
+        { bot_id: h.sender.id, message: "It ships in March.", intent: "result" },
+      ),
+    ).toMatchObject({ ok: true });
+    expect(await h.notices()).toHaveLength(1);
+
+    await h.clear();
+    await reconcileBotMessageOutcome(h.deps, h.delegated.id);
+
+    expect(await h.notices()).toEqual([
+      expect.objectContaining({
+        fromBotId: h.recipient.id,
+        intent: "result",
+        text: "It ships in March.",
+      }),
+    ]);
+    expect(await prisma.run.findUniqueOrThrow({ where: { id: h.delegated.id } })).toMatchObject({
+      status: "cancelled",
+      botOutcomeReturnedAt: expect.any(Date),
+    });
+  });
 });

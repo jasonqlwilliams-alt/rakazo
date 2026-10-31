@@ -86,6 +86,12 @@ export interface ClearThreadResult {
   historyCompactionGeneration: number;
   /** Sandbox work of the cancelled runs, for the caller to stop after commit. */
   computerWork: RunComputerWork;
+  dedicatedComputerWork: Array<{
+    computer: { id: string; homeKey: string; kind: string; providerRef: string | null };
+    botId: string;
+    runId: string;
+    fence: number;
+  }>;
   /** Screen control leases the cancelled takeovers held; the caller revokes each one. */
   takeoverControls: TakeoverControl[];
 }
@@ -333,13 +339,44 @@ export async function clearThread(
         ...(input.groupId ? {} : { botId: input.botId }),
         status: { in: [...ACTIVE_RUN_STATUSES] },
       },
-      select: { id: true, taskId: true },
+      select: {
+        id: true,
+        taskId: true,
+        botId: true,
+        status: true,
+        leaseFence: true,
+        bot: {
+          select: {
+            computer: {
+              select: { id: true, homeKey: true, kind: true, providerRef: true, scope: true },
+            },
+          },
+        },
+      },
     });
     if (input.ifIdle && (activeRuns.length > 0 || (await hasActiveThreadJob(tx, input.threadId)))) {
       throw new ThreadClearPreconditionError("busy");
     }
     const now = new Date();
     const runIds = activeRuns.map((run) => run.id);
+    const dedicatedComputerWork = activeRuns.flatMap((run) => {
+      const computer = run.bot.computer;
+      if (!computer || computer.scope !== "dedicated" || run.status !== "waiting_takeover")
+        return [];
+      return [
+        {
+          computer: {
+            id: computer.id,
+            homeKey: computer.homeKey,
+            kind: computer.kind,
+            providerRef: computer.providerRef,
+          },
+          botId: run.botId,
+          runId: run.id,
+          fence: run.leaseFence,
+        },
+      ];
+    });
     await keepBotMessageSenders(tx, input.threadId);
     await cancelRunsInTransaction(tx, activeRuns, now);
     // A delegated request the clear stops still owes its sender an outcome.
@@ -395,6 +432,7 @@ export async function clearThread(
       cancelledRunIds: runIds,
       historyCompactionGeneration: cleared.historyCompactionGeneration,
       computerWork,
+      dedicatedComputerWork,
       takeoverControls,
     };
   });
@@ -433,9 +471,28 @@ async function keepBotMessageSenders(tx: Prisma.TransactionClient, threadId: str
     const blocks = MessageBlockSchema.array().safeParse(run.sourceMessage?.blocks);
     const context = blocks.success ? botMessageContext(blocks.data) : undefined;
     if (!context) continue;
+    const sent = await tx.message.findMany({
+      where: { threadId, runId: run.id },
+      select: { blocks: true },
+    });
+    const explicitResult = sent.some((message) => {
+      const parsed = MessageBlockSchema.array().safeParse(message.blocks);
+      return (
+        parsed.success &&
+        parsed.data.some(
+          (block) =>
+            block.kind === "bot_message_sent" &&
+            block.toBotId === context.fromBotId &&
+            block.intent === "result",
+        )
+      );
+    });
     await tx.run.update({
       where: { id: run.id },
-      data: { botMessageSource: { ...context, text: "" } },
+      data: {
+        botMessageSource: { ...context, text: "" },
+        ...(explicitResult ? { botOutcomeReturnedAt: new Date() } : {}),
+      },
     });
   }
 }
@@ -465,7 +522,7 @@ async function releaseTakeovers(
   });
   await tx.computer.updateMany({
     where: { controlRunId: { in: runIds }, controlLeaseId: { not: null } },
-    data: { controlHolder: "none", controlRunId: null },
+    data: { controlHolder: "none", controlRunId: null, controlLeaseExpiresAt: new Date() },
   });
   return bound.flatMap(({ controlLeaseId, ...computer }) =>
     controlLeaseId ? [{ ...computer, controlLeaseId }] : [],
@@ -530,7 +587,7 @@ export async function sendUserMessage(
                   in: ["running", "queued", "leased", "waiting_input", "waiting_takeover"],
                 },
               },
-              select: { id: true, taskId: true },
+              select: { id: true, taskId: true, trigger: true },
             })
           : [];
       // Steer a conversational run when there is one; a routine, webhook, or intro turn only holds the queue.

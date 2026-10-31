@@ -2818,7 +2818,16 @@ describe("clearThread", () => {
           .mockResolvedValue({ nextEventSeq: 1 }),
       },
       run: {
-        findMany: vi.fn().mockResolvedValue([{ id: "run-1", taskId: "task-1" }]),
+        findMany: vi.fn()
+          .mockResolvedValueOnce([{
+            id: "run-1",
+            taskId: "task-1",
+            botId: "bot-1",
+            status: "running",
+            leaseFence: 1,
+            bot: { computer: null },
+          }])
+          .mockResolvedValueOnce([]),
         updateMany: vi.fn(),
       },
       attempt: { updateMany: vi.fn() },
@@ -2880,10 +2889,26 @@ describe("clearThread", () => {
           .mockResolvedValue({ nextEventSeq: 1 }),
       },
       run: {
-        findMany: vi.fn().mockResolvedValue([
-          { id: "group-run-1", taskId: "task-1" },
-          { id: "group-run-2", taskId: "task-2" },
-        ]),
+        findMany: vi.fn()
+          .mockResolvedValueOnce([
+            {
+              id: "group-run-1",
+              taskId: "task-1",
+              botId: "bot-1",
+              status: "running",
+              leaseFence: 1,
+              bot: { computer: null },
+            },
+            {
+              id: "group-run-2",
+              taskId: "task-2",
+              botId: "bot-2",
+              status: "running",
+              leaseFence: 1,
+              bot: { computer: null },
+            },
+          ])
+          .mockResolvedValueOnce([]),
         updateMany: vi.fn(),
       },
       attempt: { updateMany: vi.fn() },

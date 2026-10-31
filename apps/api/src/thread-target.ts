@@ -1152,7 +1152,10 @@ export async function stopThreadRuns(
 export async function releaseClearedThreadComputers(
   deps: { prisma: PrismaClient; sandbox: SandboxProvider },
   actor: Actor,
-  cleared: Pick<ClearThreadResult, "cancelledRunIds" | "computerWork" | "takeoverControls">,
+  cleared: Pick<
+    ClearThreadResult,
+    "cancelledRunIds" | "computerWork" | "dedicatedComputerWork" | "takeoverControls"
+  >,
 ) {
   const context = {
     operationId: "thread-clear",
@@ -1168,6 +1171,7 @@ export async function releaseClearedThreadComputers(
       cleared.cancelledRunIds,
       cleared.computerWork,
       "thread-clear",
+      cleared.dedicatedComputerWork,
     ),
     ...cleared.takeoverControls.map(async (computer) => {
       try {
@@ -1196,13 +1200,14 @@ async function stopRunComputerWork(
   runIds: string[],
   { computers, leases }: RunComputerWork,
   operationId: string,
+  dedicatedComputerWork: ClearThreadResult["dedicatedComputerWork"] = [],
 ) {
   const computerById = new Map(computers.map((computer) => [computer.id, computer]));
   const teardownTargets: Array<{
-    computer: (typeof computers)[number];
+    computer: Pick<(typeof computers)[number], "id" | "homeKey" | "kind" | "providerRef">;
     botId: string;
     runId: string;
-    lease: (typeof leases)[number] | null;
+    lease: Pick<(typeof leases)[number], "runId" | "fence"> | null;
   }> = [];
   const seenTargets = new Set<string>();
   for (const lease of leases) {
@@ -1235,6 +1240,12 @@ async function stopRunComputerWork(
       runId: computer.executionRunId,
       lease: null,
     });
+  }
+  for (const { computer, botId, runId, fence } of dedicatedComputerWork) {
+    const key = `${computer.id}:${runId}`;
+    if (seenTargets.has(key)) continue;
+    seenTargets.add(key);
+    teardownTargets.push({ computer, botId, runId, lease: { runId, fence } });
   }
   await Promise.all(
     teardownTargets.map(async ({ computer, botId, runId, lease }) => {

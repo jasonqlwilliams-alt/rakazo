@@ -4,8 +4,8 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { ComposioEmulator } from "@rakazo/adapters";
-import { createThreadMessage } from "@rakazo/db";
+import { ComposioEmulator, expireComputerControl } from "@rakazo/adapters";
+import { createThreadEvents, createThreadMessage } from "@rakazo/db";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AppHandles } from "../../../apps/api/src/app.ts";
 import { discardBotIntroRun } from "./discard-bot-intro.js";
@@ -212,6 +212,108 @@ describe.skipIf(!enabled)("conversation clear (PostgreSQL)", () => {
       releaseScreen.mockRestore();
       setScreenControl.mockRestore();
       execute.mockRestore();
+    }
+  });
+
+  it("stops a dedicated computer without an execution lease", async () => {
+    const { botId, threadId } = await createBot("Dedicated takeover fixture");
+    const run = await createRun(botId, threadId, "waiting_takeover");
+    await handles.prisma.run.update({ where: { id: run.id }, data: { leaseFence: 4 } });
+    const computer = await handles.prisma.computer.create({
+      data: {
+        spaceId,
+        userId,
+        scope: "dedicated",
+        scopeKey: `clear-fixture:${randomUUID()}`,
+        homeKey: `clear-fixture:${randomUUID()}`,
+        kind: "fake",
+        providerRef: `fake-${randomUUID()}`,
+        state: "running",
+        controlHolder: "user",
+        controlLeaseId: "dedicated-control-lease",
+        controlLeaseExpiresAt: new Date(Date.now() + 60 * 60_000),
+        controlBotId: botId,
+        controlRunId: run.id,
+      },
+    });
+    await handles.prisma.bot.update({ where: { id: botId }, data: { computerId: computer.id } });
+    const releaseScreen = vi.spyOn(handles.sandbox, "releaseScreen").mockResolvedValue(undefined);
+    const setScreenControl = vi
+      .spyOn(handles.sandbox, "setScreenControl")
+      .mockResolvedValue(undefined);
+    const execute = vi.spyOn(handles.sandbox, "execute").mockImplementation(async function* () {});
+    try {
+      await rpc("threads/clear", { botId });
+
+      expect(await handles.prisma.computerExecutionLease.count({ where: { runId: run.id } })).toBe(
+        0,
+      );
+      expect(execute).toHaveBeenCalledWith(
+        expect.objectContaining({ providerRef: computer.providerRef }),
+        expect.objectContaining({
+          argv: expect.arrayContaining([expect.stringContaining(run.id)]),
+        }),
+        expect.objectContaining({ runId: run.id, cancelRunWork: true }),
+      );
+      expect(releaseScreen).toHaveBeenCalledWith(
+        expect.objectContaining({ providerRef: computer.providerRef }),
+        expect.objectContaining({ runId: run.id, screenLeaseId: `${run.id}:4` }),
+      );
+    } finally {
+      releaseScreen.mockRestore();
+      setScreenControl.mockRestore();
+      execute.mockRestore();
+    }
+  });
+
+  it("makes a failed control revoke due for retry after clear", async () => {
+    const { botId, threadId } = await createBot("Control retry fixture");
+    const run = await createRun(botId, threadId, "waiting_takeover");
+    const computer = await handles.prisma.computer.create({
+      data: {
+        spaceId,
+        userId,
+        scopeKey: `clear-fixture:${randomUUID()}`,
+        homeKey: `clear-fixture:${randomUUID()}`,
+        kind: "fake",
+        providerRef: `fake-${randomUUID()}`,
+        state: "running",
+        controlHolder: "user",
+        controlLeaseId: "retry-control-lease",
+        controlLeaseExpiresAt: new Date(Date.now() + 60 * 60_000),
+        controlBotId: botId,
+        controlRunId: run.id,
+      },
+    });
+    const setScreenControl = vi
+      .spyOn(handles.sandbox, "setScreenControl")
+      .mockRejectedValueOnce(new Error("temporary revoke failure"))
+      .mockResolvedValue(undefined);
+    try {
+      await rpc("threads/clear", { botId });
+      const retained = await handles.prisma.computer.findUniqueOrThrow({
+        where: { id: computer.id },
+      });
+      expect(retained.controlLeaseId).toBe("retry-control-lease");
+      expect(retained.controlLeaseExpiresAt!.getTime()).toBeLessThanOrEqual(Date.now());
+      await expect(
+        expireComputerControl(
+          {
+            prisma: handles.prisma,
+            sandbox: handles.sandbox,
+            jobs: handles.jobs,
+            events: createThreadEvents(handles.prisma),
+          },
+          computer.id,
+          "retry-control-lease",
+        ),
+      ).resolves.toBe(true);
+      expect(
+        (await handles.prisma.computer.findUniqueOrThrow({ where: { id: computer.id } }))
+          .controlLeaseId,
+      ).toBeNull();
+    } finally {
+      setScreenControl.mockRestore();
     }
   });
 
