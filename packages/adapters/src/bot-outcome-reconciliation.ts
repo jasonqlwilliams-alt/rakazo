@@ -77,11 +77,26 @@ export async function reconcileBotMessageOutcome(deps: OutcomeDeps, runId: strin
       run.status === "failed" || stuckCancel
         ? { text: "", progressOnly: false }
         : await botRunOutcomeText(deps.prisma, run.id);
+    const answerCleared =
+      run.status === "completed" &&
+      !transcript.text &&
+      (wasWrittenAnswerCleared(run.botMessageSource) ||
+        wasWrittenAnswerCleared(
+          (
+            await deps.prisma.run.findUnique({
+              where: { id: run.id },
+              select: { botMessageSource: true },
+            })
+          )?.botMessageSource,
+        ));
     const text = stuckCancel
       ? (run.error ?? "")
       : run.status === "failed"
         ? `Could not complete the delegated request: ${run.error ?? "unknown error"}`
-        : transcript.text || "The delegated bot completed its turn without a written summary.";
+        : transcript.text ||
+          (answerCleared
+            ? "The delegated bot completed its turn, but its written answer was removed when the chat was cleared."
+            : "The delegated bot completed its turn without a written summary.");
     // Loop-guard stops complete without an error; their persisted final text
     // is the only marker available when the executor's outcome delivery fails.
     const loopGuardStop = isLoopGuardStopText(transcript.text);
@@ -161,6 +176,16 @@ function databaseErrorCode(error: unknown): string {
   )
     return error.code;
   return "delivery_error";
+}
+
+function wasWrittenAnswerCleared(source: unknown): boolean {
+  return (
+    typeof source === "object" &&
+    source !== null &&
+    !Array.isArray(source) &&
+    "answerCleared" in source &&
+    source.answerCleared === true
+  );
 }
 
 async function botRunOutcomeText(

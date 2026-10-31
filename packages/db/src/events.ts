@@ -448,7 +448,7 @@ async function keepBotMessageSenders(tx: Prisma.TransactionClient, threadId: str
       botOutcomeFailedAt: null,
       sourceMessageId: { not: null },
     },
-    select: { id: true, sourceMessage: { select: { blocks: true } } },
+    select: { id: true, status: true, sourceMessage: { select: { blocks: true } } },
   });
   for (const run of owed) {
     const blocks = MessageBlockSchema.array().safeParse(run.sourceMessage?.blocks);
@@ -456,7 +456,7 @@ async function keepBotMessageSenders(tx: Prisma.TransactionClient, threadId: str
     if (!context) continue;
     const sent = await tx.message.findMany({
       where: { threadId, runId: run.id },
-      select: { blocks: true },
+      select: { role: true, blocks: true },
     });
     const explicitResult = sent.some((message) => {
       const parsed = MessageBlockSchema.array().safeParse(message.blocks);
@@ -470,10 +470,20 @@ async function keepBotMessageSenders(tx: Prisma.TransactionClient, threadId: str
         )
       );
     });
+    const answerCleared =
+      run.status === "completed" &&
+      sent.some(
+        (message) =>
+          message.role === "bot" &&
+          Array.isArray(message.blocks) &&
+          (message.blocks as MessageBlock[]).some(
+            (block) => block.kind === "text" && block.text.trim().length > 0,
+          ),
+      );
     await tx.run.update({
       where: { id: run.id },
       data: {
-        botMessageSource: { ...context, text: "" },
+        botMessageSource: { ...context, text: "", ...(answerCleared ? { answerCleared: true } : {}) },
         ...(explicitResult ? { botOutcomeReturnedAt: new Date() } : {}),
       },
     });

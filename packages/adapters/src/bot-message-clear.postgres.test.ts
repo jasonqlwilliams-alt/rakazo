@@ -164,7 +164,31 @@ describePostgres("bot message outcomes across a conversation clear (PostgreSQL)"
     await reconcileBotMessageOutcome(h.deps, h.delegated.id);
 
     expect(await h.notices()).toEqual([
-      expect.objectContaining({ fromBotId: h.recipient.id, intent: "status" }),
+      expect.objectContaining({
+        fromBotId: h.recipient.id,
+        intent: "status",
+        text: "The delegated bot completed its turn, but its written answer was removed when the chat was cleared.",
+      }),
+    ]);
+    expect(await prisma.message.count({ where: { threadId: h.recipient.threadId } })).toBe(0);
+    expect(await prisma.run.findUniqueOrThrow({ where: { id: h.delegated.id } })).toMatchObject({
+      botMessageSource: { text: "", answerCleared: true },
+    });
+  });
+
+  it("does not claim an answer was removed when a finished run wrote none", async () => {
+    const h = await setup();
+    await prisma.run.update({ where: { id: h.delegated.id }, data: { status: "completed" } });
+
+    await h.clear();
+    await reconcileBotMessageOutcome(h.deps, h.delegated.id);
+
+    expect(await h.notices()).toEqual([
+      expect.objectContaining({
+        fromBotId: h.recipient.id,
+        intent: "status",
+        text: "The delegated bot completed its turn without a written summary.",
+      }),
     ]);
   });
 
