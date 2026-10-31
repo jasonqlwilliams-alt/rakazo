@@ -352,8 +352,7 @@ export async function clearThread(
     const runIds = activeRuns.map((run) => run.id);
     const dedicatedComputerWork = activeRuns.flatMap((run) => {
       const computer = run.bot.computer;
-      if (!computer || computer.scope !== "dedicated" || run.status !== "waiting_takeover")
-        return [];
+      if (computer?.scope !== "dedicated" || run.status !== "waiting_takeover") return [];
       return [
         {
           computerId: computer.id,
