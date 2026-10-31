@@ -216,6 +216,7 @@ import {
   SpaceNotFoundError,
   selectSpaceModelPreference,
   selectSpaceVoicePreference,
+  ThreadClearPreconditionError,
   toBoardDto,
   toTicketCommentDto,
   toTicketDto,
@@ -290,6 +291,7 @@ import {
 } from "./thread-message-pages.js";
 import {
   reactToThreadMessage,
+  releaseClearedThreadComputers,
   resolveThreadTarget,
   sendThreadMessage,
   setThreadUnreadState,
@@ -2243,12 +2245,22 @@ export function createRouter(deps: RouterDeps) {
         const target = await resolveThreadTarget(deps.prisma, context.actor, input);
         const contextBotId = target.kind === "bot" ? target.botId : target.memberBotIds[0];
         if (!contextBotId) throw new IsolationError();
-        const { cancelledRunIds, historyCompactionGeneration } = await deps.events.clearThread({
-          spaceId: context.actor.spaceId,
-          threadId: target.threadId,
-          botId: contextBotId,
-          ...(target.kind === "group" ? { groupId: target.groupId } : {}),
-        });
+        const cleared = await deps.events
+          .clearThread({
+            spaceId: context.actor.spaceId,
+            threadId: target.threadId,
+            botId: contextBotId,
+            ...(target.kind === "group" ? { groupId: target.groupId } : {}),
+            expectedNextMessageSeq: input.expectedNextMessageSeq,
+            ifIdle: input.ifIdle,
+          })
+          .catch((error: unknown) => {
+            if (error instanceof ThreadClearPreconditionError) {
+              throw new ORPCError("CONFLICT", { message: error.message });
+            }
+            throw error;
+          });
+        const { cancelledRunIds, historyCompactionGeneration } = cleared;
         const [configuredMemory] = await Promise.all([
           target.kind === "bot"
             ? deps.memoryProviders.resolve(context.actor.spaceId).catch((error) => {
@@ -2261,10 +2273,12 @@ export function createRouter(deps: RouterDeps) {
               deps.jobs.cancel(runJobKey(runId)).catch(() => undefined),
             ),
           ),
+          releaseClearedThreadComputers(deps, context.actor, cleared),
         ]);
         // Durable memories remain in their Space-private containers. Clear only removes
         // conversation-derived summaries from the previous generation; including the new
         // generation also covers a compaction job that began just after the clear committed.
+        // Group threads never compact, so they have no summaries to purge.
         if (configuredMemory && target.kind === "bot") {
           // Best effort: the conversation rows are already deleted, so failing the clear here
           // would help nothing — a failed purge only leaves stale summaries recallable.

@@ -1721,10 +1721,12 @@ describe("computer execution leases", () => {
           lease.fence += data.fence.increment;
           return [{ fence: lease.fence }];
         }),
+        findMany: vi.fn().mockResolvedValue([]),
         create,
       },
       computer: {
         findUniqueOrThrow: vi.fn().mockResolvedValue({ scope: "team", state: "running" }),
+        findMany: vi.fn().mockResolvedValue([]),
         updateMany: vi.fn(),
       },
       message: { deleteMany: vi.fn() },

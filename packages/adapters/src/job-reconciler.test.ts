@@ -1,5 +1,5 @@
 import type { BackgroundJob, JobPublisher } from "@rakazo/adapter-kit";
-import { stuckWorkStatusMessages } from "@rakazo/core";
+import { stuckWorkStatusMessages, THREAD_CLEARED_RUN_MESSAGE } from "@rakazo/core";
 import type { Pool, PrismaClient, ThreadEvents } from "@rakazo/db";
 import { describe, expect, it, vi } from "vitest";
 import { returnBotMessageOutcome } from "./bot-messages.js";
@@ -397,7 +397,10 @@ describe("createJobReconciler", () => {
             {
               OR: [
                 { status: { in: ["completed", "failed"] } },
-                { status: "cancelled", error: { in: [...stuckWorkStatusMessages()] } },
+                {
+                  status: "cancelled",
+                  error: { in: [...stuckWorkStatusMessages(), THREAD_CLEARED_RUN_MESSAGE] },
+                },
               ],
             },
             {
@@ -657,7 +660,10 @@ describe("createJobReconciler", () => {
             {
               OR: [
                 { status: { in: ["completed", "failed"] } },
-                { status: "cancelled", error: { in: [...stuckWorkStatusMessages()] } },
+                {
+                  status: "cancelled",
+                  error: { in: [...stuckWorkStatusMessages(), THREAD_CLEARED_RUN_MESSAGE] },
+                },
               ],
             },
           ]),

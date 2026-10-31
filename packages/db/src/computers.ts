@@ -163,6 +163,42 @@ export async function expireComputerExecutionLeases(
   });
 }
 
+/**
+ * Teardown coordinates for runs being cancelled, read inside the cancelling transaction.
+ * Once cancellation is visible a worker can release its lease and execution columns at once,
+ * so a later lookup would miss the sandbox work the canceller must still stop.
+ */
+export async function findRunComputerWork(
+  tx: Pick<Prisma.TransactionClient, "computer" | "computerExecutionLease">,
+  runIds: string[],
+) {
+  if (runIds.length === 0) return { leases: [], computers: [] };
+  // Team ownership lives on ComputerExecutionLease; Computer.executionRunId is
+  // only a legacy secondary path and is not written by current acquisition.
+  const leases = await tx.computerExecutionLease.findMany({
+    where: { runId: { in: runIds } },
+    select: { computerId: true, botId: true, runId: true, fence: true },
+  });
+  const leaseComputerIds = [...new Set(leases.map((lease) => lease.computerId))];
+  const computers = await tx.computer.findMany({
+    where:
+      leaseComputerIds.length > 0
+        ? { OR: [{ id: { in: leaseComputerIds } }, { executionRunId: { in: runIds } }] }
+        : { executionRunId: { in: runIds } },
+    select: {
+      id: true,
+      homeKey: true,
+      kind: true,
+      providerRef: true,
+      executionBotId: true,
+      executionRunId: true,
+    },
+  });
+  return { leases, computers };
+}
+
+export type RunComputerWork = Awaited<ReturnType<typeof findRunComputerWork>>;
+
 function upsertComputerRecord(
   prisma: ComputerDb,
   input: {

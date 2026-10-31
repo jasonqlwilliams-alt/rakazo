@@ -1,6 +1,6 @@
 import { runContinueJob } from "@rakazo/adapter-kit";
 import type { MessageBlock } from "@rakazo/contracts";
-import { stuckWorkStatusMessages } from "@rakazo/core";
+import { stuckWorkStatusMessages, THREAD_CLEARED_RUN_MESSAGE } from "@rakazo/core";
 import type { Prisma } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import { recoverBotMessageOutcome, returnBotMessageOutcome } from "./bot-messages.js";
@@ -14,7 +14,7 @@ const ATTEMPT_LEASE_MS = 5 * 60_000;
 
 type OutcomeDeps = Pick<ExecutorDeps, "prisma" | "jobs" | "events">;
 
-/** Bot-message runs whose outcome is still owed and due; stuck-work cancels return too. */
+/** Bot-message runs whose outcome is still owed and due; stuck-work and clear cancels return too. */
 export function dueBotMessageOutcomeWhere(now: Date): Prisma.RunWhereInput {
   return {
     trigger: "bot_message",
@@ -24,7 +24,10 @@ export function dueBotMessageOutcomeWhere(now: Date): Prisma.RunWhereInput {
       {
         OR: [
           { status: { in: ["completed", "failed"] } },
-          { status: "cancelled", error: { in: [...stuckWorkStatusMessages()] } },
+          {
+            status: "cancelled",
+            error: { in: [...stuckWorkStatusMessages(), THREAD_CLEARED_RUN_MESSAGE] },
+          },
         ],
       },
       { OR: [{ botOutcomeNextAttemptAt: null }, { botOutcomeNextAttemptAt: { lte: now } }] },

@@ -1,5 +1,6 @@
 import { runContinueJob } from "@rakazo/adapter-kit";
 import type { BotMessageIntent, MessageBlock } from "@rakazo/contracts";
+import { MessageBlock as MessageBlockSchema } from "@rakazo/contracts";
 import type { BotMessageContext } from "@rakazo/core";
 import {
   BOT_MESSAGE_MAX_LENGTH,
@@ -39,12 +40,20 @@ export async function currentBotMessageHop(
 export async function loadBotMessageContext(
   prisma: PrismaClient,
   sourceMessageId: string | null | undefined,
+  /** Sender a clear kept on the run after deleting the source message. */
+  keptSource?: unknown,
 ) {
-  if (!sourceMessageId) return undefined;
-  const source = await prisma.message.findUnique({
-    where: { id: sourceMessageId },
-    select: { blocks: true, replyTo: { select: { blocks: true } } },
-  });
+  const source = sourceMessageId
+    ? await prisma.message.findUnique({
+        where: { id: sourceMessageId },
+        select: { blocks: true, replyTo: { select: { blocks: true } } },
+      })
+    : null;
+  if (!source) {
+    const kept = MessageBlockSchema.safeParse(keptSource);
+    const context = kept.success ? botMessageContext([kept.data]) : undefined;
+    return context ? { ...context, repliesToRequest: false } : undefined;
+  }
   const context = botMessageContext(
     Array.isArray(source?.blocks) ? (source.blocks as MessageBlock[]) : [],
   );
@@ -72,6 +81,7 @@ export async function messageBot(
     botId: string;
     userId: string;
     sourceMessageId?: string | null;
+    botMessageSource?: unknown;
   },
   sender: { id: string; name: string },
   input: {
@@ -92,7 +102,11 @@ export async function messageBot(
     };
   }
 
-  const sourceContext = await loadBotMessageContext(deps.prisma, run.sourceMessageId);
+  const sourceContext = await loadBotMessageContext(
+    deps.prisma,
+    run.sourceMessageId,
+    run.botMessageSource,
+  );
   const intent = input.intent ?? "request";
   const hop = nextBotMessageHop(sourceContext?.hop);
 
@@ -364,13 +378,18 @@ export async function returnBotMessageOutcome(
     botId: string;
     userId: string;
     sourceMessageId?: string | null;
+    botMessageSource?: unknown;
   },
   sender: { id: string; name: string },
   text: string,
   intent: "result" | "status" = "result",
   options?: { forceUnread?: boolean },
 ) {
-  const source = await loadBotMessageContext(deps.prisma, run.sourceMessageId);
+  const source = await loadBotMessageContext(
+    deps.prisma,
+    run.sourceMessageId,
+    run.botMessageSource,
+  );
   if (!needsBotMessageOutcome(source)) {
     await markBotOutcomeReturned(deps.prisma, run.id);
     // Handled: nothing to deliver. Return true so callers do not release a reservation.
@@ -408,6 +427,7 @@ export async function recoverBotMessageOutcome(
     threadId: string;
     userId: string;
     sourceMessageId?: string | null;
+    botMessageSource?: unknown;
   },
 ) {
   let receipt = await prisma.message.findUnique({
@@ -429,7 +449,7 @@ export async function recoverBotMessageOutcome(
     });
   }
   if (!receipt) {
-    const source = await loadBotMessageContext(prisma, run.sourceMessageId);
+    const source = await loadBotMessageContext(prisma, run.sourceMessageId, run.botMessageSource);
     if (
       needsBotMessageOutcome(source) &&
       !(await hasExplicitBotMessageOutcome(prisma, run, source.fromBotId))

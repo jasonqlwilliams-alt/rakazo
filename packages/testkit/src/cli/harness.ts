@@ -90,6 +90,7 @@ async function main() {
       const suites = [
         "packages/testkit/src/pi-offline.postgres.test.ts",
         "packages/testkit/src/usage-accounting.postgres.test.ts",
+        "packages/testkit/src/thread-clear.postgres.test.ts",
         "packages/db/src/history-retrieval.postgres.test.ts",
         "packages/testkit/src/history-retrieval.postgres.test.ts",
         "packages/testkit/src/history-short-product.postgres.test.ts",
@@ -119,6 +120,7 @@ async function main() {
         "packages/adapters/src/job-reconciler.postgres.test.ts",
         "packages/adapters/src/cloud-agent.postgres.test.ts",
         "packages/adapters/src/research.postgres.test.ts",
+        "packages/adapters/src/bot-message-clear.postgres.test.ts",
         "packages/testkit/src/research-pi-offline.postgres.test.ts",
         "packages/testkit/src/test-database.postgres.test.ts",
       ];

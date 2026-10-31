@@ -1,7 +1,12 @@
 import { ORPCError } from "@orpc/server";
 import type { JobPublisher, SandboxProvider } from "@rakazo/adapter-kit";
 import { runContinueJob } from "@rakazo/adapter-kit";
-import { cancelComputerRunWork, screenLeaseIdForRun, toComputerRef } from "@rakazo/adapters";
+import {
+  cancelComputerRunWork,
+  revokeScreenControl,
+  screenLeaseIdForRun,
+  toComputerRef,
+} from "@rakazo/adapters";
 import type {
   Actor,
   GroupMember,
@@ -23,7 +28,13 @@ import {
   runFailureError,
 } from "@rakazo/core";
 import { deriveMessageQuote, messageReplyPreview } from "@rakazo/core/message-quote";
-import type { Prisma, PrismaClient, ThreadEvents } from "@rakazo/db";
+import type {
+  ClearThreadResult,
+  Prisma,
+  PrismaClient,
+  RunComputerWork,
+  ThreadEvents,
+} from "@rakazo/db";
 import {
   answerWaitingRunWithTextInTransaction,
   appendEventInTransaction,
@@ -31,6 +42,7 @@ import {
   createRepos,
   createThreadMessageInTransaction,
   expireComputerExecutionLeases,
+  findRunComputerWork,
   IsolationError,
   lockOwnedGroup,
   touchGroupUpdatedAt,
@@ -1072,7 +1084,7 @@ export async function stopThreadRuns(
   actor: Actor,
   target: ThreadTarget,
 ) {
-  const { runIds, computers, leases, eventSeq } = await deps.prisma.$transaction(async (tx) => {
+  const { runIds, computerWork, eventSeq } = await deps.prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM threads WHERE id = ${target.threadId} FOR UPDATE`;
     const cancelled = await tx.run.updateManyAndReturn({
       where: {
@@ -1089,36 +1101,7 @@ export async function stopThreadRuns(
         message: { threadId: target.threadId },
       },
     });
-    // Snapshot teardown coordinates before commit. Once cancellation becomes
-    // visible, a worker can release its lease / execution columns immediately; a
-    // later lookup would then miss the sandbox work this request must stop.
-    // Team ownership lives on ComputerExecutionLease; Computer.executionRunId is
-    // only a legacy secondary path and is not written by current acquisition.
-    const leases = ids.length
-      ? await tx.computerExecutionLease.findMany({
-          where: { runId: { in: ids } },
-          select: { computerId: true, botId: true, runId: true, fence: true },
-        })
-      : [];
-    const leaseComputerIds = [...new Set(leases.map((lease) => lease.computerId))];
-    const computers = ids.length
-      ? await tx.computer.findMany({
-          where:
-            leaseComputerIds.length > 0
-              ? {
-                  OR: [{ id: { in: leaseComputerIds } }, { executionRunId: { in: ids } }],
-                }
-              : { executionRunId: { in: ids } },
-          select: {
-            id: true,
-            homeKey: true,
-            kind: true,
-            providerRef: true,
-            executionBotId: true,
-            executionRunId: true,
-          },
-        })
-      : [];
+    const computerWork = await findRunComputerWork(tx, ids);
     // One terminal event per cancelled run, in the same commit as the status
     // flip and the progress purge below. Other clients learn the run ended, and
     // the fresh seq keeps max(seq) above every deleted progress row so a client
@@ -1143,7 +1126,7 @@ export async function stopThreadRuns(
         },
       });
     }
-    return { runIds: ids, computers, leases, eventSeq };
+    return { runIds: ids, computerWork, eventSeq };
   });
   if (eventSeq !== null) {
     // The events are durable; subscribers refetch from their persisted cursor.
@@ -1153,6 +1136,67 @@ export async function stopThreadRuns(
   }
   // Keep the DB lease until after teardown so a replacement run cannot claim the
   // screen while we still need the cancelled run's screenLeaseId to release it.
+  await stopRunComputerWork(deps.sandbox, actor, runIds, computerWork, "stop");
+  await expireComputerExecutionLeases(deps.prisma, { runId: { in: runIds } });
+  await deps.prisma.computer.updateMany({
+    where: { executionRunId: { in: runIds } },
+    data: {
+      executionRunId: null,
+      executionBotId: null,
+      executionLeaseExpiresAt: null,
+    },
+  });
+}
+
+/** Stop the cancelled runs' sandbox work and revoke the screen control their takeovers held. */
+export async function releaseClearedThreadComputers(
+  deps: { prisma: PrismaClient; sandbox: SandboxProvider },
+  actor: Actor,
+  cleared: Pick<ClearThreadResult, "cancelledRunIds" | "computerWork" | "takeoverControls">,
+) {
+  const context = {
+    operationId: "thread-clear",
+    traceId: "thread-clear",
+    spaceId: actor.spaceId,
+    userId: actor.userId,
+    signal: new AbortController().signal,
+  };
+  await Promise.all([
+    stopRunComputerWork(
+      deps.sandbox,
+      actor,
+      cleared.cancelledRunIds,
+      cleared.computerWork,
+      "thread-clear",
+    ),
+    ...cleared.takeoverControls.map(async (computer) => {
+      try {
+        await revokeScreenControl(deps, computer, context, computer.controlLeaseId);
+        await deps.prisma.computer.updateMany({
+          where: { id: computer.id, controlLeaseId: computer.controlLeaseId },
+          data: {
+            controlHolder: "none",
+            controlLeaseId: null,
+            controlLeaseExpiresAt: null,
+            controlBotId: null,
+            controlRunId: null,
+          },
+        });
+      } catch (error) {
+        // The lease id stays on the row, so control expiry retries the revoke.
+        getLogger().error("thread clear takeover release", error);
+      }
+    }),
+  ]);
+}
+
+async function stopRunComputerWork(
+  sandbox: SandboxProvider,
+  actor: Actor,
+  runIds: string[],
+  { computers, leases }: RunComputerWork,
+  operationId: string,
+) {
   const computerById = new Map(computers.map((computer) => [computer.id, computer]));
   const teardownTargets: Array<{
     computer: (typeof computers)[number];
@@ -1196,8 +1240,8 @@ export async function stopThreadRuns(
     teardownTargets.map(async ({ computer, botId, runId, lease }) => {
       if (!computer.providerRef) return;
       const context = {
-        operationId: "stop",
-        traceId: "stop",
+        operationId,
+        traceId: operationId,
         spaceId: actor.spaceId,
         userId: actor.userId,
         botId,
@@ -1207,19 +1251,10 @@ export async function stopThreadRuns(
         signal: new AbortController().signal,
       };
       const ref = toComputerRef(computer);
-      await cancelComputerRunWork(deps.sandbox, ref, computer.id, runId, context);
-      await deps.sandbox.releaseScreen?.(ref, context).catch(() => undefined);
+      await cancelComputerRunWork(sandbox, ref, computer.id, runId, context);
+      await sandbox.releaseScreen?.(ref, context).catch(() => undefined);
     }),
   );
-  await expireComputerExecutionLeases(deps.prisma, { runId: { in: runIds } });
-  await deps.prisma.computer.updateMany({
-    where: { executionRunId: { in: runIds } },
-    data: {
-      executionRunId: null,
-      executionBotId: null,
-      executionLeaseExpiresAt: null,
-    },
-  });
 }
 
 export async function setThreadUnreadState(

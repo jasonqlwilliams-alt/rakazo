@@ -39,6 +39,9 @@ export function botMessageHopExhausted(hop: number): boolean {
   return hop > BOT_MESSAGE_MAX_HOPS;
 }
 
+/** Status a delegated request returns to its sender when a clear cancels it. */
+export const THREAD_CLEARED_RUN_MESSAGE = "Stopped. The chat was cleared.";
+
 export type BotMessageContext = Extract<MessageBlock, { kind: "bot_message_received" }>;
 
 export function botMessageContext(blocks: readonly MessageBlock[]): BotMessageContext | undefined {

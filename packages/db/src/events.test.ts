@@ -2823,8 +2823,8 @@ describe("clearThread", () => {
       },
       attempt: { updateMany: vi.fn() },
       task: { updateMany: vi.fn() },
-      computerExecutionLease: { updateMany: vi.fn() },
-      computer: { updateMany: vi.fn() },
+      computerExecutionLease: { findMany: vi.fn().mockResolvedValue([]), updateMany: vi.fn() },
+      computer: { findMany: vi.fn().mockResolvedValue([]), updateMany: vi.fn() },
       message: { deleteMany: vi.fn() },
       event: {
         deleteMany: vi.fn(),
@@ -2865,6 +2865,7 @@ describe("clearThread", () => {
         historyCompactionSummary: null,
         historyCompactionGeneration: { increment: 1 },
       },
+      select: { historyCompactionGeneration: true },
     });
     expect(publish).toHaveBeenCalledWith("thread:thread-1", JSON.stringify({ cursor: 0 }));
   });
@@ -2887,8 +2888,8 @@ describe("clearThread", () => {
       },
       attempt: { updateMany: vi.fn() },
       task: { updateMany: vi.fn() },
-      computerExecutionLease: { updateMany: vi.fn() },
-      computer: { updateMany: vi.fn() },
+      computerExecutionLease: { findMany: vi.fn().mockResolvedValue([]), updateMany: vi.fn() },
+      computer: { findMany: vi.fn().mockResolvedValue([]), updateMany: vi.fn() },
       message: { deleteMany: vi.fn() },
       event: {
         deleteMany: vi.fn(),

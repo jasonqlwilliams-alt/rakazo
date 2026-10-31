@@ -8,7 +8,9 @@ import {
   type ProductEvent,
 } from "@rakazo/contracts";
 import {
+  ACTIVE_RUN_STATUSES,
   blocksToAgentHistoryText,
+  botMessageContext,
   callIdFromClientNonce,
   isApprovalAskBlock,
   isConversationalRun,
@@ -16,11 +18,16 @@ import {
   messagingChannelId,
   resolveAskChoice,
   sanitizeJsonValue,
+  THREAD_CLEARED_RUN_MESSAGE,
 } from "@rakazo/core";
 import { getLogger } from "@rakazo/logging";
 import { cancelRunsInTransaction } from "./cancel-runs.js";
 import type { Prisma, PrismaClient } from "./client.js";
-import { expireComputerExecutionLeases } from "./computers.js";
+import {
+  expireComputerExecutionLeases,
+  findRunComputerWork,
+  type RunComputerWork,
+} from "./computers.js";
 import {
   assertRunCanWriteHistory,
   assertRunIsCancelled,
@@ -66,12 +73,40 @@ export interface ClearThreadInput {
   /** Event author and the bot-scoped target for one-to-one chats. */
   botId: string;
   groupId?: string;
+  /** Refuse unless the thread's next message seq still equals this. */
+  expectedNextMessageSeq?: number;
+  /** Refuse while a run, cloud agent, or research job is still active in the thread. */
+  ifIdle?: boolean;
 }
 
 export interface ClearThreadResult {
   event: ProductEvent;
   cancelledRunIds: string[];
+  /** The generation the clear started; the cleared conversation's is the one before it. */
   historyCompactionGeneration: number;
+  /** Sandbox work of the cancelled runs, for the caller to stop after commit. */
+  computerWork: RunComputerWork;
+  /** Screen control leases the cancelled takeovers held; the caller revokes each one. */
+  takeoverControls: TakeoverControl[];
+}
+
+export interface TakeoverControl {
+  id: string;
+  homeKey: string;
+  kind: string;
+  providerRef: string | null;
+  controlLeaseId: string;
+}
+
+export class ThreadClearPreconditionError extends Error {
+  constructor(readonly reason: "changed" | "busy") {
+    super(
+      reason === "changed"
+        ? "The conversation changed since it was read."
+        : "The conversation still has work in progress.",
+    );
+    this.name = "ThreadClearPreconditionError";
+  }
 }
 
 export interface FinalizeComputerControlReleaseInput {
@@ -282,20 +317,38 @@ export async function clearThread(
         ...(input.groupId ? { groupId: input.groupId } : { botId: input.botId }),
       },
       data: { unread: false },
-      select: { nextMessageSeq: true, historyCompactionGeneration: true },
+      select: { nextMessageSeq: true },
     });
+    // The row lock above serializes sends, launches, and research starts against this check.
+    if (
+      input.expectedNextMessageSeq !== undefined &&
+      thread.nextMessageSeq !== input.expectedNextMessageSeq
+    ) {
+      throw new ThreadClearPreconditionError("changed");
+    }
     const activeRuns = await tx.run.findMany({
       where: {
         spaceId: input.spaceId,
         threadId: input.threadId,
         ...(input.groupId ? {} : { botId: input.botId }),
-        status: { in: ["queued", "leased", "running", "waiting_input", "waiting_takeover"] },
+        status: { in: [...ACTIVE_RUN_STATUSES] },
       },
       select: { id: true, taskId: true },
     });
+    if (input.ifIdle && (activeRuns.length > 0 || (await hasActiveThreadJob(tx, input.threadId)))) {
+      throw new ThreadClearPreconditionError("busy");
+    }
     const now = new Date();
     const runIds = activeRuns.map((run) => run.id);
+    await keepBotMessageSenders(tx, input.threadId);
     await cancelRunsInTransaction(tx, activeRuns, now);
+    // A delegated request the clear stops still owes its sender an outcome.
+    await tx.run.updateMany({
+      where: { id: { in: runIds }, trigger: "bot_message" },
+      data: { error: THREAD_CLEARED_RUN_MESSAGE },
+    });
+    const computerWork = await findRunComputerWork(tx, runIds);
+    const takeoverControls = await releaseTakeovers(tx, runIds);
     // Expire as tombstones so a still-open provider screen claim cannot reset fencing to 1.
     await expireComputerExecutionLeases(tx, { runId: { in: runIds } });
     await tx.computer.updateMany({
@@ -308,27 +361,20 @@ export async function clearThread(
     });
     await tx.message.deleteMany({ where: { threadId: input.threadId } });
     await tx.event.deleteMany({ where: { threadId: input.threadId } });
-    if (thread.nextMessageSeq > 0) {
-      // nextMessageSeq is not reset, so mark every deleted message as already compacted.
-      // Leaving the cursor behind would let compaction re-summarize deleted history (or, reset
-      // to null, immediately re-fire on the fresh conversation).
-      await tx.thread.update({
-        where: { id: input.threadId },
-        data: {
-          historyCompactedUpToSeq: thread.nextMessageSeq - 1,
-          historyCompactionSummary: null,
-          historyCompactionGeneration: { increment: 1 },
-        },
-      });
-    } else {
-      await tx.thread.update({
-        where: { id: input.threadId },
-        data: {
-          historyCompactionSummary: null,
-          historyCompactionGeneration: { increment: 1 },
-        },
-      });
-    }
+    const cleared = await tx.thread.update({
+      where: { id: input.threadId },
+      data: {
+        // nextMessageSeq is not reset, so mark every deleted message as already compacted.
+        // Leaving the cursor behind would let compaction re-summarize deleted history (or, reset
+        // to null, immediately re-fire on the fresh conversation).
+        ...(thread.nextMessageSeq > 0
+          ? { historyCompactedUpToSeq: thread.nextMessageSeq - 1 }
+          : {}),
+        historyCompactionSummary: null,
+        historyCompactionGeneration: { increment: 1 },
+      },
+      select: { historyCompactionGeneration: true },
+    });
     if (input.groupId) {
       await tx.chatGroup.update({ where: { id: input.groupId }, data: { updatedAt: now } });
     } else {
@@ -338,22 +384,92 @@ export async function clearThread(
       });
     }
     const event = await appendEventInTransaction(tx, {
-      ...input,
+      spaceId: input.spaceId,
+      threadId: input.threadId,
+      botId: input.botId,
       type: "thread.cleared",
       payload: {},
     });
     return {
       event,
       cancelledRunIds: runIds,
-      historyCompactionGeneration: thread.historyCompactionGeneration,
+      historyCompactionGeneration: cleared.historyCompactionGeneration,
+      computerWork,
+      takeoverControls,
     };
   });
   await notifyRealtime(realtime, committed.event.threadId, committed.event.seq);
-  return {
-    event: mapProductEvent(committed.event),
-    cancelledRunIds: committed.cancelledRunIds,
-    historyCompactionGeneration: committed.historyCompactionGeneration,
-  };
+  return { ...committed, event: mapProductEvent(committed.event) };
+}
+
+async function hasActiveThreadJob(tx: Prisma.TransactionClient, threadId: string) {
+  const [agent, research] = await Promise.all([
+    tx.cloudAgent.findFirst({ where: { threadId, status: "running" }, select: { id: true } }),
+    tx.researchJob.findFirst({
+      where: { threadId, status: { in: ["queued", "running"] } },
+      select: { id: true },
+    }),
+  ]);
+  return Boolean(agent || research);
+}
+
+/**
+ * Deleting the thread's messages nulls each run's sourceMessageId. Keep who sent each
+ * delegated request whose outcome is still owed, without the request text, so that outcome
+ * still reaches its sender.
+ */
+async function keepBotMessageSenders(tx: Prisma.TransactionClient, threadId: string) {
+  const owed = await tx.run.findMany({
+    where: {
+      threadId,
+      trigger: "bot_message",
+      botOutcomeReturnedAt: null,
+      botOutcomeFailedAt: null,
+      sourceMessageId: { not: null },
+    },
+    select: { id: true, sourceMessage: { select: { blocks: true } } },
+  });
+  for (const run of owed) {
+    const blocks = MessageBlockSchema.array().safeParse(run.sourceMessage?.blocks);
+    const context = blocks.success ? botMessageContext(blocks.data) : undefined;
+    if (!context) continue;
+    await tx.run.update({
+      where: { id: run.id },
+      data: { botMessageSource: { ...context, text: "" } },
+    });
+  }
+}
+
+/**
+ * Unbind screen control from the cancelled takeovers. A row with a control lease keeps the
+ * lease id, with input denied, until the caller revokes it on the provider; if that fails,
+ * control expiry still finds the lease and retries.
+ */
+async function releaseTakeovers(
+  tx: Prisma.TransactionClient,
+  runIds: string[],
+): Promise<TakeoverControl[]> {
+  if (runIds.length === 0) return [];
+  const bound = await tx.computer.findMany({
+    where: { controlRunId: { in: runIds } },
+    select: { id: true, homeKey: true, kind: true, providerRef: true, controlLeaseId: true },
+  });
+  await tx.computer.updateMany({
+    where: { controlRunId: { in: runIds }, controlLeaseId: null },
+    data: {
+      controlHolder: "none",
+      controlLeaseExpiresAt: null,
+      controlBotId: null,
+      controlRunId: null,
+    },
+  });
+  await tx.computer.updateMany({
+    where: { controlRunId: { in: runIds }, controlLeaseId: { not: null } },
+    data: { controlHolder: "none", controlRunId: null },
+  });
+  return bound.flatMap(({ controlLeaseId, ...computer }) =>
+    controlLeaseId ? [{ ...computer, controlLeaseId }] : [],
+  );
 }
 
 export async function sendUserMessage(
@@ -414,7 +530,7 @@ export async function sendUserMessage(
                   in: ["running", "queued", "leased", "waiting_input", "waiting_takeover"],
                 },
               },
-              select: { id: true, taskId: true, trigger: true },
+              select: { id: true, taskId: true },
             })
           : [];
       // Steer a conversational run when there is one; a routine, webhook, or intro turn only holds the queue.

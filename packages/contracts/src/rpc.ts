@@ -427,7 +427,16 @@ export const appContract = {
         }),
       )
       .output(z.object({ ok: z.literal(true) })),
-    clear: oc.input(threadTarget).output(z.object({ ok: z.literal(true) })),
+    clear: oc
+      .input(
+        threadTarget.safeExtend({
+          /** Clear only if no message arrived after the one before this seq. */
+          expectedNextMessageSeq: z.number().int().nonnegative().optional(),
+          /** Clear only if nothing is still running in the conversation. */
+          ifIdle: z.literal(true).optional(),
+        }),
+      )
+      .output(z.object({ ok: z.literal(true) })),
     answer: oc
       .input(
         threadTarget.safeExtend({
