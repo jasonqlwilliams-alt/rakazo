@@ -23,7 +23,8 @@ import {
 import { getLogger } from "@rakazo/logging";
 import { cancelRunsInTransaction } from "./cancel-runs.js";
 import type { Prisma, PrismaClient } from "./client.js";
-import { findRunComputerWork, type RunComputerWork } from "./computers.js";
+import type { RunComputerWork } from "./computers.js";
+import { findRunComputerWork } from "./computers.js";
 import {
   assertRunCanWriteHistory,
   assertRunIsCancelled,
