@@ -1,6 +1,6 @@
 import { runContinueJob } from "@rakazo/adapter-kit";
 import type { MessageBlock } from "@rakazo/contracts";
-import { stuckWorkStatusMessages } from "@rakazo/core";
+import { stuckWorkStatusMessages, THREAD_CLEARED_RUN_MESSAGE } from "@rakazo/core";
 import type { Prisma } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import { recoverBotMessageOutcome, returnBotMessageOutcome } from "./bot-messages.js";
@@ -14,7 +14,7 @@ const ATTEMPT_LEASE_MS = 5 * 60_000;
 
 type OutcomeDeps = Pick<ExecutorDeps, "prisma" | "jobs" | "events">;
 
-/** Bot-message runs whose outcome is still owed and due; stuck-work cancels return too. */
+/** Bot-message runs whose outcome is still owed and due; stuck-work and clear cancels return too. */
 export function dueBotMessageOutcomeWhere(now: Date): Prisma.RunWhereInput {
   return {
     trigger: "bot_message",
@@ -24,7 +24,10 @@ export function dueBotMessageOutcomeWhere(now: Date): Prisma.RunWhereInput {
       {
         OR: [
           { status: { in: ["completed", "failed"] } },
-          { status: "cancelled", error: { in: [...stuckWorkStatusMessages()] } },
+          {
+            status: "cancelled",
+            error: { in: [...stuckWorkStatusMessages(), THREAD_CLEARED_RUN_MESSAGE] },
+          },
         ],
       },
       { OR: [{ botOutcomeNextAttemptAt: null }, { botOutcomeNextAttemptAt: { lte: now } }] },
@@ -74,16 +77,30 @@ export async function reconcileBotMessageOutcome(deps: OutcomeDeps, runId: strin
       run.status === "failed" || stuckCancel
         ? { text: "", progressOnly: false }
         : await botRunOutcomeText(deps.prisma, run.id);
+    const answerCleared =
+      run.status === "completed" &&
+      wasWrittenAnswerCleared(
+        (
+          await deps.prisma.run.findFirst({
+            where: { id: run.id },
+            select: { botMessageSource: true },
+          })
+        )?.botMessageSource,
+      );
+    const transcriptText = answerCleared ? "" : transcript.text;
     const text = stuckCancel
       ? (run.error ?? "")
       : run.status === "failed"
         ? `Could not complete the delegated request: ${run.error ?? "unknown error"}`
-        : transcript.text || "The delegated bot completed its turn without a written summary.";
+        : transcriptText ||
+          (answerCleared
+            ? "The delegated bot completed its turn, but its written answer was removed when the chat was cleared."
+            : "The delegated bot completed its turn without a written summary.");
     // Loop-guard stops complete without an error; their persisted final text
     // is the only marker available when the executor's outcome delivery fails.
-    const loopGuardStop = isLoopGuardStopText(transcript.text);
+    const loopGuardStop = isLoopGuardStopText(transcriptText);
     const intent =
-      run.status === "failed" || stuckCancel || !transcript.text.trim() || transcript.progressOnly
+      run.status === "failed" || stuckCancel || !transcriptText.trim() || transcript.progressOnly
         ? "status"
         : "result";
     if (
@@ -158,6 +175,16 @@ function databaseErrorCode(error: unknown): string {
   )
     return error.code;
   return "delivery_error";
+}
+
+function wasWrittenAnswerCleared(source: unknown): boolean {
+  return (
+    typeof source === "object" &&
+    source !== null &&
+    !Array.isArray(source) &&
+    "answerCleared" in source &&
+    source.answerCleared === true
+  );
 }
 
 async function botRunOutcomeText(

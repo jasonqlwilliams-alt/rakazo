@@ -682,6 +682,8 @@ model Run {
   clientNonce          String?
   sourceMessageId      String?
   sourceMessage        Message?         @relation("RunSourceMessage", fields: [sourceMessageId], references: [id], onDelete: SetNull)
+  /// The bot_message_received block a clear deleted, without its text, so the sender still gets an outcome.
+  botMessageSource     Json?
   routineId            String?
   routine              Routine?         @relation(fields: [routineId], references: [id], onDelete: SetNull)
   startedAt            DateTime?

@@ -2807,7 +2807,7 @@ describe("claimSteering", () => {
 });
 
 describe("clearThread", () => {
-  it("releases the computer execution lease without dropping the computer", async () => {
+  it("keeps the computer execution lease for post-commit teardown", async () => {
     const fanout = new TestFanout();
     const publish = vi.spyOn(fanout, "publish");
     const tx = {
@@ -2818,13 +2818,47 @@ describe("clearThread", () => {
           .mockResolvedValue({ nextEventSeq: 1 }),
       },
       run: {
-        findMany: vi.fn().mockResolvedValue([{ id: "run-1", taskId: "task-1" }]),
+        findMany: vi
+          .fn()
+          .mockResolvedValueOnce([
+            {
+              id: "run-1",
+              taskId: "task-1",
+              botId: "bot-1",
+              status: "running",
+              leaseFence: 1,
+              bot: { computer: null },
+            },
+          ])
+          .mockResolvedValueOnce([]),
         updateMany: vi.fn(),
       },
       attempt: { updateMany: vi.fn() },
       task: { updateMany: vi.fn() },
-      computerExecutionLease: { updateMany: vi.fn() },
-      computer: { updateMany: vi.fn() },
+      computerExecutionLease: {
+        findMany: vi
+          .fn()
+          .mockResolvedValue([
+            { computerId: "computer-1", botId: "bot-1", runId: "run-1", fence: 3 },
+          ]),
+        updateMany: vi.fn(),
+      },
+      computer: {
+        findMany: vi
+          .fn()
+          .mockResolvedValueOnce([
+            {
+              id: "computer-1",
+              homeKey: "computer-1",
+              kind: "fake",
+              providerRef: "fake-1",
+              executionBotId: null,
+              executionRunId: null,
+            },
+          ])
+          .mockResolvedValueOnce([]),
+        updateMany: vi.fn(),
+      },
       message: { deleteMany: vi.fn() },
       event: {
         deleteMany: vi.fn(),
@@ -2844,19 +2878,12 @@ describe("clearThread", () => {
     ).resolves.toMatchObject({
       event: { type: "thread.cleared" },
       cancelledRunIds: ["run-1"],
+      computerWork: { leases: [{ runId: "run-1", fence: 3 }] },
     });
-    expect(tx.computerExecutionLease.updateMany).toHaveBeenCalledWith({
-      where: { runId: { in: ["run-1"] } },
-      data: { expiresAt: new Date(0) },
-    });
-    expect(tx.computer.updateMany).toHaveBeenCalledWith({
-      where: { executionRunId: { in: ["run-1"] } },
-      data: {
-        executionRunId: null,
-        executionBotId: null,
-        executionLeaseExpiresAt: null,
-      },
-    });
+    expect(tx.computerExecutionLease.updateMany).not.toHaveBeenCalled();
+    expect(tx.computer.updateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ where: { executionRunId: { in: ["run-1"] } } }),
+    );
     // Every deleted message counts as compacted, so compaction cannot summarize cleared history.
     expect(tx.thread.update).toHaveBeenCalledWith({
       where: { id: "thread-1" },
@@ -2865,6 +2892,7 @@ describe("clearThread", () => {
         historyCompactionSummary: null,
         historyCompactionGeneration: { increment: 1 },
       },
+      select: { historyCompactionGeneration: true },
     });
     expect(publish).toHaveBeenCalledWith("thread:thread-1", JSON.stringify({ cursor: 0 }));
   });
@@ -2879,16 +2907,33 @@ describe("clearThread", () => {
           .mockResolvedValue({ nextEventSeq: 1 }),
       },
       run: {
-        findMany: vi.fn().mockResolvedValue([
-          { id: "group-run-1", taskId: "task-1" },
-          { id: "group-run-2", taskId: "task-2" },
-        ]),
+        findMany: vi
+          .fn()
+          .mockResolvedValueOnce([
+            {
+              id: "group-run-1",
+              taskId: "task-1",
+              botId: "bot-1",
+              status: "running",
+              leaseFence: 1,
+              bot: { computer: null },
+            },
+            {
+              id: "group-run-2",
+              taskId: "task-2",
+              botId: "bot-2",
+              status: "running",
+              leaseFence: 1,
+              bot: { computer: null },
+            },
+          ])
+          .mockResolvedValueOnce([]),
         updateMany: vi.fn(),
       },
       attempt: { updateMany: vi.fn() },
       task: { updateMany: vi.fn() },
-      computerExecutionLease: { updateMany: vi.fn() },
-      computer: { updateMany: vi.fn() },
+      computerExecutionLease: { findMany: vi.fn().mockResolvedValue([]), updateMany: vi.fn() },
+      computer: { findMany: vi.fn().mockResolvedValue([]), updateMany: vi.fn() },
       message: { deleteMany: vi.fn() },
       event: {
         deleteMany: vi.fn(),
@@ -2924,18 +2969,7 @@ describe("clearThread", () => {
         }),
       }),
     );
-    expect(tx.computerExecutionLease.updateMany).toHaveBeenCalledWith({
-      where: { runId: { in: ["group-run-1", "group-run-2"] } },
-      data: { expiresAt: new Date(0) },
-    });
-    expect(tx.computer.updateMany).toHaveBeenCalledWith({
-      where: { executionRunId: { in: ["group-run-1", "group-run-2"] } },
-      data: {
-        executionRunId: null,
-        executionBotId: null,
-        executionLeaseExpiresAt: null,
-      },
-    });
+    expect(tx.computerExecutionLease.updateMany).not.toHaveBeenCalled();
     expect(tx.computerExecutionLease.updateMany).not.toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ botId: expect.anything() }) }),
     );

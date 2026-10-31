@@ -86,10 +86,15 @@ overwrite an already committed success. For existing deliveries without a
 success marker, recovery checks committed receipts and repairs the marker
 without another delivery attempt. The inbound
 nonce remains discoverable within the run's workspace and user after sender
-history clearing removes the source message and outbound receipt. Committed
-explicit results to the requesting bot use the same success check as normal
-outcome handling. Missing sources and incoming status, result, or FYI messages
-require no reply and are marked handled during recovery. This also recovers a
+history clearing removes the source message and outbound receipt. Clearing a
+delegated bot's thread keeps sender metadata on an outcome-owed run without
+keeping the request text. A cancelled request returns a cleared-chat status; a
+completed run whose written answer was cleared returns a status explaining
+that the answer was removed. An explicit result already sent to the requester
+does not trigger another return. Committed explicit results use the same
+success check as normal outcome handling. A missing source without preserved
+sender metadata, or an incoming status, result, or FYI message, requires no
+reply and is marked handled during recovery. This also recovers a
 final-attempt delivery whose completion-marker update failed. The reconciler
 only enqueues due outcomes; the queue handler performs delivery. This repairs
 missed wakes even after the API's in-memory queue is replaced, without an event

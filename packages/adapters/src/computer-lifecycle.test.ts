@@ -9,7 +9,12 @@ import type {
   JobPublisher,
   SandboxProvider,
 } from "@rakazo/adapter-kit";
-import { clearThread, type PrismaClient, type ThreadEvents } from "@rakazo/db";
+import {
+  clearThread,
+  expireComputerExecutionLeases,
+  type PrismaClient,
+  type ThreadEvents,
+} from "@rakazo/db";
 import { describe, expect, it, vi } from "vitest";
 import {
   acquireComputerExecutionLease,
@@ -1524,6 +1529,18 @@ describe("computer execution leases", () => {
     expect(prisma.create).not.toHaveBeenCalled();
   });
 
+  it("holds a dedicated computer while clear tears down its screen", async () => {
+    const prisma = leasePrisma({ scope: "dedicated", held: true });
+
+    await expect(
+      acquireComputerExecutionLease(prisma.client, {
+        computerId: "computer-1",
+        runId: "replacement-run",
+        botId: "bot-1",
+      }),
+    ).rejects.toBeInstanceOf(ComputerBusyError);
+  });
+
   it("fences one Team bot's screen and expires only the matching lease", async () => {
     const prisma = leasePrisma({ scope: "team" });
     const lease = await acquireComputerExecutionLease(prisma.client, {
@@ -1685,7 +1702,7 @@ describe("computer execution leases", () => {
     expect(prisma.create).toHaveBeenCalledOnce();
   });
 
-  it("increments the screen fence after clearing a thread with an open screen", async () => {
+  it("increments the screen fence after clear teardown expires its lease", async () => {
     const sandbox = new FakeSandboxProvider();
     const computer = await sandbox.provision({ botId: "bot-1", homePath: "/tmp" }, context);
     const lease = {
@@ -1704,7 +1721,19 @@ describe("computer execution leases", () => {
           .mockResolvedValue({ nextEventSeq: 1 }),
       },
       run: {
-        findMany: vi.fn().mockResolvedValue([{ id: "run-1", taskId: "task-1" }]),
+        findMany: vi
+          .fn()
+          .mockResolvedValueOnce([
+            {
+              id: "run-1",
+              taskId: "task-1",
+              botId: "bot-1",
+              status: "running",
+              leaseFence: 1,
+              bot: { computer: null },
+            },
+          ])
+          .mockResolvedValueOnce([]),
         updateMany: vi.fn(),
       },
       attempt: { updateMany: vi.fn() },
@@ -1721,10 +1750,12 @@ describe("computer execution leases", () => {
           lease.fence += data.fence.increment;
           return [{ fence: lease.fence }];
         }),
+        findMany: vi.fn().mockResolvedValue([]),
         create,
       },
       computer: {
         findUniqueOrThrow: vi.fn().mockResolvedValue({ scope: "team", state: "running" }),
+        findMany: vi.fn().mockResolvedValue([]),
         updateMany: vi.fn(),
       },
       message: { deleteMany: vi.fn() },
@@ -1755,6 +1786,8 @@ describe("computer execution leases", () => {
       threadId: "thread-1",
       botId: "bot-1",
     });
+    expect(lease.expiresAt.getTime()).toBeGreaterThan(Date.now());
+    await expireComputerExecutionLeases(prisma, { runId: "run-1" });
     const next = await acquireComputerExecutionLease(prisma, {
       computerId: "computer-1",
       runId: "run-2",
@@ -1917,6 +1950,7 @@ describe("computer execution leases", () => {
 
 function leasePrisma(options: {
   scope: string;
+  held?: boolean;
   reclaim?: boolean;
   fence?: number;
   uniqueConflict?: boolean;
@@ -1942,6 +1976,7 @@ function leasePrisma(options: {
         findUniqueOrThrow,
       },
       computerExecutionLease: {
+        findFirst: vi.fn().mockResolvedValue(options.held ? { id: "held-lease" } : null),
         updateManyAndReturn,
         create,
         updateMany,

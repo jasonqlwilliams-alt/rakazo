@@ -427,7 +427,16 @@ export const appContract = {
         }),
       )
       .output(z.object({ ok: z.literal(true) })),
-    clear: oc.input(threadTarget).output(z.object({ ok: z.literal(true) })),
+    clear: oc
+      .input(
+        threadTarget.safeExtend({
+          /** Clear only if the thread's next message sequence still equals this value. */
+          expectedNextMessageSeq: z.number().int().nonnegative().optional(),
+          /** Clear only if no run, cloud agent, or research job is active in the thread. */
+          ifIdle: z.literal(true).optional(),
+        }),
+      )
+      .output(z.object({ ok: z.literal(true) })),
     answer: oc
       .input(
         threadTarget.safeExtend({
