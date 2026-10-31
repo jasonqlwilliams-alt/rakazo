@@ -23,11 +23,7 @@ import {
 import { getLogger } from "@rakazo/logging";
 import { cancelRunsInTransaction } from "./cancel-runs.js";
 import type { Prisma, PrismaClient } from "./client.js";
-import {
-  expireComputerExecutionLeases,
-  findRunComputerWork,
-  type RunComputerWork,
-} from "./computers.js";
+import { findRunComputerWork, type RunComputerWork } from "./computers.js";
 import {
   assertRunCanWriteHistory,
   assertRunIsCancelled,
@@ -386,16 +382,6 @@ export async function clearThread(
     });
     const computerWork = await findRunComputerWork(tx, runIds);
     const takeoverControls = await releaseTakeovers(tx, runIds);
-    // Expire as tombstones so a still-open provider screen claim cannot reset fencing to 1.
-    await expireComputerExecutionLeases(tx, { runId: { in: runIds } });
-    await tx.computer.updateMany({
-      where: { executionRunId: { in: runIds } },
-      data: {
-        executionRunId: null,
-        executionBotId: null,
-        executionLeaseExpiresAt: null,
-      },
-    });
     await tx.message.deleteMany({ where: { threadId: input.threadId } });
     await tx.event.deleteMany({ where: { threadId: input.threadId } });
     const cleared = await tx.thread.update({

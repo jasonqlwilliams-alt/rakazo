@@ -9,7 +9,7 @@ import {
   type PrismaClient,
 } from "@rakazo/db";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { messageBot } from "./bot-messages.js";
+import { messageBot, returnBotMessageOutcome } from "./bot-messages.js";
 import { reconcileBotMessageOutcome } from "./bot-outcome-reconciliation.js";
 
 const describePostgres =
@@ -127,6 +127,28 @@ describePostgres("bot message outcomes across a conversation clear (PostgreSQL)"
     });
   });
 
+  it("returns an outcome from a run snapshot read before clear", async () => {
+    const h = await setup();
+    await h.clear();
+
+    expect(
+      await returnBotMessageOutcome(
+        h.deps,
+        h.delegated,
+        { id: h.recipient.id, name: h.recipient.name },
+        "Stopped. The chat was cleared.",
+        "status",
+      ),
+    ).toBe(true);
+    expect(await h.notices()).toEqual([
+      expect.objectContaining({
+        fromBotId: h.recipient.id,
+        intent: "status",
+        text: "Stopped. The chat was cleared.",
+      }),
+    ]);
+  });
+
   it("still returns a finished request's outcome when the chat is cleared before delivery", async () => {
     const h = await setup();
     await prisma.run.update({ where: { id: h.delegated.id }, data: { status: "completed" } });
@@ -161,6 +183,13 @@ describePostgres("bot message outcomes across a conversation clear (PostgreSQL)"
 
     await h.clear();
     await reconcileBotMessageOutcome(h.deps, h.delegated.id);
+    await returnBotMessageOutcome(
+      h.deps,
+      h.delegated,
+      { id: h.recipient.id, name: h.recipient.name },
+      "Stopped. The chat was cleared.",
+      "status",
+    );
 
     expect(await h.notices()).toEqual([
       expect.objectContaining({

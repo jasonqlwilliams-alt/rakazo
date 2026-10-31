@@ -4,7 +4,12 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { ComposioEmulator, expireComputerControl } from "@rakazo/adapters";
+import {
+  acquireComputerExecutionLease,
+  ComposioEmulator,
+  ComputerBusyError,
+  expireComputerControl,
+} from "@rakazo/adapters";
 import { createThreadEvents, createThreadMessage } from "@rakazo/db";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AppHandles } from "../../../apps/api/src/app.ts";
@@ -173,11 +178,37 @@ describe.skipIf(!enabled)("conversation clear (PostgreSQL)", () => {
       },
     });
     const sandbox = handles.sandbox;
-    const releaseScreen = vi.spyOn(sandbox, "releaseScreen").mockResolvedValue(undefined);
+    let enterTeardown!: () => void;
+    let allowTeardown!: () => void;
+    const teardownEntered = new Promise<void>((resolve) => {
+      enterTeardown = resolve;
+    });
+    const teardownGate = new Promise<void>((resolve) => {
+      allowTeardown = resolve;
+    });
+    const releaseScreen = vi.spyOn(sandbox, "releaseScreen").mockImplementation(async () => {
+      enterTeardown();
+      await teardownGate;
+    });
     const setScreenControl = vi.spyOn(sandbox, "setScreenControl").mockResolvedValue(undefined);
     const execute = vi.spyOn(sandbox, "execute").mockImplementation(async function* () {});
     try {
-      await rpc("threads/clear", { botId });
+      const clearing = rpc("threads/clear", { botId });
+      await teardownEntered;
+      expect(
+        (
+          await handles.prisma.computerExecutionLease.findUniqueOrThrow({ where: { id: lease.id } })
+        ).expiresAt.getTime(),
+      ).toBeGreaterThan(Date.now());
+      await expect(
+        acquireComputerExecutionLease(handles.prisma, {
+          computerId: computer.id,
+          botId,
+          runId: "replacement-run",
+        }),
+      ).rejects.toBeInstanceOf(ComputerBusyError);
+      allowTeardown();
+      await clearing;
 
       expect(await handles.prisma.run.findUniqueOrThrow({ where: { id: run.id } })).toMatchObject({
         status: "cancelled",
@@ -208,7 +239,19 @@ describe.skipIf(!enabled)("conversation clear (PostgreSQL)", () => {
         expect.objectContaining({ providerRef: computer.providerRef }),
         expect.objectContaining({ runId: run.id, screenLeaseId: `${run.id}:${lease.fence}` }),
       );
+      expect(
+        (await handles.prisma.computerExecutionLease.findUniqueOrThrow({ where: { id: lease.id } }))
+          .expiresAt,
+      ).toEqual(new Date(0));
+      await expect(
+        acquireComputerExecutionLease(handles.prisma, {
+          computerId: computer.id,
+          botId,
+          runId: "replacement-run",
+        }),
+      ).resolves.toMatchObject({ fence: lease.fence + 1 });
     } finally {
+      allowTeardown();
       releaseScreen.mockRestore();
       setScreenControl.mockRestore();
       execute.mockRestore();

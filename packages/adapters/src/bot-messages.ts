@@ -42,6 +42,7 @@ export async function loadBotMessageContext(
   sourceMessageId: string | null | undefined,
   /** Sender a clear kept on the run after deleting the source message. */
   keptSource?: unknown,
+  runId?: string,
 ) {
   const source = sourceMessageId
     ? await prisma.message.findUnique({
@@ -50,7 +51,15 @@ export async function loadBotMessageContext(
       })
     : null;
   if (!source) {
-    const kept = MessageBlockSchema.safeParse(keptSource);
+    let kept = MessageBlockSchema.safeParse(keptSource);
+    if (!kept.success && runId && sourceMessageId) {
+      const current = await prisma.run.findUnique({
+        where: { id: runId },
+        select: { botMessageSource: true, botOutcomeReturnedAt: true },
+      });
+      if (current?.botOutcomeReturnedAt) return undefined;
+      kept = MessageBlockSchema.safeParse(current?.botMessageSource);
+    }
     const context = kept.success ? botMessageContext([kept.data]) : undefined;
     return context ? { ...context, repliesToRequest: false } : undefined;
   }
@@ -106,6 +115,7 @@ export async function messageBot(
     deps.prisma,
     run.sourceMessageId,
     run.botMessageSource,
+    options?.allowTerminalSource ? run.id : undefined,
   );
   const intent = input.intent ?? "request";
   const hop = nextBotMessageHop(sourceContext?.hop);
@@ -389,6 +399,7 @@ export async function returnBotMessageOutcome(
     deps.prisma,
     run.sourceMessageId,
     run.botMessageSource,
+    run.id,
   );
   if (!needsBotMessageOutcome(source)) {
     await markBotOutcomeReturned(deps.prisma, run.id);
@@ -449,7 +460,12 @@ export async function recoverBotMessageOutcome(
     });
   }
   if (!receipt) {
-    const source = await loadBotMessageContext(prisma, run.sourceMessageId, run.botMessageSource);
+    const source = await loadBotMessageContext(
+      prisma,
+      run.sourceMessageId,
+      run.botMessageSource,
+      run.id,
+    );
     if (
       needsBotMessageOutcome(source) &&
       !(await hasExplicitBotMessageOutcome(prisma, run, source.fromBotId))

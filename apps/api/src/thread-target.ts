@@ -1192,6 +1192,17 @@ export async function releaseClearedThreadComputers(
       }
     }),
   ]);
+  await expireComputerExecutionLeases(deps.prisma, {
+    runId: { in: cleared.cancelledRunIds },
+  });
+  await deps.prisma.computer.updateMany({
+    where: { executionRunId: { in: cleared.cancelledRunIds } },
+    data: {
+      executionRunId: null,
+      executionBotId: null,
+      executionLeaseExpiresAt: null,
+    },
+  });
 }
 
 async function stopRunComputerWork(
