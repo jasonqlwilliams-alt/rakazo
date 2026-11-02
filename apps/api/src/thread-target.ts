@@ -22,10 +22,10 @@ import {
   BACKGROUND_RUN_TRIGGERS,
   callIdFromClientNonce,
   isActive,
-  isConversationalRun,
   projectMessages,
   resolveGroupTargetBotIds,
   runFailureError,
+  runTakesSteering,
 } from "@rakazo/core";
 import { deriveMessageQuote, messageReplyPreview } from "@rakazo/core/message-quote";
 import type {
@@ -88,8 +88,8 @@ const STEERABLE_RUN_STATUSES = new Set(["queued", "leased", "running", "waiting_
  * steerable conversational run is active. When one is, the text steers that run and the
  * ask stays on its card.
  */
-function steersUserMessage(run: { status: string; trigger?: string | null }) {
-  return STEERABLE_RUN_STATUSES.has(run.status) && isConversationalRun(run.trigger);
+function steersUserMessage(run: { status: string; trigger: string; delegation: unknown }) {
+  return STEERABLE_RUN_STATUSES.has(run.status) && runTakesSteering(run);
 }
 
 type MentionTargetInput = string | { kind: "bot" | "group" | "routine" | "connector"; id: string };
@@ -716,7 +716,7 @@ export async function sendThreadMessage(
             botId: target.botId,
             status: { in: [...ACTIVE_RUN_STATUSES] },
           },
-          select: { id: true, taskId: true, status: true, trigger: true },
+          select: { id: true, taskId: true, status: true, trigger: true, delegation: true },
         });
         const waitingRuns = activeRuns.filter((run) => run.status === "waiting_input");
         if (waitingRuns.length && !activeRuns.some(steersUserMessage)) {
@@ -885,7 +885,14 @@ export async function sendThreadMessage(
           botId: { in: targetBotIds },
           status: { in: [...ACTIVE_RUN_STATUSES] },
         },
-        select: { id: true, taskId: true, botId: true, status: true, trigger: true },
+        select: {
+          id: true,
+          taskId: true,
+          botId: true,
+          status: true,
+          trigger: true,
+          delegation: true,
+        },
       });
       const activeByBotId = new Map<string, (typeof activeRuns)[number]>();
       const answeredByBotId = new Map<string, Array<(typeof activeRuns)[number]>>();

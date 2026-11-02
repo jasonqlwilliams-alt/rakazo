@@ -9,6 +9,8 @@ import {
   buildBotMessageWakePrompt,
   clampBotMessage,
   nextBotMessageHop,
+  parseRunDelegation,
+  relayedDelegation,
   resolveBotAddress,
 } from "@rakazo/core";
 import type { PrismaClient } from "@rakazo/db";
@@ -223,10 +225,14 @@ export async function messageBot(
               ? { in: ["completed", "failed", "cancelled"] }
               : "running",
           },
-          select: { id: true },
+          select: { id: true, delegation: true },
         });
         if (!senderStillRunning)
           return { ok: false as const, error: "source run is no longer active" };
+        // A delegated run's relay, and the outcome it returns, start runs that carry the same
+        // delegation one hop further. The receiving bot's own permissions never widen it.
+        const senderDelegation = parseRunDelegation(senderStillRunning.delegation);
+        const delegation = senderDelegation ? relayedDelegation(senderDelegation) : null;
 
         // Re-read the target inside the transaction: it can be archived between
         // resolving it above and committing here.
@@ -262,6 +268,8 @@ export async function messageBot(
           hop,
           intent,
           returnToMessageId: outbound.id,
+          // Parentage comes from the relaying run itself, so quoting a request in text proves nothing.
+          fromRunId: run.id,
         };
         // JSON return addresses outlive the referenced message. Keep a surviving
         // parent locked through the insert; a deleted parent degrades to an unthreaded reply.
@@ -302,6 +310,7 @@ export async function messageBot(
             status: "queued",
             trigger: "bot_message",
             sourceMessageId: inbound.id,
+            ...(delegation ? { delegation } : {}),
           },
           select: { id: true },
         });

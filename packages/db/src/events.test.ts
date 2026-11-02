@@ -2628,6 +2628,131 @@ describe("sendUserMessage", () => {
   });
 });
 
+describe("sendUserMessage with a delegated request", () => {
+  const delegation = {
+    version: 1 as const,
+    requestId: "req_request-1",
+    parentRequestId: null,
+    actor: "owner",
+    delegate: "assistant",
+    label: "Owner via assistant",
+    grantId: "grant-1",
+    clientId: "client-1",
+    scopes: ["assistant.read", "assistant.message"],
+    mayStartWork: false,
+    hop: 0,
+    verifiedAt: "2026-11-01T12:00:00.000Z",
+  };
+
+  function transaction(activeRuns: unknown[]) {
+    return {
+      thread: {
+        update: vi
+          .fn()
+          .mockResolvedValueOnce({ nextMessageSeq: 5 })
+          .mockResolvedValueOnce({ nextEventSeq: 9 }),
+      },
+      message: {
+        create: vi.fn().mockResolvedValue({ id: "message-1", seq: 4 }),
+        update: vi.fn().mockResolvedValue({ id: "message-1" }),
+      },
+      steeringMessage: { create: vi.fn() },
+      task: {
+        create: vi.fn(async ({ data }: { data: { id?: string } }) => ({ id: data.id ?? "task-1" })),
+      },
+      run: {
+        findMany: vi.fn().mockResolvedValue(activeRuns),
+        findUnique: vi.fn().mockResolvedValue({ status: "queued" }),
+        create: vi.fn().mockResolvedValue({ id: "run-delegated" }),
+      },
+      event: {
+        create: vi.fn(async ({ data }: { data: { seq: number; type: string } }) => ({
+          ...event(data.seq),
+          type: data.type,
+        })),
+      },
+    };
+  }
+
+  function send(tx: ReturnType<typeof transaction>, extra: Record<string, unknown>) {
+    const prisma = {
+      message: { findUnique: vi.fn().mockResolvedValue(null) },
+      $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
+    } as unknown as PrismaClient;
+    return sendUserMessage(prisma, {
+      spaceId: "workspace-1",
+      threadId: "thread-1",
+      botId: "bot-1",
+      userId: "user-1",
+      blocks: [{ kind: "text", text: "request" }],
+      prompt: "request",
+      trigger: "webhook",
+      ...extra,
+    });
+  }
+
+  it("starts its own run carrying the delegation, never steering the owner's live run", async () => {
+    const tx = transaction([
+      { id: "run-user", taskId: "task-user", trigger: "user", delegation: null },
+    ]);
+    await expect(send(tx, { delegation, taskId: "req_request-1" })).resolves.toEqual({
+      messageId: "message-1",
+      seq: 4,
+      taskId: "req_request-1",
+      runId: "run-delegated",
+    });
+    expect(tx.run.findMany).not.toHaveBeenCalled();
+    expect(tx.steeringMessage.create).not.toHaveBeenCalled();
+    expect(tx.task.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ id: "req_request-1" }),
+    });
+    expect(tx.run.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ trigger: "webhook", delegation }),
+    });
+  });
+
+  it("holds an ordinary message that arrives while only a delegated run is active", async () => {
+    const tx = transaction([
+      { id: "run-delegated", taskId: "task-delegated", trigger: "bot_message", delegation },
+    ]);
+    await send(tx, { trigger: "messaging" });
+    expect(tx.run.create).not.toHaveBeenCalled();
+    expect(tx.steeringMessage.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ messageId: "message-1", runId: null }),
+    });
+  });
+});
+
+describe("claimSteering for a delegated run", () => {
+  it("takes no steering, so the owner's messages keep the owner's authority", async () => {
+    const tx = {
+      $queryRaw: vi.fn(),
+      run: {
+        findFirst: vi.fn().mockResolvedValue({
+          id: "run-delegated",
+          trigger: "bot_message",
+          delegation: { requestId: "req_request-1" },
+        }),
+      },
+      steeringMessage: { findMany: vi.fn(), updateMany: vi.fn() },
+    };
+    const prisma = {
+      $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
+    } as unknown as PrismaClient;
+    await expect(
+      claimSteering(prisma, {
+        threadId: "thread-1",
+        botId: "bot-1",
+        runId: "run-delegated",
+        leaseOwner: "worker-1",
+        leaseFence: 1,
+        seenIds: [],
+      }),
+    ).resolves.toEqual([]);
+    expect(tx.steeringMessage.findMany).not.toHaveBeenCalled();
+  });
+});
+
 describe("claimSteering", () => {
   it("claims pending messages for the fenced run in message order", async () => {
     const tx = {

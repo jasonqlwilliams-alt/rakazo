@@ -1,7 +1,8 @@
-import { createHash } from "node:crypto";
+import { createHash, type KeyObject } from "node:crypto";
 import type { JobPublisher, SecretStore } from "@rakazo/adapter-kit";
 import { runContinueJob, SecretStoreUnavailableError } from "@rakazo/adapter-kit";
 import { inboundRoutineModelPin } from "@rakazo/adapters";
+import type { RunDelegation } from "@rakazo/contracts";
 import type { PrismaClient } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 
@@ -25,7 +26,9 @@ export type WebhookEvents = {
       modelId: string;
       thinkingLevel: string | null;
     };
-  }): Promise<{ messageId: string; runId: string | null; seq: number }>;
+    delegation?: RunDelegation;
+    taskId?: string;
+  }): Promise<{ messageId: string; runId: string | null; taskId: string | null; seq: number }>;
 };
 
 export type WebhookDeps = {
@@ -33,6 +36,8 @@ export type WebhookDeps = {
   secrets: SecretStore;
   events: WebhookEvents;
   jobs: Pick<JobPublisher, "enqueue">;
+  /** Delegation gateway public key; without it every delegated request is refused. */
+  delegationPublicKey?: KeyObject;
 };
 
 export type WebhookTarget = {
@@ -284,6 +289,8 @@ export async function deliverWebhookEvent(
     allowParallelRun?: boolean;
     /** Bind HTTP webhook deliveries to a single matching webhook-enabled routine. */
     routineId?: string;
+    /** A verified delegated request: it gets its own run, and that run's task is the request. */
+    delegation?: RunDelegation;
   },
 ) {
   const promptText =
@@ -318,6 +325,9 @@ export async function deliverWebhookEvent(
     clientNonce,
     ...(input.allowParallelRun ? { allowParallelRun: true } : {}),
     ...(input.routineId ? { routineId: input.routineId } : {}),
+    ...(input.delegation
+      ? { delegation: input.delegation, taskId: input.delegation.requestId }
+      : {}),
     ...(pin.modelProvider && pin.modelId
       ? {
           modelPin: {
@@ -335,5 +345,12 @@ export async function deliverWebhookEvent(
     });
   }
 
-  return { ok: true as const, messageId: sent.messageId, runId: sent.runId, seq: sent.seq };
+  return {
+    ok: true as const,
+    messageId: sent.messageId,
+    runId: sent.runId,
+    // The delegated request's run is bound to it; the caller checks that this names the request.
+    ...(input.delegation ? { taskId: sent.taskId } : {}),
+    seq: sent.seq,
+  };
 }

@@ -105,6 +105,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { createBillingService } from "./billing.js";
 import { mountBillingRoutes } from "./billing-webhook.js";
+import { parseDelegationPublicKey } from "./delegated-request.js";
 import type { AppEnv } from "./env.js";
 import { loadEnv } from "./env.js";
 import { healthRoutes } from "./health.js";
@@ -690,7 +691,15 @@ export async function createApp(
     if (actor) enrichLogContext({ "user.id": actor.userId, "space.id": actor.spaceId });
     return actor;
   });
-  mountWebhookHttpRoutes(app, { prisma, secrets, events, jobs });
+  mountWebhookHttpRoutes(app, {
+    prisma,
+    secrets,
+    events,
+    jobs,
+    delegationPublicKey: env.delegationPublicKey
+      ? parseDelegationPublicKey(env.delegationPublicKey)
+      : undefined,
+  });
   if (billing && billingProvider) {
     mountBillingRoutes(app, {
       billing,

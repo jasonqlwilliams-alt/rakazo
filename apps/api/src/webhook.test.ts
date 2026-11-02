@@ -1,4 +1,4 @@
-import { createHash, createHmac } from "node:crypto";
+import { createHash, createHmac, generateKeyPairSync, type KeyObject, sign } from "node:crypto";
 import { SecretStoreUnavailableError } from "@rakazo/adapter-kit";
 import {
   ComposedSecretStore,
@@ -9,6 +9,7 @@ import {
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 import { infisicalFake } from "../../../packages/adapters/src/secret-store-fake.js";
+import { delegationSigningBytes, parseDelegationPublicKey } from "./delegated-request.js";
 import { readBoundedBody } from "./http-body.js";
 import {
   formatGithubEventPrompt,
@@ -49,6 +50,7 @@ function createDeps(
       modelId?: string | null;
       thinkingLevel?: string | null;
     }>;
+    delegationPublicKey?: KeyObject;
   } = {},
 ): WebhookDeps & {
   sendUserMessage: ReturnType<typeof vi.fn>;
@@ -101,6 +103,7 @@ function createDeps(
     } as unknown as WebhookDeps["secrets"],
     events: { sendUserMessage },
     jobs: { enqueue } as unknown as WebhookDeps["jobs"],
+    delegationPublicKey: overrides.delegationPublicKey,
     sendUserMessage,
     enqueue,
     findRoutines,
@@ -1101,5 +1104,150 @@ describe("encrypted webhook cache expiry", () => {
       await store.close();
       vi.useRealTimers();
     }
+  });
+});
+
+describe("delegated webhook deliveries", () => {
+  // A throwaway key pair made for this test run only.
+  const gateway = generateKeyPairSync("ed25519");
+  const publicKey = parseDelegationPublicKey(
+    gateway.publicKey.export({ type: "spki", format: "pem" }).toString(),
+  );
+  const requestId = "req_7a7b7c7d-0000-4111-8222-933334444555";
+  const body = JSON.stringify({
+    event: "delegation.message",
+    id: requestId,
+    taskId: requestId,
+    parent_request_id: null,
+    from: "Owner via assistant",
+    delegation: {
+      actor: "owner",
+      delegate: "assistant",
+      grant_id: "grant-1",
+      oauth_client_id: "client-1",
+      effective_scopes: ["assistant.message", "assistant.read"],
+      may_start_work: false,
+      human_approval: "none",
+    },
+    message: "Look up the build status.",
+  });
+
+  function signedHeaders(raw: string, privateKey: KeyObject = gateway.privateKey) {
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    return {
+      "x-rakazo-delegation-timestamp": timestamp,
+      "x-rakazo-delegation-signature": sign(
+        null,
+        delegationSigningBytes(timestamp, "bot-1", raw),
+        privateKey,
+      ).toString("hex"),
+    };
+  }
+
+  function deliver(
+    deps: ReturnType<typeof createDeps>,
+    raw: string,
+    headers: Record<string, string>,
+  ) {
+    return mount(deps).request("/api/v1/bots/bot-1/webhook", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${SECRET}`,
+        "content-type": "application/json",
+        "idempotency-key": requestId,
+        ...headers,
+      },
+      body: raw,
+    });
+  }
+
+  it("starts its own run carrying the delegation and answers with the request-bound task", async () => {
+    const deps = createDeps({ delegationPublicKey: publicKey });
+    deps.sendUserMessage.mockImplementationOnce(async () => ({
+      messageId: "msg-1",
+      runId: "run-1",
+      taskId: requestId,
+      seq: 3,
+    }));
+    const res = await deliver(deps, body, signedHeaders(body));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      ok: true,
+      messageId: "msg-1",
+      runId: "run-1",
+      taskId: requestId,
+      seq: 3,
+    });
+    expect(deps.sendUserMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        trigger: "webhook",
+        taskId: requestId,
+        delegation: expect.objectContaining({
+          requestId,
+          label: "Owner via assistant",
+          scopes: ["assistant.message", "assistant.read"],
+          mayStartWork: false,
+          hop: 0,
+        }),
+      }),
+    );
+  });
+
+  it("delivers an ordinary webhook event without a delegation", async () => {
+    const deps = createDeps({ delegationPublicKey: publicKey });
+    const res = await deliver(deps, JSON.stringify({ event: "ci.failed" }), {});
+    expect(res.status).toBe(200);
+    expect(deps.sendUserMessage.mock.calls[0]?.[0]).not.toHaveProperty("delegation");
+  });
+
+  it.each([
+    ["has no signature", () => ({}), 401],
+    [
+      "is signed with another key",
+      () => signedHeaders(body, generateKeyPairSync("ed25519").privateKey),
+      401,
+    ],
+    ["was changed after signing", () => signedHeaders(body.replace("build", "deploy")), 401],
+  ])("refuses a delegation that %s and starts nothing", async (_label, headers, status) => {
+    const deps = createDeps({ delegationPublicKey: publicKey });
+    const res = await deliver(deps, body, headers());
+    expect(res.status).toBe(status);
+    expect(deps.sendUserMessage).not.toHaveBeenCalled();
+    expect(deps.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("refuses signature headers on a delivery with no delegation context", async () => {
+    const deps = createDeps({ delegationPublicKey: publicKey });
+    const raw = JSON.stringify({ event: "delegation.message", id: requestId, message: "hi" });
+    const res = await deliver(deps, raw, signedHeaders(raw));
+    expect(res.status).toBe(400);
+    expect(deps.sendUserMessage).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { event: "delegation.message", id: requestId, message: "hi" },
+    { event: "other", id: requestId, delegation_context: null, message: "hi" },
+  ])("refuses an unsigned delegated marker without storing a run", async (payload) => {
+    const deps = createDeps({ delegationPublicKey: publicKey });
+    const res = await deliver(deps, JSON.stringify(payload), {});
+    expect(res.status).toBe(401);
+    expect(deps.sendUserMessage).not.toHaveBeenCalled();
+    expect(deps.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("refuses a malformed delegation context even when it is signed", async () => {
+    const deps = createDeps({ delegationPublicKey: publicKey });
+    const raw = body.replace('"human_approval":"none"', '"human_approval":"owner"');
+    const res = await deliver(deps, raw, signedHeaders(raw));
+    expect(res.status).toBe(400);
+    expect(deps.sendUserMessage).not.toHaveBeenCalled();
+  });
+
+  it("refuses every delegated request while no gateway key is configured", async () => {
+    const deps = createDeps();
+    const res = await deliver(deps, body, signedHeaders(body));
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "Delegated requests are not enabled" });
+    expect(deps.sendUserMessage).not.toHaveBeenCalled();
   });
 });

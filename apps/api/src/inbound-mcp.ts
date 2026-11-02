@@ -399,17 +399,54 @@ async function readThread(deps: InboundMcpDeps, threadId: string, before: unknow
   });
   if (!thread) throw new InboundMcpToolError("Thread not found");
   const page = await loadMessagePage(deps.prisma, thread.id, beforeSeq, pageSize);
+  const startedRunIds = await webhookStartedRunIds(
+    deps.prisma,
+    page.messages.map((message) => message.id),
+  );
   return {
     threadId: page.threadId,
     olderCursor: page.olderCursor,
     messages: page.messages.map((message) => ({
       id: message.id,
+      // The run the message belongs to, and the run a webhook delivery started, so a reader
+      // can tell one request's replies from another run's.
+      runId: message.runId ?? null,
+      startedRunId: startedRunIds.get(message.id) ?? null,
+      // The run that relayed a bot-to-bot message, as the server recorded it.
+      parentRunId: relayParentRunId(message.blocks),
       seq: message.seq,
       role: message.role,
       createdAt: message.createdAt,
       text: readableMessageText(message.blocks),
     })),
   };
+}
+
+function relayParentRunId(blocks: MessageBlock[]): string | null {
+  for (const block of blocks) {
+    if (block.kind === "bot_message_received" && block.fromRunId) return block.fromRunId;
+  }
+  return null;
+}
+
+/** The run each webhook-delivered message started, by message id. */
+async function webhookStartedRunIds(
+  prisma: PrismaClient,
+  messageIds: string[],
+): Promise<Map<string, string>> {
+  if (messageIds.length === 0) return new Map();
+  const runs = await prisma.run.findMany({
+    where: { sourceMessageId: { in: messageIds }, trigger: "webhook" },
+    select: { id: true, sourceMessageId: true },
+    orderBy: { createdAt: "asc" },
+  });
+  const started = new Map<string, string>();
+  for (const run of runs) {
+    if (run.sourceMessageId && !started.has(run.sourceMessageId)) {
+      started.set(run.sourceMessageId, run.id);
+    }
+  }
+  return started;
 }
 
 function readableMessageText(blocks: MessageBlock[]): string {

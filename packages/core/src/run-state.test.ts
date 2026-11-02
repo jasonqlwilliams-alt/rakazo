@@ -5,6 +5,7 @@ import {
   canTransition,
   isBackgroundRunTrigger,
   isConversationalRun,
+  runTakesSteering,
 } from "./run-state.js";
 
 describe("run state machine", () => {
@@ -21,6 +22,14 @@ describe("run state machine", () => {
     expect(isConversationalRun("webhook")).toBe(false);
     expect(isConversationalRun("created")).toBe(false);
     expect(isConversationalRun("tickets")).toBe(false);
+  });
+
+  it("keeps delegated runs and the owner's messages from steering each other", () => {
+    expect(runTakesSteering({ trigger: "bot_message", delegation: null })).toBe(true);
+    expect(runTakesSteering({ trigger: "bot_message", delegation: { requestId: "req_1" } })).toBe(
+      false,
+    );
+    expect(runTakesSteering({ trigger: "webhook", delegation: null })).toBe(false);
   });
 
   it("marks ticket runs as background work that stays out of the chat", () => {

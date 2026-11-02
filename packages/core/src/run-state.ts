@@ -62,6 +62,20 @@ export function isConversationalRun(trigger: string | null | undefined): boolean
   return !NON_CONVERSATIONAL_RUN_TRIGGERS.has(trigger ?? "");
 }
 
+/** Whether a run answers a delegated request rather than the owner. */
+export function isDelegatedRun(run: { delegation: unknown }): boolean {
+  return run.delegation !== null && run.delegation !== undefined;
+}
+
+/**
+ * Whether a run may take a message as steering. A delegated run never does, and its own
+ * messages never steer another run, so the owner's words and a delegated request each keep
+ * their own authority.
+ */
+export function runTakesSteering(run: { trigger: string | null; delegation: unknown }): boolean {
+  return isConversationalRun(run.trigger) && !isDelegatedRun(run);
+}
+
 export function nextFence(current: number): number {
   return current + 1;
 }

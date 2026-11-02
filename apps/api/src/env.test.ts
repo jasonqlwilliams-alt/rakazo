@@ -1,3 +1,4 @@
+import { generateKeyPairSync } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { loadEnv } from "./env.js";
 
@@ -269,6 +270,25 @@ describe("loadEnv", () => {
         RAKAZO_INBOUND_MCP_TOKEN: "shared-secret-value-32chars-aaaaaa",
       }),
     ).toThrow(/RAKAZO_INBOUND_MCP_TOKEN/);
+  });
+
+  it("reads the delegation gateway's Ed25519 public key and refuses anything else", () => {
+    // A throwaway key pair made for this test run only.
+    const publicPem = generateKeyPairSync("ed25519")
+      .publicKey.export({ type: "spki", format: "pem" })
+      .toString();
+    expect(loadEnv(base).delegationPublicKey).toBeUndefined();
+    expect(loadEnv({ ...base, RAKAZO_DELEGATION_PUBLIC_KEY: publicPem }).delegationPublicKey).toBe(
+      publicPem.trim(),
+    );
+    const otherType = generateKeyPairSync("x25519")
+      .publicKey.export({ type: "spki", format: "pem" })
+      .toString();
+    for (const value of [otherType, "not a key"]) {
+      expect(() => loadEnv({ ...base, RAKAZO_DELEGATION_PUBLIC_KEY: value })).toThrow(
+        /RAKAZO_DELEGATION_PUBLIC_KEY/,
+      );
+    }
   });
 
   it("defaults the remote MCP private-endpoint escape to off", () => {

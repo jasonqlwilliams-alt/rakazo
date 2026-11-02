@@ -684,6 +684,9 @@ model Run {
   sourceMessage        Message?         @relation("RunSourceMessage", fields: [sourceMessageId], references: [id], onDelete: SetNull)
   /// The bot_message_received block a clear deleted, without its text, so the sender still gets an outcome.
   botMessageSource     Json?
+  /// A verified delegated request (RunDelegationSchema). Set on the delivered run and copied to
+  /// every run it starts by relaying; the tool gate enforces it. Null for the owner's own runs.
+  delegation           Json?
   routineId            String?
   routine              Routine?         @relation(fields: [routineId], references: [id], onDelete: SetNull)
   startedAt            DateTime?

@@ -312,6 +312,8 @@ export const MessageBlock = z.discriminatedUnion("kind", [
     intent: BotMessageIntent.optional(),
     /** Sender-thread echo this delivery answers, when applicable. */
     returnToMessageId: Id.optional(),
+    /** The run that relayed this message, written by the server, never by the sender's text. */
+    fromRunId: Id.optional(),
     /** Links in a bot-started chain; absent when a person started it. */
     hop: z.number().int().nonnegative().optional(),
   }),
