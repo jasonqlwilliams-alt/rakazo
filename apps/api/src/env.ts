@@ -11,6 +11,7 @@ import {
   resolveScreenProxySecret,
   resolveSupervisorToken,
 } from "@rakazo/core";
+import { parseDelegationPublicKey } from "./delegated-request.js";
 
 export { resolveCloudAgentProvider, resolveSandboxProvider } from "@rakazo/adapters";
 
@@ -116,6 +117,11 @@ export interface AppEnv {
   inboundMcpToken: string | undefined;
   /** Outbound Continuum MCP token (RAKAZO_MCP_TOKEN); never the /mcp bearer. */
   mcpToken: string | undefined;
+  /**
+   * Ed25519 SPKI PEM public key of the delegation gateway (RAKAZO_DELEGATION_PUBLIC_KEY). Unset
+   * refuses every delegated request; ordinary webhook deliveries are unaffected.
+   */
+  delegationPublicKey: string | undefined;
   /** Current application image tag; used for compose manual-upgrade command selection. */
   imageTag: string | undefined;
 }
@@ -261,6 +267,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     updaterToken,
     inboundMcpToken: resolveInboundMcpToken(source),
     mcpToken: optional(source.RAKAZO_MCP_TOKEN),
+    delegationPublicKey: resolveDelegationPublicKey(source),
     imageTag: optional(source.RAKAZO_IMAGE_TAG),
   };
 }
@@ -284,6 +291,17 @@ function resolveInboundMcpToken(source: NodeJS.ProcessEnv): string | undefined {
     throw new Error(
       "RAKAZO_INBOUND_MCP_TOKEN must differ from other Rakazo secrets and from RAKAZO_MCP_TOKEN.",
     );
+  }
+  return value;
+}
+
+function resolveDelegationPublicKey(source: NodeJS.ProcessEnv): string | undefined {
+  const value = optional(source.RAKAZO_DELEGATION_PUBLIC_KEY);
+  if (!value) return undefined;
+  try {
+    parseDelegationPublicKey(value);
+  } catch {
+    throw new Error("RAKAZO_DELEGATION_PUBLIC_KEY must be an Ed25519 public key in SPKI PEM form.");
   }
   return value;
 }

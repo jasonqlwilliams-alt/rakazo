@@ -6,6 +6,7 @@ import {
   type MessageBlock,
   MessageBlock as MessageBlockSchema,
   type ProductEvent,
+  type RunDelegation,
 } from "@rakazo/contracts";
 import {
   ACTIVE_RUN_STATUSES,
@@ -14,10 +15,12 @@ import {
   callIdFromClientNonce,
   isApprovalAskBlock,
   isConversationalRun,
+  isDelegatedRun,
   isSecretAskBlock,
   isUserProgressClientNonce,
   messagingChannelId,
   resolveAskChoice,
+  runTakesSteering,
   sanitizeJsonValue,
   THREAD_CLEARED_RUN_MESSAGE,
 } from "@rakazo/core";
@@ -255,6 +258,13 @@ export interface SendUserMessageInput {
     modelId: string;
     thinkingLevel: string | null;
   };
+  /**
+   * A verified delegated request. Its message always starts its own run, which carries the
+   * delegation, and never steers or waits behind another run.
+   */
+  delegation?: RunDelegation;
+  /** Id for the task this message starts, so a delegated request's task is its request id. */
+  taskId?: string;
 }
 
 export interface SendUserMessageResult {
@@ -584,8 +594,10 @@ export async function sendUserMessage(
       // Include the creation intro. It has no tools, so it must not absorb the message, and a
       // second run would overlap it on a dedicated computer. Pending steering waits for the
       // continuation that starts when the intro finishes.
+      // A delegated request never steers or waits behind another run: either would put it
+      // under that run's authority.
       const activeRuns =
-        createRun && !input.allowParallelRun
+        createRun && !input.allowParallelRun && !input.delegation
           ? await tx.run.findMany({
               where: {
                 threadId: input.threadId,
@@ -594,17 +606,18 @@ export async function sendUserMessage(
                   in: ["running", "queued", "leased", "waiting_input", "waiting_takeover"],
                 },
               },
-              select: { id: true, taskId: true, trigger: true },
+              select: { id: true, taskId: true, trigger: true, delegation: true },
             })
           : [];
-      // Steer a conversational run when there is one; a routine, webhook, or intro turn only holds the queue.
-      const busy =
-        activeRuns.find((run) => isConversationalRun(run.trigger)) ?? activeRuns[0] ?? null;
+      // Steer a conversational run when there is one; a routine, webhook, intro, or delegated
+      // turn only holds the queue.
+      const busy = activeRuns.find(runTakesSteering) ?? activeRuns[0] ?? null;
       let task = null;
       let run = null;
       if (createRun && !busy) {
         task = await tx.task.create({
           data: {
+            ...(input.taskId ? { id: input.taskId } : {}),
             spaceId: input.spaceId,
             botId: input.botId,
             threadId: input.threadId,
@@ -625,6 +638,7 @@ export async function sendUserMessage(
             clientNonce: input.clientNonce ? `send:${message.id}` : undefined,
             sourceMessageId: message.id,
             routineId: input.routineId,
+            ...(input.delegation ? { delegation: input.delegation } : {}),
             ...(input.modelPin
               ? {
                   modelProvider: input.modelPin.modelProvider,
@@ -639,7 +653,7 @@ export async function sendUserMessage(
           await tx.message.update({ where: { id: message.id }, data: { runId: run.id } });
         }
       } else if (createRun && busy) {
-        const held = !isConversationalRun(busy.trigger);
+        const held = !runTakesSteering(busy);
         await tx.steeringMessage.create({
           data: {
             messageId: message.id,
@@ -709,9 +723,15 @@ export async function claimSteering(
         leaseOwner: input.leaseOwner,
         leaseFence: input.leaseFence,
       },
-      select: { id: true, trigger: true, sourceMessage: { select: { blocks: true } } },
+      select: {
+        id: true,
+        trigger: true,
+        delegation: true,
+        sourceMessage: { select: { blocks: true } },
+      },
     });
-    if (!run || run.trigger === "created") return [];
+    // A delegated run takes no steering: the owner's messages keep the owner's authority.
+    if (!run || run.trigger === "created" || isDelegatedRun(run)) return [];
     const channelId =
       run.trigger === "messaging"
         ? messagingChannelId(run.sourceMessage?.blocks as MessageBlock[] | undefined)

@@ -34,6 +34,8 @@ function deps(
     /** Simulate a unique (threadId, clientNonce) race after both retries miss. */
     uniqueConflictOnCommit?: boolean;
     transactionConflictOnce?: boolean;
+    /** The delegation stored on the sending run. */
+    senderDelegation?: unknown;
   } = {},
 ) {
   const enqueue = vi.fn().mockResolvedValue(undefined);
@@ -50,7 +52,11 @@ function deps(
     run: {
       findFirst: vi
         .fn()
-        .mockResolvedValue(options.senderRunning === false ? null : { id: "run-1" }),
+        .mockResolvedValue(
+          options.senderRunning === false
+            ? null
+            : { id: "run-1", delegation: options.senderDelegation ?? null },
+        ),
       findUnique: vi.fn().mockResolvedValue({ status: "running" }),
       create: vi.fn().mockResolvedValue({ id: "run-2" }),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
@@ -426,6 +432,85 @@ describe("messaging another bot", () => {
       { bot_id: "bot-target", message: "carry on" },
     );
     expect(sent.ok).toBe(true);
+  });
+});
+
+describe("relaying a delegated request", () => {
+  const delegation = {
+    version: 1,
+    requestId: "req_request-1",
+    parentRequestId: null,
+    actor: "owner",
+    delegate: "assistant",
+    label: "Owner via assistant",
+    grantId: "grant-1",
+    clientId: "client-1",
+    scopes: ["assistant.read", "assistant.message"],
+    mayStartWork: false,
+    hop: 0,
+    verifiedAt: "2026-11-01T12:00:00.000Z",
+  };
+
+  it("starts the next bot's run with the same delegation and correlation id, one hop further", async () => {
+    const harness = deps({ senderDelegation: delegation });
+    const sent = await messageBot(harness.deps, run, sender, {
+      bot_id: "bot-target",
+      message: "look up the build status",
+    });
+    expect(sent.ok).toBe(true);
+    expect(harness.tx.run.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          trigger: "bot_message",
+          delegation: { ...delegation, hop: 1 },
+        }),
+      }),
+    );
+  });
+
+  it("returns a delegated run's outcome as a run that stays delegated", async () => {
+    const harness = deps({
+      senderDelegation: { ...delegation, hop: 1 },
+      hopBlocks: [
+        {
+          kind: "bot_message_received",
+          fromBotId: "bot-target",
+          fromBotName: "Analyst",
+          text: "please look it up",
+          hop: 1,
+          intent: "request",
+          returnToMessageId: "message-request",
+        },
+      ],
+    });
+    const sent = await messageBot(
+      harness.deps,
+      { ...run, sourceMessageId: "message-source" },
+      sender,
+      { bot_id: "bot-target", message: "the build is green", intent: "result" },
+      { allowTerminalSource: true },
+    );
+    expect(sent.ok).toBe(true);
+    expect(harness.tx.run.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ delegation: { ...delegation, hop: 2 } }),
+      }),
+    );
+  });
+
+  it("starts an owner's run when the sender is not delegated", async () => {
+    const harness = deps();
+    await messageBot(harness.deps, run, sender, { bot_id: "bot-target", message: "hello" });
+    expect(harness.tx.run.create.mock.calls[0]?.[0].data).not.toHaveProperty("delegation");
+  });
+
+  it("refuses to relay from a run whose delegation is damaged", async () => {
+    const harness = deps({ senderDelegation: { requestId: "req_request-1" } });
+    await expect(
+      messageBot(harness.deps, run, sender, { bot_id: "bot-target", message: "hello" }),
+    ).rejects.toThrow();
+    expect(harness.tx.run.create).not.toHaveBeenCalled();
+    expect(harness.enqueue).not.toHaveBeenCalled();
   });
 });
 

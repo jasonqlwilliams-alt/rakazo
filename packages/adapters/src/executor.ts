@@ -36,7 +36,7 @@ import {
   routineWakeupJob,
   runContinueJob,
 } from "@rakazo/adapter-kit";
-import type { ComputerCommand, MessageBlock, RunStatus } from "@rakazo/contracts";
+import type { ComputerCommand, MessageBlock, RunDelegation, RunStatus } from "@rakazo/contracts";
 import {
   ATTACHMENT_MAX_BYTES,
   BOT_DESCRIPTION_MAX_LENGTH,
@@ -52,7 +52,12 @@ import {
   isAttachmentImageMimeType,
   OPENAI_COMPATIBLE_PROVIDER_ID,
 } from "@rakazo/contracts";
-import type { ActionApprovalRule, ToolCallStreak } from "@rakazo/core";
+import type {
+  ActionApprovalRule,
+  DelegatedCapability,
+  DelegatedTool,
+  ToolCallStreak,
+} from "@rakazo/core";
 import {
   appendTextSegment,
   appendToolCallSegment,
@@ -65,6 +70,8 @@ import {
   connectorKindFromToolName,
   containsSecret,
   createStreamingRedactor,
+  delegatedToolDecision,
+  delegationInstruction,
   endsSentence,
   expandSkillReferencesInPrompt,
   formatSkillRunPrompt,
@@ -81,6 +88,7 @@ import {
   messagingDmSurfaceNote,
   nextCronDateAcross,
   nextFence,
+  parseRunDelegation,
   planActionGate,
   promptInvokesSkill,
   redactSecrets,
@@ -192,6 +200,7 @@ import {
   browserSnapshotFromTool,
 } from "./browser-tools.js";
 import {
+  AGENT_CONNECTION_TOOL_NAMES,
   agentConnectionTools,
   BUILTIN_AGENT_TOOL_NAMES,
   builtinAgentTools,
@@ -258,6 +267,8 @@ import {
 import {
   assertConnectorToolArgs,
   CATALOG_EXECUTE,
+  CATALOG_LOAD,
+  CATALOG_SEARCH,
   uniquifyInstalledToolName,
 } from "./lazy-tool-catalog.js";
 import {
@@ -424,6 +435,45 @@ const READ_ONLY_AGENT_TOOLS = new Set([
   "cloud_agent_status",
   "research_status",
 ]);
+
+/** The run's stored delegation, or not ok when it is damaged and must fail the run. */
+function readRunDelegation(
+  value: unknown,
+): { ok: true; delegation: RunDelegation | null } | { ok: false } {
+  try {
+    return { ok: true, delegation: parseRunDelegation(value) };
+  } catch {
+    return { ok: false };
+  }
+}
+
+/** How the delegation gate sees a tool: built in, or a connector tool and its declared effect. */
+function delegatedTool(name: string, connectorTool: ConnectorTool | undefined): DelegatedTool {
+  if (
+    !connectorTool ||
+    BUILTIN_AGENT_TOOL_NAMES.has(name) ||
+    AGENT_CONNECTION_TOOL_NAMES.has(name)
+  ) {
+    return { name };
+  }
+  const route = connectorTool.route;
+  const catalogRoute = route && !route.resourceId ? route.toolName : undefined;
+  return {
+    name,
+    connector: {
+      readOnly: connectorTool.readOnly,
+      catalog:
+        catalogRoute === CATALOG_SEARCH
+          ? "search"
+          : catalogRoute === CATALOG_LOAD
+            ? "load"
+            : catalogRoute === CATALOG_EXECUTE
+              ? "execute"
+              : undefined,
+    },
+  };
+}
+
 /** Added to the turn prompt when the user spoke this message on a live voice call. */
 const VOICE_CALL_BASE_INSTRUCTION =
   "You are on a live voice call. Reply in one to three short spoken sentences. No markdown, lists, links, or option cards; do not use ask_user unless you truly cannot proceed. Answer directly from what you already know when you can; use tools or subagents only when the answer requires them.";
@@ -3551,6 +3601,10 @@ export function createRunExecutor(deps: ExecutorDeps) {
 
       const runSecrets = [...deps.secrets];
       try {
+        // Read before any tool exists: a damaged delegation fails the run instead of running
+        // it with the owner's authority.
+        const storedDelegation = readRunDelegation(run.delegation);
+        const delegation = storedDelegation.ok ? storedDelegation.delegation : null;
         const sourceBlocks =
           run.trigger === "messaging" && run.sourceMessageId
             ? ((
@@ -3891,6 +3945,12 @@ export function createRunExecutor(deps: ExecutorDeps) {
             });
           }
         };
+        if (!storedDelegation.ok) {
+          await failRunBeforeModel(
+            "This delegated request's context is invalid, so it was not run.",
+          );
+          return;
+        }
         if (pinError) {
           await failRunBeforeModel(pinError);
           return;
@@ -4026,6 +4086,19 @@ export function createRunExecutor(deps: ExecutorDeps) {
         const pageBrowserAllowed =
           graphical && browser.describe().capabilities.page && !heldForTakeover;
         const disabledBuiltinTools = disabledBuiltinToolSet(bot.disabledBuiltinTools);
+        // A delegated run is offered only the tools its delegation allows, and its prompt names no
+        // others. This narrows what the model sees; applyTool enforces it on every call.
+        const delegationAllows = (name: string, connectorTool?: ConnectorTool) =>
+          !delegation ||
+          delegatedToolDecision(delegation, delegatedTool(name, connectorTool)).allowed;
+        const promptDisabledTools = delegation
+          ? new Set([
+              ...disabledBuiltinTools,
+              ...[...BUILTIN_AGENT_TOOL_NAMES, ...AGENT_CONNECTION_TOOL_NAMES].filter(
+                (name) => !delegationAllows(name),
+              ),
+            ])
+          : disabledBuiltinTools;
         // Research tools appear only when this Space enabled research and the bot has a computer.
         const researchEnabled =
           research !== null &&
@@ -4086,7 +4159,11 @@ export function createRunExecutor(deps: ExecutorDeps) {
         // The intro turn confirms how a bot read its own role before anyone hands it
         // real work — it must not be able to act on that reading (shell, computer,
         // scheduling, spawning another bot, ...) before the user has assigned any task.
-        const toolSelection = selectModelTools(builtins, exposedConnectorTools, task.prompt);
+        const toolSelection = selectModelTools(
+          builtins.filter((tool) => delegationAllows(tool.name)),
+          exposedConnectorTools.filter((tool) => delegationAllows(tool.name, tool)),
+          task.prompt,
+        );
         const tools = run.trigger === "created" ? [] : toolSelection.tools;
         const taskCatalogInstruction = tools.some((tool) => tool.name === "task_catalog")
           ? TASK_CATALOG_GUIDANCE
@@ -4101,11 +4178,11 @@ export function createRunExecutor(deps: ExecutorDeps) {
           heldForTakeover,
           graphicalToolsAllowed,
           graphical,
-          disabled: disabledBuiltinTools,
+          disabled: promptDisabledTools,
         });
         const dockerToolInstruction = dockerComputerToolInstruction(
           computer.kind,
-          disabledBuiltinTools,
+          promptDisabledTools,
         );
         const computerInstruction = dockerToolInstruction
           ? `${baseComputerInstruction} ${dockerToolInstruction}`
@@ -4278,6 +4355,16 @@ export function createRunExecutor(deps: ExecutorDeps) {
               error: "This stage was handed off. End the turn without more tool calls.",
             };
           }
+          // The delegation decides before anything else runs, whatever the prompt or the model says.
+          let delegatedCapability: DelegatedCapability | undefined;
+          if (delegation) {
+            const decision = delegatedToolDecision(
+              delegation,
+              delegatedTool(name, connectorTools.get(name)),
+            );
+            if (!decision.allowed) return { error: decision.reason };
+            delegatedCapability = decision.capability;
+          }
           if (disabledBuiltinTools.has(name)) {
             return { error: "This tool is disabled for this bot." };
           }
@@ -4355,6 +4442,18 @@ export function createRunExecutor(deps: ExecutorDeps) {
             } catch (error) {
               return { error: sanitizeConnectorError(error) };
             }
+          }
+          if (delegation && (catalogRemapped || onCatalogExecuteRoute)) {
+            // A catalog call is decided again on the tool it runs. One that did not resolve here
+            // would run a tool nobody checked, so it is refused.
+            if (!catalogRemapped) {
+              return {
+                error: `Refused: ${name} did not resolve to a tool a delegated request may use.`,
+              };
+            }
+            const decision = delegatedToolDecision(delegation, delegatedTool(name, resolvedTool));
+            if (!decision.allowed) return { error: decision.reason };
+            delegatedCapability = decision.capability;
           }
           if (approvedReplay.args && !catalogRemapped) {
             return {
@@ -4482,7 +4581,8 @@ export function createRunExecutor(deps: ExecutorDeps) {
             ? (resolvedTool ?? connectorTools.get(name))?.readOnly
             : undefined;
           const requiresUnattendedApproval = unattendedTriggerToolRequiresApproval(
-            run.trigger,
+            // Work a delegated request starts needs the owner, as on an unattended webhook run.
+            delegatedCapability === "work" ? "webhook" : run.trigger,
             name,
             viaConnector,
             declaredReadOnly,
@@ -6806,7 +6906,8 @@ export function createRunExecutor(deps: ExecutorDeps) {
                 pageBrowserAllowed,
                 taskCatalogInstruction,
                 workspaceInstruction,
-                agentEnvironmentInstruction,
+                // Credentials serve shell commands, which a delegated request cannot run.
+                agentEnvironmentInstruction: delegation ? undefined : agentEnvironmentInstruction,
                 botDirectory,
                 pluginLine,
                 agentSkillsLine,
@@ -6815,8 +6916,9 @@ export function createRunExecutor(deps: ExecutorDeps) {
                   run.trigger === "routine" && !routineSilence()
                     ? LONG_WORK_PROGRESS_GUIDANCE
                     : runReplyGuidance(run.trigger),
-                disabledBuiltinTools,
+                disabledBuiltinTools: promptDisabledTools,
               })
+                .concat(delegation ? delegationInstruction(delegation) : undefined)
                 .filter((instruction): instruction is string => Boolean(instruction))
                 .join("\n\n"),
               history: runtimeHistory,

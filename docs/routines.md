@@ -109,6 +109,10 @@ allowlist of known tool names through `routines.create` or `routines.update`.
 An empty list, any other trigger, and any tool not on the list keep that
 default.
 
+A delivery that carries a signed delegation context is a
+[delegated request](delegated-requests.md): it runs under that delegation's
+limits, which a routine allowlist can never widen.
+
 Authentication and dispatch are implemented in
 [`webhook.ts`](../apps/api/src/webhook.ts),
 [`github-webhook.ts`](../apps/api/src/github-webhook.ts), and

@@ -76,6 +76,7 @@ From `.env.images.example` (images installer). Leave blank if unused:
 | `SMTP_URL` / `EMAIL_FROM` | Password-recovery email |
 | Messaging tokens (Slack, Discord, Telegram, …) | Only if you enable those surfaces |
 | `RAKAZO_INBOUND_MCP_TOKEN` | Optional read-only inbound MCP at `POST /mcp` (local Claude/Cowork). Dedicated Bearer, ≥32 chars, distinct from other Rakazo secrets and from `RAKAZO_MCP_TOKEN`. Leave blank to keep `/mcp` closed. |
+| `RAKAZO_DELEGATION_PUBLIC_KEY` | Optional delegation gateway public key (Ed25519, SPKI PEM). A public key, not a secret. Leave blank to refuse every [delegated request](delegated-requests.md). |
 
 Blank optional keys are normal for a minimal published-images boot. Pipedream
 Connect keys appear only in source/Compose `.env.example`, not the images

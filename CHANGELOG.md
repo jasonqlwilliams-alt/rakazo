@@ -30,6 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Delegated requests: an owner's assistant can ask a bot for work through a delegation gateway that signs each request (`RAKAZO_DELEGATION_PUBLIC_KEY`). The server limits the run to what the delegation grants on every bot-to-bot hop, never runs administration for it, and refuses a request whose signature or context does not check out; see [delegated requests](docs/delegated-requests.md).
 - Use a model newer than the built-in catalog with Settings → Models → Other model id, and get a weekly pull request that updates the catalog; see [models newer than the catalog](docs/self-host.md#models-newer-than-the-catalog).
 - Bot webhook callers can wait for the run's outcome (`?wait=<seconds>`), so a failed run returns an error instead of `200`, and can read a run's status later with the same bearer.
 - Optional read-only inbound MCP at `POST /mcp` for local Claude Cowork (`RAKAZO_INBOUND_MCP_TOKEN`).

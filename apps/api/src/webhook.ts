@@ -1,8 +1,14 @@
 import { setTimeout as delay } from "node:timers/promises";
 import { SecretStoreUnavailableError } from "@rakazo/adapter-kit";
-import { hasValidBearerToken, runFailureError } from "@rakazo/core";
+import { hasValidBearerToken, isDelegatedRun, runFailureError } from "@rakazo/core";
 import type { PrismaClient } from "@rakazo/db";
+import { getLogger } from "@rakazo/logging";
 import type { Hono } from "hono";
+import {
+  DELEGATION_SIGNATURE_HEADER,
+  DELEGATION_TIMESTAMP_HEADER,
+  readDelegatedDelivery,
+} from "./delegated-request.js";
 import { mountGithubWebhookRoute } from "./github-webhook.js";
 import { readBoundedBody } from "./http-body.js";
 import {
@@ -48,15 +54,24 @@ export function webhookWaitSeconds(value: string | undefined): number | null | u
   return Math.min(Number(value), WEBHOOK_MAX_WAIT_SECONDS);
 }
 
-type WebhookRunOutcome = { runId: string | null; status: string; error: string | null };
+type WebhookRunOutcome = {
+  runId: string | null;
+  /** Only for a delegated request's run, whose task is the request. */
+  taskId?: string;
+  status: string;
+  error: string | null;
+};
 
 function webhookRunOutcome(run: {
   id: string;
+  taskId: string;
   status: string;
   error: string | null;
+  delegation: unknown;
 }): WebhookRunOutcome {
   return {
     runId: run.id,
+    ...(isDelegatedRun(run) ? { taskId: run.taskId } : {}),
     status: run.status,
     error:
       run.status === "failed"
@@ -106,7 +121,7 @@ async function waitForWebhookDelivery(
     const run = runId
       ? await prisma.run.findFirst({
           where: { id: runId, botId },
-          select: { id: true, status: true, error: true },
+          select: { id: true, taskId: true, status: true, error: true, delegation: true },
         })
       : null;
     const outcome = run ? webhookRunOutcome(run) : { runId, status: "queued", error: null };
@@ -153,6 +168,29 @@ export function mountWebhookHttpRoutes(app: Hono, deps: WebhookDeps) {
     }
 
     const payload = parseWebhookPayload(raw, c.req.header("content-type"));
+    const delegated = readDelegatedDelivery({
+      publicKey: deps.delegationPublicKey,
+      botId: target.bot.id,
+      rawBody: raw,
+      payload,
+      signature: c.req.header(DELEGATION_SIGNATURE_HEADER),
+      timestamp: c.req.header(DELEGATION_TIMESTAMP_HEADER),
+      idempotencyKeys: [
+        c.req.header("idempotency-key")?.trim(),
+        c.req.header("x-idempotency-key")?.trim(),
+      ],
+      now: new Date(),
+    });
+    // A delivery that claims a delegation and fails to prove it is refused outright, never
+    // delivered as an ordinary event.
+    if (delegated.kind === "refused") {
+      getLogger().warn("delegated webhook delivery refused", {
+        "bot.id": target.bot.id,
+        reason: delegated.error,
+      });
+      return c.json({ error: delegated.error }, delegated.status);
+    }
+    const delegation = delegated.kind === "verified" ? delegated.delegation : undefined;
     const eventPrompt = formatWebhookPrompt(payload);
 
     const webhookRoutines = await deps.prisma.routine.findMany({
@@ -187,6 +225,7 @@ export function mountWebhookHttpRoutes(app: Hono, deps: WebhookDeps) {
       source: "webhook",
       idempotencyKey,
       routineId: webhookRoutines.length === 1 ? webhookRoutines[0]!.id : undefined,
+      ...(delegation ? { delegation } : {}),
     });
     // Without a wait the 200 only means the delivery was accepted and its run queued.
     if (wait === undefined) return c.json(delivered);
@@ -223,7 +262,7 @@ export function mountWebhookHttpRoutes(app: Hono, deps: WebhookDeps) {
     const run = runId
       ? await deps.prisma.run.findFirst({
           where: { id: runId, botId: target.bot.id, spaceId: target.bot.spaceId },
-          select: { id: true, status: true, error: true },
+          select: { id: true, taskId: true, status: true, error: true, delegation: true },
         })
       : null;
     if (!run) return c.json({ error: "Not found" }, 404);
