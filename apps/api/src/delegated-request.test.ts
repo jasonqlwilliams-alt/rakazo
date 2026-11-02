@@ -90,6 +90,14 @@ describe("readDelegatedDelivery", () => {
     expect(read(JSON.stringify({ event: "ci.failed" }), {})).toEqual({ kind: "none" });
   });
 
+  it.each([
+    { event: "delegation.message", message: "hello" },
+    { event: "other", delegation_context: null, message: "hello" },
+    { event: "other", delegation: null, message: "hello" },
+  ])("refuses an unsigned delivery carrying a delegated marker", (payload) => {
+    expect(read(JSON.stringify(payload), {})).toMatchObject({ kind: "refused", status: 401 });
+  });
+
   it("verifies a signed delegation and keeps the request, its scopes and its attribution", () => {
     const body = JSON.stringify(envelope({ parent_request_id: "req_parent" }));
     expect(read(body, { ...signed(body), idempotencyKey: REQUEST_ID })).toEqual({

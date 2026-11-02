@@ -80,7 +80,9 @@ export function readDelegatedDelivery(input: {
   const claimed =
     input.signature !== undefined ||
     input.timestamp !== undefined ||
-    Object.hasOwn(input.payload, "delegation");
+    input.payload.event === "delegation.message" ||
+    Object.hasOwn(input.payload, "delegation") ||
+    Object.hasOwn(input.payload, "delegation_context");
   if (!claimed) return { kind: "none" };
   if (!input.publicKey) {
     return { kind: "refused", status: 403, error: "Delegated requests are not enabled" };

@@ -24,7 +24,8 @@ newline, the bot id from the webhook path, a newline, and the exact body sent. R
 signature with the gateway's public key, refuses a timestamp more than five minutes from its
 clock, and requires the body `id` to equal the `idempotency-key` header and `taskId`.
 
-A delivery claims a delegation when it has a top-level `delegation` field or either header.
+A delivery claims a delegation when its event is `delegation.message`, it has a top-level
+`delegation` or `delegation_context` field, or it carries either header.
 Such a delivery is never treated as an ordinary webhook event. If it fails a check, Rakazo stores
 nothing and starts no run:
 
@@ -43,22 +44,30 @@ nothing and starts no run:
 
 ## What a delegated run may do
 
-A scope is `<namespace>.<capability>`. Only `read` and `message` grant anything.
+A scope must be `<delegate>.read` or `<delegate>.message`, where `<delegate>` exactly matches
+the signed context's `delegate` value. Other scope prefixes grant nothing.
 
 | Capability | Granted by | Tools |
 | --- | --- | --- |
 | Reply | Always | `message_user`, `ask_user`, and the run's own answer |
-| Read | A `.read` scope | History, memory recall, scratchpad and board reads, skill and schedule lists, task catalog, job status, `run_subagent`, and read-only connector tools |
-| Relay | A `.message` scope | `message_bot` only |
-| Work | `may_start_work: true` | Scratchpad, board and memory writes, research, and connector writes. Each one waits for the owner's approval. |
+| Read | The delegate's `.read` scope | History, memory recall, scratchpad and board reads, skill and schedule lists, task catalog, job status, `run_subagent`, and read-only connector tools |
+| Relay | The delegate's `.message` scope | `message_bot` only |
+| Work | `may_start_work: true` | Scratchpad and memory writes, plus research cancellation. Each one waits for the owner's approval. |
 
 Administration is refused whatever the delegation grants: bot, space, and integration changes,
-credentials, skills, schedules, outside agents, and the shell. Every other tool, including any
-tool added later, is refused until it is listed in `DELEGATED_TOOL_CAPABILITY`.
+credentials, skills, schedules, outside agents, and the shell. Generic connector writes are
+refused even when `may_start_work` is true. Work that can start another run later (`research_start`,
+`ticket_create`, `ticket_update`, and `ticket_comment`) is also refused until delegation can
+persist through those jobs. Every other tool, including any tool added later, is refused until it
+is listed in `DELEGATED_TOOL_CAPABILITY`.
 
 A delegated run is offered only the tools it may use. Any other call is refused with the reason
 before it runs, and the bot's own grants (routine allowlists, always-allow rules) never add to
 what the delegation allows.
+Without the delegate's `.read` scope, prompt assembly excludes the bot's saved persona, durable
+and recalled memory, scratchpad and ticket context, and earlier thread history. Only the delivered
+request is supplied as task context. A webhook routine's unattended tool list never preapproves
+delegated writes.
 
 ## Every hop
 

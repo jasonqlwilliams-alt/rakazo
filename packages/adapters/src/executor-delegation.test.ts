@@ -52,6 +52,7 @@ function fixture({
   } | null,
   /** Offer the connector tools behind a lazy catalog; `unresolved` leaves its calls unresolved. */
   catalog = undefined as "resolved" | "unresolved" | undefined,
+  priorState = false,
 } = {}) {
   const run = {
     id: "run-1",
@@ -82,6 +83,7 @@ function fixture({
         name: "Analyst",
         title: "Analyst",
         description: "Test analyst",
+        instructions: "Private bot persona",
         disabledBuiltinTools: [],
         computerId: "computer-1",
         computer: { id: "computer-1", scope: "dedicated", homeKey: "home-1" },
@@ -94,9 +96,33 @@ function fixture({
       update: vi.fn(),
       updateMany: vi.fn(async () => ({ count: 1 })),
     },
-    thread: { findUniqueOrThrow: vi.fn(async () => ({ id: run.threadId, groupId: null })) },
-    message: { findMany: vi.fn(async () => []), findUnique: vi.fn(async () => null) },
-    task: { findUniqueOrThrow: vi.fn(async () => ({ id: run.taskId, prompt: "Look it up" })) },
+    thread: {
+      findUniqueOrThrow: vi.fn(async () => ({
+        id: run.threadId,
+        groupId: null,
+        historyCompactionSummary: priorState ? "Private summary" : null,
+        historyCompactedUpToSeq: priorState ? 0 : null,
+      })),
+    },
+    message: {
+      findMany: vi.fn(async () =>
+        priorState
+          ? [{
+              id: "prior-message",
+              threadId: run.threadId,
+              seq: 1,
+              role: "user",
+              botId: null,
+              runId: "prior-run",
+              blocks: [{ kind: "text", text: "Private thread history" }],
+              createdAt: new Date("2026-11-01T11:00:00.000Z"),
+              replyTo: null,
+            }]
+          : [],
+      ),
+      findUnique: vi.fn(async () => null),
+    },
+    task: { findUniqueOrThrow: vi.fn(async () => ({ id: run.taskId, prompt: "Check RKZ-1" })) },
     connection: { findMany: vi.fn(async () => []) },
     spaceModelPreference: { findFirst: vi.fn(async () => null) },
     userModelCredential: { findFirst: vi.fn(async () => null) },
@@ -113,6 +139,7 @@ function fixture({
     routine: { findFirst: vi.fn(async () => webhookRoutine) },
     computer: { updateMany: vi.fn(async () => ({ count: 1 })) },
     scratchpadItem: { findMany: vi.fn(async () => []) },
+    board: { findUnique: vi.fn(async () => null) },
     actionApprovalRule: { findMany: vi.fn(async () => rules) },
     actionAutoReviewPreference: { findUnique: vi.fn(async () => ({ enabled: false })) },
     externalEffect: {
@@ -128,13 +155,20 @@ function fixture({
     },
   };
   const results: unknown[] = [];
-  const offered: { tools: string[]; instructions: string } = { tools: [], instructions: "" };
+  const offered: { tools: string[]; instructions: string; prompt: string; history: AgentRunRequest["history"] } = {
+    tools: [],
+    instructions: "",
+    prompt: "",
+    history: [],
+  };
   const execute = vi.fn(async function* (call: ConnectorCall) {
     yield { type: "result" as const, data: { item: call.args.id ?? null } };
   });
   const runtimeRun = vi.fn(async function* (request: AgentRunRequest) {
     offered.tools = request.tools.map((tool) => tool.name);
     offered.instructions = request.instructions;
+    offered.prompt = request.prompt;
+    offered.history = request.history;
     for (const [index, call] of calls.entries()) {
       const result = await request.executeTool!(call.name, call.args, `call-${index + 1}`);
       results.push(result);
@@ -147,6 +181,8 @@ function fixture({
     return true;
   });
   const finalizeRun = vi.fn(async () => ({ continuationRunId: null }));
+  const memoryRead = vi.fn(async () => ({ documents: [] }));
+  const recall = vi.fn(async () => ({ ok: true, value: [{ memory: "Private recall" }] }));
   const tools = [connectorTool("demo_get_item", true), connectorTool("demo_create_item", false)];
   const executor = createRunExecutor({
     prisma,
@@ -175,11 +211,15 @@ function fixture({
       exportWorkspace: async function* () {},
     },
     home: { commit: vi.fn(async () => "rev-1") },
-    memory: { read: async () => ({ documents: [] }), commit: vi.fn() },
-    memoryProviders: { resolve: async () => null },
+    memory: { read: memoryRead, commit: vi.fn() },
+    memoryProviders: {
+      resolve: async () =>
+        priorState ? { provider: { recall }, defaultScope: "isolated" } : null,
+    },
     events: { append: vi.fn(async () => undefined), pauseRunForInput, finalizeRun },
     jobs: { enqueue: vi.fn(async () => undefined) },
     secrets: [],
+    ticketBoardEnabled: priorState,
   } as unknown as Parameters<typeof createRunExecutor>[0]);
   return {
     prisma,
@@ -188,6 +228,8 @@ function fixture({
     offered,
     execute,
     runtimeRun,
+    memoryRead,
+    recall,
     pauseRunForInput,
     finalizeRun,
     run: () => executor.continueRun(run.id, "worker-1"),
@@ -229,6 +271,34 @@ describe("delegated runs", () => {
     expect(f.execute).toHaveBeenCalledOnce();
   });
 
+  it("keeps owner context out of a delegated run without read access", async () => {
+    const noRead = fixture({
+      delegation: { ...DELEGATION, scopes: ["assistant.message"] },
+      priorState: true,
+      trigger: "webhook",
+    });
+    await noRead.run();
+    expect(noRead.offered.prompt).toContain("Check RKZ-1");
+    expect(noRead.offered.history).toEqual([]);
+    expect(noRead.offered.instructions).not.toContain("Private summary");
+    expect(noRead.offered.instructions).not.toContain("Private recall");
+    expect(noRead.offered.instructions).not.toContain("Private bot persona");
+    expect(noRead.memoryRead).not.toHaveBeenCalled();
+    expect(noRead.recall).not.toHaveBeenCalled();
+    expect(noRead.prisma.scratchpadItem.findMany).not.toHaveBeenCalled();
+    expect(noRead.prisma.board.findUnique).not.toHaveBeenCalled();
+
+    const canRead = fixture({ priorState: true, trigger: "webhook" });
+    await canRead.run();
+    expect(JSON.stringify(canRead.offered.history)).toContain("Private thread history");
+    expect(JSON.stringify(canRead.offered.history)).toContain("Private recall");
+    expect(canRead.memoryRead).toHaveBeenCalled();
+    expect(canRead.offered.instructions).toContain("Private bot persona");
+    expect(canRead.recall).toHaveBeenCalled();
+    expect(canRead.prisma.scratchpadItem.findMany).toHaveBeenCalled();
+    expect(canRead.prisma.board.findUnique).toHaveBeenCalled();
+  });
+
   it("refuse administration before it runs, whatever the delegation grants", async () => {
     const f = fixture({
       delegation: { ...DELEGATION, mayStartWork: true },
@@ -255,7 +325,7 @@ describe("delegated runs", () => {
     });
     await f.run();
     expect(f.results).toEqual([
-      { error: expect.stringContaining("may not start work") },
+      { error: expect.stringContaining("not available to delegated requests") },
       { error: expect.stringContaining("needs message access") },
       { error: expect.stringContaining("not available to delegated requests") },
     ]);
@@ -283,16 +353,22 @@ describe("delegated runs", () => {
     await f.run();
     expect(f.results).toEqual([
       { error: expect.stringContaining("is administration") },
-      { error: expect.stringContaining("may not start work") },
+      { error: expect.stringContaining("not available to delegated requests") },
     ]);
     expect(f.execute).not.toHaveBeenCalled();
   });
 
   it("park work the delegation may start for the owner, even where the owner allowed it", async () => {
     const f = fixture({
+      trigger: "webhook",
       delegation: { ...DELEGATION, mayStartWork: true },
-      rules: [{ effect: "always_allow", matchKind: "tool", matchValue: "demo_create_item" }],
-      calls: [{ name: "demo_create_item", args: { id: "item-1" } }],
+      webhookRoutine: {
+        active: true,
+        webhookEnabled: true,
+        unattendedTools: ["scratchpad_add"],
+      },
+      rules: [{ effect: "always_allow", matchKind: "tool", matchValue: "scratchpad_add" }],
+      calls: [{ name: "scratchpad_add", args: { title: "Review result" } }],
     });
     await f.run();
     expect(isApprovalPausedResult(f.results[0])).toBe(true);
@@ -311,7 +387,9 @@ describe("delegated runs", () => {
     });
     await resolved.run();
     expect(resolved.results[0]).not.toHaveProperty("error");
-    expect(resolved.results[1]).toEqual({ error: expect.stringContaining("may not start work") });
+    expect(resolved.results[1]).toEqual({
+      error: expect.stringContaining("not available to delegated requests"),
+    });
     expect(resolved.execute).toHaveBeenCalledOnce();
 
     const unresolved = fixture({ catalog: "unresolved", calls: [catalogCall("demo_get_item")] });

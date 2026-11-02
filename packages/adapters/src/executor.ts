@@ -71,6 +71,7 @@ import {
   containsSecret,
   createStreamingRedactor,
   delegatedToolDecision,
+  delegatedCapabilities,
   delegationInstruction,
   endsSentence,
   expandSkillReferencesInPrompt,
@@ -3605,6 +3606,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
         // it with the owner's authority.
         const storedDelegation = readRunDelegation(run.delegation);
         const delegation = storedDelegation.ok ? storedDelegation.delegation : null;
+        const delegationMayRead = !delegation || delegatedCapabilities(delegation).has("read");
         const sourceBlocks =
           run.trigger === "messaging" && run.sourceMessageId
             ? ((
@@ -3773,7 +3775,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
         const threadContext = threadContextForRun(
           run.trigger,
           {
-            messages: [...messages].reverse().map((m) => ({
+            messages: [...(delegationMayRead ? messages : [])].reverse().map((m) => ({
               id: m.id,
               createdAt: m.createdAt?.toISOString(),
               seq: m.seq,
@@ -3783,8 +3785,8 @@ export function createRunExecutor(deps: ExecutorDeps) {
                 | "system",
               content: messageToAgentHistoryText(m),
             })),
-            summary: thread.historyCompactionSummary,
-            historyCompactedUpToSeq: thread.historyCompactedUpToSeq,
+            summary: delegationMayRead ? thread.historyCompactionSummary : null,
+            historyCompactedUpToSeq: delegationMayRead ? thread.historyCompactedUpToSeq : null,
           },
           messagingChannelRun,
         );
@@ -3829,6 +3831,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
             : DELEGATED_EMPTY_NOTICE
           : undefined;
         const recallPromise =
+          delegationMayRead &&
           threadContext.includeSemanticRecall &&
           semanticMemory &&
           memoryScope &&
@@ -3854,16 +3857,16 @@ export function createRunExecutor(deps: ExecutorDeps) {
         ] = await Promise.all([
           discoveredPromise,
           loadCurrentTurnImages(deps, turnBlocks, context),
-          messagingChannelRun
+          messagingChannelRun || !delegationMayRead
             ? Promise.resolve("")
             : loadAgentMemoryContext(deps.memory, bot.id, context),
-          messagingChannelRun
+          messagingChannelRun || !delegationMayRead
             ? Promise.resolve("")
             : loadAgentScratchpadContext(deps, {
                 spaceId: run.spaceId,
                 botId: bot.id,
               }),
-          messagingChannelRun || !deps.ticketBoardEnabled
+          messagingChannelRun || !delegationMayRead || !deps.ticketBoardEnabled
             ? Promise.resolve(undefined)
             : loadAgentTicketContext(deps, {
                 spaceId: run.spaceId,
@@ -4041,7 +4044,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
           resolved.acceptsImages,
         );
         const acceptsImages = deps.runtime.describe().capabilities.scripted || modelSeesImages;
-        const groupContext = thread.groupId
+        const groupContext = delegationMayRead && thread.groupId
           ? await loadGroupContext(deps.prisma, thread.groupId, {
               id: bot.id,
               name: bot.name,
@@ -4581,7 +4584,6 @@ export function createRunExecutor(deps: ExecutorDeps) {
             ? (resolvedTool ?? connectorTools.get(name))?.readOnly
             : undefined;
           const requiresUnattendedApproval = unattendedTriggerToolRequiresApproval(
-            // Work a delegated request starts needs the owner, as on an unattended webhook run.
             delegatedCapability === "work" ? "webhook" : run.trigger,
             name,
             viaConnector,
@@ -4592,7 +4594,9 @@ export function createRunExecutor(deps: ExecutorDeps) {
             requiresUnattendedApproval ||
             toolRequiresApproval(name, viaConnector, declaredReadOnly);
           const requiresMandatoryApproval =
-            requiresUnattendedApproval || toolRequiresExplicitApproval(name);
+            delegatedCapability === "work" ||
+            requiresUnattendedApproval ||
+            toolRequiresExplicitApproval(name);
           const connectorKind = connectorKindFromToolName(
             name,
             connectedPlugins.map((plugin) => plugin.provider),
@@ -6708,7 +6712,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
             : "No plugins are connected yet.";
         const taughtSkillIndex = savedSkills.slice(0, 20);
         const taughtSkillsLine =
-          taughtSkillIndex.length > 0
+          delegationMayRead && taughtSkillIndex.length > 0
             ? `Saved taught skills:\n${taughtSkillIndex
                 .map((skill) => {
                   const playbook = parsePlaybook(skill.playbook);
@@ -6719,18 +6723,24 @@ export function createRunExecutor(deps: ExecutorDeps) {
                   "\n",
                 )}\nWhen the user asks to run a taught skill by name, follow that skill's playbook exactly. The full playbook is included in the user task when they invoke it.`
             : undefined;
-        const agentSkillsLine = formatSkillsCatalogInstruction(agentSkills);
+        const agentSkillsLine = delegationMayRead
+          ? formatSkillsCatalogInstruction(agentSkills)
+          : undefined;
         const missingImagesInstruction = missingTurnImagesInstruction(
           turnBlocks,
           currentTurnImages,
         );
-        const taskPrompt = expandSkillReferencesInPrompt(
-          [task.prompt, attachedFilesPrompt, missingImagesInstruction].filter(Boolean).join("\n\n"),
-          agentSkills,
-        );
-        const invokedSkill = savedSkills.find((skill) =>
-          promptInvokesSkill(taskPrompt, skill.name || skill.goal),
-        );
+        const taskPrompt = delegationMayRead
+          ? expandSkillReferencesInPrompt(
+              [task.prompt, attachedFilesPrompt, missingImagesInstruction]
+                .filter(Boolean)
+                .join("\n\n"),
+              agentSkills,
+            )
+          : [task.prompt, attachedFilesPrompt, missingImagesInstruction].filter(Boolean).join("\n\n");
+        const invokedSkill = delegationMayRead
+          ? savedSkills.find((skill) => promptInvokesSkill(taskPrompt, skill.name || skill.goal))
+          : undefined;
         const basePrompt = invokedSkill
           ? `${formatSkillRunPrompt(
               invokedSkill.name || invokedSkill.goal.slice(0, 80),
@@ -6742,7 +6752,9 @@ export function createRunExecutor(deps: ExecutorDeps) {
           (request) => redactSecrets(JSON.stringify(request), runSecrets),
           { exposedToolNames: new Set(tools.map((tool) => tool.name)) },
         );
-        const replyContext = await loadReplyContext(deps.prisma, thread.id, run.sourceMessageId);
+        const replyContext = delegationMayRead
+          ? await loadReplyContext(deps.prisma, thread.id, run.sourceMessageId)
+          : undefined;
         const prompt = [
           replyContext,
           basePrompt,
@@ -6756,7 +6768,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
           .filter(Boolean)
           .join("\n\n");
         const historicalContext: AgentRunRequest["history"] = [];
-        if (compactedHistory.usedLocalSummary && compactedHistory.summary) {
+        if (delegationMayRead && compactedHistory.usedLocalSummary && compactedHistory.summary) {
           historicalContext.push({
             role: "user",
             content: redactSecrets(
@@ -6765,7 +6777,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
             ),
           });
         }
-        if (recalledMemory) {
+        if (delegationMayRead && recalledMemory) {
           historicalContext.push({
             role: "user",
             content: redactSecrets(recalledMemory, runSecrets),
@@ -6777,7 +6789,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
             : Math.max(0, resolved.maxImagesPerPrompt - (currentTurnImages?.length ?? 0));
         // A text-only model keeps the [image:] marker. Putting image parts in
         // history makes the provider reject a follow-up that used to be text.
-        const historyWithImages = modelSeesImages
+        const historyWithImages = delegationMayRead && modelSeesImages
           ? await withRecentTurnImages(deps, history, historyMessages, context, {
               skipMessageId: currentTurnMessage?.id,
               maxImages: modelImageBudget,
@@ -6785,7 +6797,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
           : history;
         const runtimeHistory = [...historicalContext, ...historyWithImages];
         // Without a roster a bot only knows the bots it spawned itself.
-        const botDirectory = thread.groupId
+        const botDirectory = !delegationMayRead || thread.groupId
           ? undefined
           : renderBotDirectory(
               (
@@ -6888,7 +6900,9 @@ export function createRunExecutor(deps: ExecutorDeps) {
               prompt,
               contextStrategy,
               instructions: userTurnInstructions({
-                botInstructions: runIdentityInstruction(bot, run.trigger),
+                botInstructions: delegationMayRead
+                  ? runIdentityInstruction(bot, run.trigger)
+                  : "Answer this delegated request within its granted limits.",
                 groupContext,
                 messagingContext,
                 redactedMemoryContext: memoryContext
@@ -6905,11 +6919,11 @@ export function createRunExecutor(deps: ExecutorDeps) {
                 computerInstruction,
                 pageBrowserAllowed,
                 taskCatalogInstruction,
-                workspaceInstruction,
+                workspaceInstruction: delegationMayRead ? workspaceInstruction : "",
                 // Credentials serve shell commands, which a delegated request cannot run.
                 agentEnvironmentInstruction: delegation ? undefined : agentEnvironmentInstruction,
                 botDirectory,
-                pluginLine,
+                pluginLine: delegationMayRead ? pluginLine : undefined,
                 agentSkillsLine,
                 taughtSkillsLine,
                 replyGuidance:

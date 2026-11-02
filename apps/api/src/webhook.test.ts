@@ -1224,6 +1224,17 @@ describe("delegated webhook deliveries", () => {
     expect(deps.sendUserMessage).not.toHaveBeenCalled();
   });
 
+  it.each([
+    { event: "delegation.message", id: requestId, message: "hi" },
+    { event: "other", id: requestId, delegation_context: null, message: "hi" },
+  ])("refuses an unsigned delegated marker without storing a run", async (payload) => {
+    const deps = createDeps({ delegationPublicKey: publicKey });
+    const res = await deliver(deps, JSON.stringify(payload), {});
+    expect(res.status).toBe(401);
+    expect(deps.sendUserMessage).not.toHaveBeenCalled();
+    expect(deps.enqueue).not.toHaveBeenCalled();
+  });
+
   it("refuses a malformed delegation context even when it is signed", async () => {
     const deps = createDeps({ delegationPublicKey: publicKey });
     const raw = body.replace('"human_approval":"none"', '"human_approval":"owner"');

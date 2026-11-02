@@ -67,11 +67,7 @@ describe("delegatedToolDecision", () => {
   it("refuses starting work unless the delegation may start work", () => {
     for (const tool of [
       { name: "scratchpad_add" },
-      { name: "ticket_create" },
       { name: "remember" },
-      { name: "github_create_issue", connector: { readOnly: true } },
-      { name: "github_list_issues", connector: { readOnly: false } },
-      { name: "vendor_frobnicate", connector: {} },
     ]) {
       expect(delegatedToolDecision(delegation(), tool)).toMatchObject({
         allowed: false,
@@ -80,6 +76,30 @@ describe("delegatedToolDecision", () => {
       expect(delegatedToolDecision(delegation({ mayStartWork: true }), tool)).toEqual({
         allowed: true,
         capability: "work",
+      });
+    }
+  });
+
+  it("refuses run-starting work even when delegated work is granted", () => {
+    const granted = delegation({ mayStartWork: true });
+    for (const name of ["research_start", "ticket_create", "ticket_update", "ticket_comment"]) {
+      expect(delegatedToolDecision(granted, { name })).toMatchObject({
+        allowed: false,
+        code: "outside_scope",
+      });
+    }
+  });
+
+  it("refuses every generic connector write even when delegated work is granted", () => {
+    const granted = delegation({ mayStartWork: true });
+    for (const tool of [
+      { name: "github_create_issue", connector: { readOnly: true } },
+      { name: "github_list_issues", connector: { readOnly: false } },
+      { name: "vendor_frobnicate", connector: {} },
+    ]) {
+      expect(delegatedToolDecision(granted, tool)).toMatchObject({
+        allowed: false,
+        code: "outside_scope",
       });
     }
   });
@@ -135,14 +155,19 @@ describe("delegatedToolDecision", () => {
 });
 
 describe("delegatedCapabilities", () => {
-  it("grants only exact namespaced read and message scopes", () => {
+  it("grants only the signed delegate's own read and message scopes", () => {
     expect([
       ...delegatedCapabilities(
         delegation({
           scopes: ["read", "assistant.admin", "assistant.read.all", "ASSISTANT.MESSAGE", "x.read"],
         }),
       ),
-    ]).toEqual(["reply", "read"]);
+    ]).toEqual(["reply"]);
+    expect(delegatedToolDecision(delegation({ scopes: ["x.message"] }), { name: "message_bot" }))
+      .toMatchObject({ allowed: false, code: "outside_scope" });
+    expect([
+      ...delegatedCapabilities(delegation({ scopes: ["assistant.read", "assistant.message"] })),
+    ]).toEqual(["reply", "read", "message"]);
   });
 });
 

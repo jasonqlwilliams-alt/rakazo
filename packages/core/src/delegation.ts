@@ -61,20 +61,13 @@ export const DELEGATED_TOOL_CAPABILITY: Readonly<Record<string, DelegatedCapabil
   scratchpad_update: "work",
   scratchpad_complete: "work",
   scratchpad_remove: "work",
-  ticket_create: "work",
-  ticket_update: "work",
-  ticket_comment: "work",
   remember: "work",
   save_memory: "work",
   replace_memory_document: "work",
   save_shared_memory: "work",
   forget_memory: "work",
-  research_start: "work",
   research_cancel: "work",
 };
-
-/** A granted scope is `<namespace>.<capability>`; only these capabilities grant anything. */
-const SCOPE_PATTERN = /^[a-z][a-z0-9-]*\.(read|message)$/;
 
 export type DelegatedTool = {
   name: string;
@@ -94,10 +87,8 @@ export type DelegatedToolDecision =
 /** Capabilities the delegation grants, beyond replying in its own thread. */
 export function delegatedCapabilities(delegation: RunDelegation): Set<DelegatedCapability> {
   const granted = new Set<DelegatedCapability>(["reply"]);
-  for (const scope of delegation.scopes) {
-    const capability = SCOPE_PATTERN.exec(scope)?.[1];
-    if (capability === "read" || capability === "message") granted.add(capability);
-  }
+  if (delegation.scopes.includes(`${delegation.delegate}.read`)) granted.add("read");
+  if (delegation.scopes.includes(`${delegation.delegate}.message`)) granted.add("message");
   if (delegation.mayStartWork) granted.add("work");
   return granted;
 }
@@ -105,9 +96,7 @@ export function delegatedCapabilities(delegation: RunDelegation): Set<DelegatedC
 function toolCapability(tool: DelegatedTool): DelegatedCapability | null {
   if (!tool.connector) return DELEGATED_TOOL_CAPABILITY[tool.name] ?? null;
   if (tool.connector.catalog) return "read";
-  // The same conservative test that decides unattended webhook approval: a declared write,
-  // a mutating verb or an unrecognised name is work, never a read.
-  return connectorToolRequiresApproval(tool.name, tool.connector.readOnly) ? "work" : "read";
+  return connectorToolRequiresApproval(tool.name, tool.connector.readOnly) ? null : "read";
 }
 
 const MISSING_CAPABILITY: Record<Exclude<DelegatedCapability, "reply">, string> = {
@@ -165,7 +154,7 @@ export function parseRunDelegation(value: unknown): RunDelegation | null {
 export function delegationInstruction(delegation: RunDelegation): string {
   const granted = delegatedCapabilities(delegation);
   const limits = [
-    granted.has("read") ? "read this bot's own state" : "not read beyond this conversation",
+    granted.has("read") ? "read this bot's own state" : "not read stored state",
     granted.has("message")
       ? "relay with message_bot, which passes these limits on"
       : "not relay to other bots",
