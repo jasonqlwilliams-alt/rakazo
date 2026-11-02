@@ -293,6 +293,65 @@ describe("inbound MCP read-only scope", () => {
     expect(JSON.stringify(payload)).not.toContain("Need a key");
   });
 
+  it("names each message's run and the run a webhook delivery started", async () => {
+    const prisma = ownerPrisma({
+      thread: { id: "thread-bot" },
+      messages: [
+        {
+          id: "msg-3",
+          threadId: "thread-bot",
+          seq: 3,
+          role: "bot",
+          blocks: [{ kind: "text", text: "Another run's answer" }],
+          runId: "run-other",
+          createdAt: new Date("2026-09-19T00:00:03.000Z"),
+        },
+        {
+          id: "msg-2",
+          threadId: "thread-bot",
+          seq: 2,
+          role: "bot",
+          blocks: [{ kind: "text", text: "The build is green" }],
+          runId: "run-delivered",
+          createdAt: new Date("2026-09-19T00:00:02.000Z"),
+        },
+        {
+          id: "msg-1",
+          threadId: "thread-bot",
+          seq: 1,
+          role: "user",
+          blocks: [{ kind: "text", text: "[Inbound Event: request]" }],
+          runId: null,
+          createdAt: new Date("2026-09-19T00:00:01.000Z"),
+        },
+      ],
+    });
+    prisma.run.findMany.mockImplementation((async (args: { where: Record<string, unknown> }) =>
+      args.where.sourceMessageId
+        ? [{ id: "run-delivered", sourceMessageId: "msg-1" }]
+        : []) as never);
+    const { app } = mount(prisma);
+    const page = await rpc(app, "tools/call", {
+      name: "read_thread",
+      arguments: { threadId: "thread-bot" },
+    });
+    const payload = JSON.parse(toolText((await page.json()) as never)) as {
+      messages: Array<{ id: string; runId: string | null; startedRunId: string | null }>;
+    };
+    expect(
+      payload.messages.map(({ id, runId, startedRunId }) => ({ id, runId, startedRunId })),
+    ).toEqual([
+      { id: "msg-1", runId: null, startedRunId: "run-delivered" },
+      { id: "msg-2", runId: "run-delivered", startedRunId: null },
+      { id: "msg-3", runId: "run-other", startedRunId: null },
+    ]);
+    expect(prisma.run.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { sourceMessageId: { in: ["msg-1", "msg-2", "msg-3"] }, trigger: "webhook" },
+      }),
+    );
+  });
+
   it("returns health without opening bots or threads", async () => {
     const { app, findUnique } = mount(ownerPrisma());
     const response = await rpc(app, "tools/call", { name: "health", arguments: {} });
