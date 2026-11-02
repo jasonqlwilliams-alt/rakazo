@@ -70,8 +70,8 @@ import {
   connectorKindFromToolName,
   containsSecret,
   createStreamingRedactor,
-  delegatedToolDecision,
   delegatedCapabilities,
+  delegatedToolDecision,
   delegationInstruction,
   endsSentence,
   expandSkillReferencesInPrompt,
@@ -4044,12 +4044,13 @@ export function createRunExecutor(deps: ExecutorDeps) {
           resolved.acceptsImages,
         );
         const acceptsImages = deps.runtime.describe().capabilities.scripted || modelSeesImages;
-        const groupContext = delegationMayRead && thread.groupId
-          ? await loadGroupContext(deps.prisma, thread.groupId, {
-              id: bot.id,
-              name: bot.name,
-            })
-          : undefined;
+        const groupContext =
+          delegationMayRead && thread.groupId
+            ? await loadGroupContext(deps.prisma, thread.groupId, {
+                id: bot.id,
+                name: bot.name,
+              })
+            : undefined;
         const hasMessagingIdentity = deps.messaging
           ? await deps.messaging.hasIdentity(bot.id)
           : false;
@@ -6737,7 +6738,9 @@ export function createRunExecutor(deps: ExecutorDeps) {
                 .join("\n\n"),
               agentSkills,
             )
-          : [task.prompt, attachedFilesPrompt, missingImagesInstruction].filter(Boolean).join("\n\n");
+          : [task.prompt, attachedFilesPrompt, missingImagesInstruction]
+              .filter(Boolean)
+              .join("\n\n");
         const invokedSkill = delegationMayRead
           ? savedSkills.find((skill) => promptInvokesSkill(taskPrompt, skill.name || skill.goal))
           : undefined;
@@ -6789,42 +6792,44 @@ export function createRunExecutor(deps: ExecutorDeps) {
             : Math.max(0, resolved.maxImagesPerPrompt - (currentTurnImages?.length ?? 0));
         // A text-only model keeps the [image:] marker. Putting image parts in
         // history makes the provider reject a follow-up that used to be text.
-        const historyWithImages = delegationMayRead && modelSeesImages
-          ? await withRecentTurnImages(deps, history, historyMessages, context, {
-              skipMessageId: currentTurnMessage?.id,
-              maxImages: modelImageBudget,
-            })
-          : history;
+        const historyWithImages =
+          delegationMayRead && modelSeesImages
+            ? await withRecentTurnImages(deps, history, historyMessages, context, {
+                skipMessageId: currentTurnMessage?.id,
+                maxImages: modelImageBudget,
+              })
+            : history;
         const runtimeHistory = [...historicalContext, ...historyWithImages];
         // Without a roster a bot only knows the bots it spawned itself.
-        const botDirectory = !delegationMayRead || thread.groupId
-          ? undefined
-          : renderBotDirectory(
-              (
-                await deps.prisma.bot.findMany({
-                  where: {
-                    spaceId: run.spaceId,
-                    userId: run.userId,
-                    archivedAt: null,
-                    id: { not: bot.id },
-                    thread: { isNot: null },
-                  },
-                  select: {
-                    id: true,
-                    name: true,
-                    title: true,
-                    description: true,
-                  },
-                  orderBy: { createdAt: "asc" },
-                  take: BOT_DIRECTORY_LIMIT,
-                })
-              ).map((peer) => ({
-                id: peer.id,
-                name: peer.name,
-                title: peer.title,
-                description: peer.description,
-              })),
-            );
+        const botDirectory =
+          !delegationMayRead || thread.groupId
+            ? undefined
+            : renderBotDirectory(
+                (
+                  await deps.prisma.bot.findMany({
+                    where: {
+                      spaceId: run.spaceId,
+                      userId: run.userId,
+                      archivedAt: null,
+                      id: { not: bot.id },
+                      thread: { isNot: null },
+                    },
+                    select: {
+                      id: true,
+                      name: true,
+                      title: true,
+                      description: true,
+                    },
+                    orderBy: { createdAt: "asc" },
+                    take: BOT_DIRECTORY_LIMIT,
+                  })
+                ).map((peer) => ({
+                  id: peer.id,
+                  name: peer.name,
+                  title: peer.title,
+                  description: peer.description,
+                })),
+              );
 
         if (heldForTakeover) {
           const releasedCheckpoint = takeoverCheckpointOf(

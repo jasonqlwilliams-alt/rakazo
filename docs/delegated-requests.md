@@ -21,8 +21,9 @@ The gateway sends two headers with the delivery and leaves the JSON body as it i
 
 The signed bytes are the UTF-8 encoding of `rakazo-delegation-v1`, a newline, the timestamp, a
 newline, the bot id from the webhook path, a newline, and the exact body sent. Rakazo checks the
-signature with the gateway's public key, refuses a timestamp more than five minutes from its
-clock, and requires the body `id` to equal the `idempotency-key` header and `taskId`.
+signature with the gateway's public key and refuses a timestamp more than five minutes from its
+clock. If `taskId`, `idempotency-key`, or `x-idempotency-key` is supplied, it must equal the
+body `id`.
 
 A delivery claims a delegation when its event is `delegation.message`, it has a top-level
 `delegation` or `delegation_context` field, or it carries either header.
