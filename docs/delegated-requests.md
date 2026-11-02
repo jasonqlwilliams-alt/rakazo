@@ -69,6 +69,7 @@ Without the delegate's `.read` scope, prompt assembly excludes the bot's saved p
 and recalled memory, scratchpad and ticket context, and earlier thread history. Only the delivered
 request is supplied as task context. A webhook routine's unattended tool list never preapproves
 delegated writes.
+Webhook routine prompts are visible to delegated runs and must never contain secrets or private data.
 
 ## Every hop
 

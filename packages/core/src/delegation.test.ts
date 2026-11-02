@@ -65,10 +65,7 @@ describe("delegatedToolDecision", () => {
   });
 
   it("refuses starting work unless the delegation may start work", () => {
-    for (const tool of [
-      { name: "scratchpad_add" },
-      { name: "remember" },
-    ]) {
+    for (const tool of [{ name: "scratchpad_add" }, { name: "remember" }]) {
       expect(delegatedToolDecision(delegation(), tool)).toMatchObject({
         allowed: false,
         code: "outside_scope",
@@ -163,8 +160,9 @@ describe("delegatedCapabilities", () => {
         }),
       ),
     ]).toEqual(["reply"]);
-    expect(delegatedToolDecision(delegation({ scopes: ["x.message"] }), { name: "message_bot" }))
-      .toMatchObject({ allowed: false, code: "outside_scope" });
+    expect(
+      delegatedToolDecision(delegation({ scopes: ["x.message"] }), { name: "message_bot" }),
+    ).toMatchObject({ allowed: false, code: "outside_scope" });
     expect([
       ...delegatedCapabilities(delegation({ scopes: ["assistant.read", "assistant.message"] })),
     ]).toEqual(["reply", "read", "message"]);

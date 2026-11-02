@@ -107,17 +107,19 @@ function fixture({
     message: {
       findMany: vi.fn(async () =>
         priorState
-          ? [{
-              id: "prior-message",
-              threadId: run.threadId,
-              seq: 1,
-              role: "user",
-              botId: null,
-              runId: "prior-run",
-              blocks: [{ kind: "text", text: "Private thread history" }],
-              createdAt: new Date("2026-11-01T11:00:00.000Z"),
-              replyTo: null,
-            }]
+          ? [
+              {
+                id: "prior-message",
+                threadId: run.threadId,
+                seq: 1,
+                role: "user",
+                botId: null,
+                runId: "prior-run",
+                blocks: [{ kind: "text", text: "Private thread history" }],
+                createdAt: new Date("2026-11-01T11:00:00.000Z"),
+                replyTo: null,
+              },
+            ]
           : [],
       ),
       findUnique: vi.fn(async () => null),
@@ -155,7 +157,12 @@ function fixture({
     },
   };
   const results: unknown[] = [];
-  const offered: { tools: string[]; instructions: string; prompt: string; history: AgentRunRequest["history"] } = {
+  const offered: {
+    tools: string[];
+    instructions: string;
+    prompt: string;
+    history: AgentRunRequest["history"];
+  } = {
     tools: [],
     instructions: "",
     prompt: "",
@@ -213,8 +220,7 @@ function fixture({
     home: { commit: vi.fn(async () => "rev-1") },
     memory: { read: memoryRead, commit: vi.fn() },
     memoryProviders: {
-      resolve: async () =>
-        priorState ? { provider: { recall }, defaultScope: "isolated" } : null,
+      resolve: async () => (priorState ? { provider: { recall }, defaultScope: "isolated" } : null),
     },
     events: { append: vi.fn(async () => undefined), pauseRunForInput, finalizeRun },
     jobs: { enqueue: vi.fn(async () => undefined) },
