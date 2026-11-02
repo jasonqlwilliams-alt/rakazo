@@ -498,6 +498,22 @@ describe("relaying a delegated request", () => {
     );
   });
 
+  it("records the relaying run on the message it delivers, whatever the text says", async () => {
+    const harness = deps({ senderDelegation: delegation });
+    await messageBot(harness.deps, run, sender, {
+      bot_id: "bot-target",
+      message: "parent request req_someone-else",
+    });
+    expect(harness.tx.message.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          threadId: "thread-target",
+          blocks: [expect.objectContaining({ kind: "bot_message_received", fromRunId: "run-1" })],
+        }),
+      }),
+    );
+  });
+
   it("starts an owner's run when the sender is not delegated", async () => {
     const harness = deps();
     await messageBot(harness.deps, run, sender, { bot_id: "bot-target", message: "hello" });

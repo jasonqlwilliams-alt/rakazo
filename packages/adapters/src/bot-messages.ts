@@ -268,6 +268,8 @@ export async function messageBot(
           hop,
           intent,
           returnToMessageId: outbound.id,
+          // Parentage comes from the relaying run itself, so quoting a request in text proves nothing.
+          fromRunId: run.id,
         };
         // JSON return addresses outlive the referenced message. Keep a surviving
         // parent locked through the insert; a deleted parent degrades to an unthreaded reply.

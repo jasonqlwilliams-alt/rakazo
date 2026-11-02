@@ -72,6 +72,10 @@ The delivered run's task id is the request id. The webhook answer and
 `GET /api/v1/bots/:botId/webhook/runs/:runId` return it as `taskId`, so the gateway can tie the
 run to its request.
 
+To follow a request from bot to bot, the inbound MCP `read_thread` returns for each message its
+`runId`, the `startedRunId` of a webhook delivery, and the `parentRunId` of a bot-to-bot relay:
+the run that sent it, recorded by the server. Text that quotes a request id never sets a parent.
+
 ## Setup
 
 1. Set `RAKAZO_DELEGATION_PUBLIC_KEY` on the API to the gateway's Ed25519 public key in SPKI PEM

@@ -412,12 +412,21 @@ async function readThread(deps: InboundMcpDeps, threadId: string, before: unknow
       // can tell one request's replies from another run's.
       runId: message.runId ?? null,
       startedRunId: startedRunIds.get(message.id) ?? null,
+      // The run that relayed a bot-to-bot message, as the server recorded it.
+      parentRunId: relayParentRunId(message.blocks),
       seq: message.seq,
       role: message.role,
       createdAt: message.createdAt,
       text: readableMessageText(message.blocks),
     })),
   };
+}
+
+function relayParentRunId(blocks: MessageBlock[]): string | null {
+  for (const block of blocks) {
+    if (block.kind === "bot_message_received" && block.fromRunId) return block.fromRunId;
+  }
+  return null;
 }
 
 /** The run each webhook-delivered message started, by message id. */

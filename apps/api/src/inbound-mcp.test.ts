@@ -352,6 +352,75 @@ describe("inbound MCP read-only scope", () => {
     );
   });
 
+  it("names the run that relayed a message, and quoted text is never parentage", async () => {
+    const quote = "parent request req_root";
+    const prisma = ownerPrisma({
+      thread: { id: "thread-child" },
+      messages: [
+        {
+          id: "msg-3",
+          threadId: "thread-child",
+          seq: 3,
+          role: "user",
+          blocks: [
+            {
+              kind: "bot_message_received",
+              fromBotId: "bot-other",
+              fromBotName: "Other",
+              text: `Forwarding: ${quote}`,
+              fromRunId: "run-unrelated",
+            },
+          ],
+          runId: "run-3",
+          createdAt: new Date("2026-09-19T00:00:03.000Z"),
+        },
+        {
+          id: "msg-2",
+          threadId: "thread-child",
+          seq: 2,
+          role: "user",
+          blocks: [{ kind: "text", text: quote }],
+          runId: null,
+          createdAt: new Date("2026-09-19T00:00:02.000Z"),
+        },
+        {
+          id: "msg-1",
+          threadId: "thread-child",
+          seq: 1,
+          role: "user",
+          blocks: [
+            {
+              kind: "bot_message_received",
+              fromBotId: "bot-root",
+              fromBotName: "Coordinator",
+              text: "Look up the build status",
+              fromRunId: "run-root",
+            },
+          ],
+          runId: "run-child",
+          createdAt: new Date("2026-09-19T00:00:01.000Z"),
+        },
+      ],
+    });
+    const { app } = mount(prisma);
+    const page = await rpc(app, "tools/call", {
+      name: "read_thread",
+      arguments: { threadId: "thread-child" },
+    });
+    const payload = JSON.parse(toolText((await page.json()) as never)) as {
+      messages: Array<{ id: string; runId: string | null; parentRunId: string | null }>;
+    };
+    expect(
+      payload.messages.map(({ id, runId, parentRunId }) => ({ id, runId, parentRunId })),
+    ).toEqual([
+      // A genuine child hop: the relaying run is recorded by the server.
+      { id: "msg-1", runId: "run-child", parentRunId: "run-root" },
+      // Quoting the request in text links nothing.
+      { id: "msg-2", runId: null, parentRunId: null },
+      { id: "msg-3", runId: "run-3", parentRunId: "run-unrelated" },
+    ]);
+  });
+
   it("returns health without opening bots or threads", async () => {
     const { app, findUnique } = mount(ownerPrisma());
     const response = await rpc(app, "tools/call", { name: "health", arguments: {} });
