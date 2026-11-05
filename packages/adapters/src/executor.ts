@@ -3607,6 +3607,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
       let screenRelease: { computer: ComputerRef; context: AdapterContext } | undefined;
       let runAbortController: AbortController | null = null;
       let routineTimeout: ReturnType<typeof setTimeout> | undefined;
+      let routineTimeoutError = null as Error | null;
       let detachShutdown: (() => void) | undefined;
       const heartbeat = setInterval(() => {
         void Promise.all([
@@ -3741,15 +3742,20 @@ export function createRunExecutor(deps: ExecutorDeps) {
             : null;
         runAbortController = new AbortController();
         if (run.trigger === "routine") {
-          const remaining = 10 * 60_000 - (Date.now() - (run.startedAt ?? now).getTime());
-          routineTimeout = setTimeout(
-            () =>
-              runAbortController?.abort(
-                new Error("Routine exceeded its ten-minute execution limit"),
-              ),
-            Math.max(1, remaining),
-          );
-          routineTimeout.unref?.();
+          const startedAt = current.startedAt ?? run.startedAt ?? now;
+          const remaining = 10 * 60_000 - (Date.now() - startedAt.getTime());
+          const expireRoutine = () => {
+            if (!leaseValid || deps.shutdownSignal?.aborted) return;
+            const timeoutError = new Error("Routine exceeded its ten-minute execution limit");
+            routineTimeoutError = timeoutError;
+            runAbortController?.abort(timeoutError);
+          };
+          if (remaining <= 0) {
+            expireRoutine();
+          } else {
+            routineTimeout = setTimeout(expireRoutine, remaining);
+            routineTimeout.unref?.();
+          }
         }
         if (!leaseValid) runAbortController.abort();
         if (deps.shutdownSignal?.aborted) runAbortController.abort(deps.shutdownSignal.reason);
@@ -5988,7 +5994,8 @@ export function createRunExecutor(deps: ExecutorDeps) {
             if (
               !semanticMemory ||
               args.path !== undefined ||
-              args.scope === "archive" ||
+              args.scope !== undefined ||
+              args.offset !== undefined ||
               query.trim() === ""
             ) {
               const resolved =
@@ -6934,7 +6941,9 @@ export function createRunExecutor(deps: ExecutorDeps) {
             beforeModel,
             workerId,
             fence,
-            !leaseValid || Boolean(runAbortController?.signal.aborted),
+            !leaseValid ||
+              Boolean(deps.shutdownSignal?.aborted) ||
+              (Boolean(runAbortController?.signal.aborted) && !routineTimeoutError),
           )
         ) {
           return;
@@ -6962,6 +6971,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
         );
 
         try {
+          if (routineTimeoutError) throw routineTimeoutError;
           const runtimeEvents = deps.runtime.run(
             {
               botId: bot.id,
@@ -7541,6 +7551,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
           }
 
           if (approvalPausePending || !leaseValid) return;
+          if (routineTimeoutError) throw routineTimeoutError;
           approvedEffectReplays.assertDrained();
           pendingProgress += progressRedactor.finish();
           await flushProgress();
@@ -7765,6 +7776,30 @@ export function createRunExecutor(deps: ExecutorDeps) {
           }
         }
       } catch (setupError) {
+        const expired = routineTimeoutError;
+        if (expired && leaseValid && !deps.shutdownSignal?.aborted) {
+          const message = redactSecrets(expired.message, runSecrets);
+          const failed = await deps.events.finalizeRun({
+            spaceId: run.spaceId,
+            threadId: run.threadId,
+            botId: run.botId,
+            runId,
+            taskId: run.taskId,
+            attemptId: attempt.id,
+            leaseOwner: workerId,
+            leaseFence: fence,
+            outcome: "failed",
+            error: message,
+          });
+          if (failed) {
+            if (failed.continuationRunId) {
+              await deps.jobs
+                .enqueue(runContinueJob(failed.continuationRunId))
+                .catch((error) => getLogger().error("steering continuation enqueue", error));
+            }
+          }
+          return;
+        }
         const computerBusy = setupError instanceof ComputerBusyError;
         const retryForever = computerBusy || isTooManyDatabaseConnections(setupError);
         if (!computerBusy) {
