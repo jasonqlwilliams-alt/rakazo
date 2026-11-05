@@ -48,7 +48,11 @@ describe("memory store contract shape", () => {
   });
 
   it("searches archived documents when scope is all", async () => {
-    const archived = { path: "archive/notes.md", content: "Archived orchid care", scope: "archive" };
+    const archived = {
+      path: "archive/notes.md",
+      content: "Archived orchid care",
+      scope: "archive",
+    };
     const findMany = vi.fn(async ({ where }: { where: { scope?: string | { in: string[] } } }) => {
       if (where.scope === undefined || where.scope === "archive") return [archived];
       if (typeof where.scope === "object" && where.scope.in.includes("archive")) return [archived];
@@ -89,18 +93,22 @@ describe("commit path normalisation", () => {
     },
   );
 
-  it.each(["notes: today.md", "archive: notes.md", "history/my digest.md", "bot: ", "/etc/passwd", "../../escape.md"])(
-    "rejects %j rather than silently creating a document",
-    async (path) => {
-      const { store, prisma } = storeWithDocument(undefined);
+  it.each([
+    "notes: today.md",
+    "archive: notes.md",
+    "history/my digest.md",
+    "bot: ",
+    "/etc/passwd",
+    "../../escape.md",
+  ])("rejects %j rather than silently creating a document", async (path) => {
+    const { store, prisma } = storeWithDocument(undefined);
 
-      await expect(
-        store.commit({ scope: "bot", botId: "bot-1", path, content: "fact" }, context),
-      ).rejects.toThrow(/memory path/i);
-      expect(prisma.memoryDocument.create).not.toHaveBeenCalled();
-      expect(prisma.memoryDocument.update).not.toHaveBeenCalled();
-    },
-  );
+    await expect(
+      store.commit({ scope: "bot", botId: "bot-1", path, content: "fact" }, context),
+    ).rejects.toThrow(/memory path/i);
+    expect(prisma.memoryDocument.create).not.toHaveBeenCalled();
+    expect(prisma.memoryDocument.update).not.toHaveBeenCalled();
+  });
 
   it("defaults an empty path to MEMORY.md", async () => {
     const { store, prisma } = storeWithDocument(undefined);

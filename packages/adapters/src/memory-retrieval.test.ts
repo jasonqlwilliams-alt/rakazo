@@ -489,11 +489,10 @@ describe("task-relevant local memory", () => {
       "Gamma context.",
       "Gamma follow-up.",
       "Orchids need filtered light.",
-    ].join("\n" + "background ".repeat(800));
+    ].join(`\n${"background ".repeat(800)}`);
     const store = {
       read: async ({ scope }: { scope: string }) => ({
-        documents:
-          scope === "bot" ? [{ id: "notes", path: "notes.md", revision: 1, content }] : [],
+        documents: scope === "bot" ? [{ id: "notes", path: "notes.md", revision: 1, content }] : [],
       }),
     } as unknown as MemoryStore;
 
@@ -507,18 +506,16 @@ describe("task-relevant local memory", () => {
   });
 
   it("keeps early and late multibyte facts with hundreds of repeated task terms", async () => {
-    const setupTerms = Array.from({ length: 250 }, (_, index) =>
-      `setup${index.toString().padStart(3, "0")}`,
+    const setupTerms = Array.from(
+      { length: 250 },
+      (_, index) => `setup${index.toString().padStart(3, "0")}`,
     );
-    const content =
-      setupTerms
-        .map((term) => `${term} starts 🌺. ${"background🌺".repeat(5)} ${term} ends 🌺.`)
-        .join("\n") +
-      `\n${"history🌺".repeat(500)}\nOrchids need filtered light 🌺.`;
+    const content = `${setupTerms
+      .map((term) => `${term} starts 🌺. ${"background🌺".repeat(5)} ${term} ends 🌺.`)
+      .join("\n")}\n${"history🌺".repeat(500)}\nOrchids need filtered light 🌺.`;
     const store = {
       read: async ({ scope }: { scope: string }) => ({
-        documents:
-          scope === "bot" ? [{ id: "notes", path: "notes.md", revision: 1, content }] : [],
+        documents: scope === "bot" ? [{ id: "notes", path: "notes.md", revision: 1, content }] : [],
       }),
     } as unknown as MemoryStore;
     const query = `${setupTerms.join(" ")} orchids background`;
@@ -540,8 +537,7 @@ describe("task-relevant local memory", () => {
     const content = `${"Background notes. ".repeat(110)}Orchids need filtered light.`;
     const store = {
       read: async ({ scope }: { scope: string }) => ({
-        documents:
-          scope === "bot" ? [{ id: "notes", path: "notes.md", revision: 1, content }] : [],
+        documents: scope === "bot" ? [{ id: "notes", path: "notes.md", revision: 1, content }] : [],
       }),
     } as unknown as MemoryStore;
     expect(Buffer.byteLength(content)).toBeGreaterThan(1200);
@@ -580,8 +576,7 @@ describe("task-relevant local memory", () => {
     const content = `${"İ".repeat(6000)} Orchids need filtered light.`;
     const store = {
       read: async ({ scope }: { scope: string }) => ({
-        documents:
-          scope === "bot" ? [{ id: "notes", path: "notes.md", revision: 1, content }] : [],
+        documents: scope === "bot" ? [{ id: "notes", path: "notes.md", revision: 1, content }] : [],
       }),
     } as unknown as MemoryStore;
 
