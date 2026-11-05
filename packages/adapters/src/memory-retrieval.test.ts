@@ -272,6 +272,103 @@ describe("task-relevant local memory", () => {
     expect(Buffer.byteLength(result!)).toBeLessThanOrEqual(12 * 1024);
   });
 
+  it.each(["orchid-care", "orchid_care", "orchid/care"])(
+    "matches compound task terms against separate words for %s",
+    async (query) => {
+      const store = {
+        read: async ({ scope }: { scope: string }) => ({
+          documents:
+            scope === "user"
+              ? []
+              : [
+                  {
+                    id: "match",
+                    path: "garden.md",
+                    revision: 1,
+                    content: "Orchid care requires filtered light.",
+                  },
+                  {
+                    id: "large",
+                    path: "history.md",
+                    revision: 1,
+                    content: "Old history. ".repeat(3_000),
+                  },
+                ],
+        }),
+      } as unknown as MemoryStore;
+
+      const selected = await loadAgentMemoryContext(store, "bot", context, 12 * 1024, {
+        query,
+      });
+      const recalled = await recallLocalMemory(store, "bot", context, { query });
+
+      expect(selected).toContain("Orchid care requires filtered light.");
+      expect(recalled.documents.map((document) => document.path)).toContain("garden.md");
+    },
+  );
+
+  it("does not let incidental short substrings displace matching memory", async () => {
+    const store = {
+      read: async ({ scope }: { scope: string }) => ({
+        documents:
+          scope === "user"
+            ? []
+            : [
+                {
+                  id: "match",
+                  path: "ai.md",
+                  revision: 1,
+                  updatedAt: "2026-01-01T00:00:00Z",
+                  content: "Model decisions for this project.",
+                },
+                ...Array.from({ length: 12 }, (_, index) => ({
+                  id: `incidental-${index}`,
+                  path: `daily-${index}.md`,
+                  revision: 1,
+                  updatedAt: "2026-11-01T00:00:00Z",
+                  content: "Unrelated historical material. ".repeat(100),
+                })),
+              ],
+      }),
+    } as unknown as MemoryStore;
+
+    const selected = await loadAgentMemoryContext(store, "bot", context, 12 * 1024, {
+      query: "AI",
+    });
+    const recalled = await recallLocalMemory(store, "bot", context, { query: "AI" });
+
+    expect(selected).toContain("## ai.md");
+    expect(selected).not.toContain("## daily-0.md");
+    expect(recalled).toMatchObject({
+      totalDocuments: 1,
+      documents: [{ path: "ai.md" }],
+    });
+  });
+
+  it("anchors an oversized excerpt to a whole short term", async () => {
+    const store = {
+      read: async ({ scope }: { scope: string }) => ({
+        documents:
+          scope === "user"
+            ? []
+            : [
+                {
+                  id: "match",
+                  path: "notes.md",
+                  revision: 1,
+                  content: `AI defines project scope. ${"filler ".repeat(1_000)}daily`,
+                },
+              ],
+      }),
+    } as unknown as MemoryStore;
+
+    const selected = await loadAgentMemoryContext(store, "bot", context, 12 * 1024, {
+      query: "AI",
+    });
+
+    expect(selected).toContain("AI defines project scope.");
+  });
+
   it("selects a relevant memory after more than 64 setup terms", async () => {
     const store = {
       read: async ({ scope }: { scope: string }) => ({

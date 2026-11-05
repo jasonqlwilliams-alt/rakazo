@@ -117,9 +117,23 @@ const COMMON_WORDS = new Set(
 );
 
 function queryTerms(query: string): string[] {
-  return [
-    ...new Set(query.toLowerCase().match(/[\p{L}\p{N}][\p{L}\p{N}_-]*[\p{L}\p{N}]/gu) ?? []),
-  ].filter((term) => !COMMON_WORDS.has(term));
+  const tokens = query.toLowerCase().match(/[\p{L}\p{N}]+(?:[-_/][\p{L}\p{N}]+)*/gu) ?? [];
+  return [...new Set(tokens.flatMap((token) => [token, ...token.split(/[-_/]/)]))].filter(
+    (term) => term.length >= 2 && !COMMON_WORDS.has(term),
+  );
+}
+
+function termMatch(text: string, term: string, last = false): number {
+  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const matches = text.matchAll(
+    new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "gu"),
+  );
+  let index = -1;
+  for (const match of matches) {
+    index = match.index;
+    if (!last) break;
+  }
+  return index;
 }
 
 function relevance(
@@ -129,7 +143,8 @@ function relevance(
   const path = document.path.toLowerCase();
   const body = document.content.toLowerCase();
   return terms.reduce(
-    (score, term) => score + (path.includes(term) ? 5 : 0) + (body.includes(term) ? 1 : 0),
+    (score, term) =>
+      score + (termMatch(path, term) >= 0 ? 5 : 0) + (termMatch(body, term) >= 0 ? 1 : 0),
     0,
   );
 }
@@ -139,7 +154,7 @@ function excerpt(content: string, terms: string[], core: boolean): string {
   const lower = content.toLowerCase();
   const pieces = core ? [truncateUtf8(content, 1536)] : [];
   for (const term of terms) {
-    const index = lower.lastIndexOf(term);
+    const index = termMatch(lower, term, true);
     if (index < 0) continue;
     const start = Math.max(0, index - 240);
     const piece = content.slice(start, start + 700);
