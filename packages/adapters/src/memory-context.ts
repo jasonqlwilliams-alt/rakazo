@@ -111,13 +111,13 @@ function protectedMemoryContext(documents: ScopedMemoryDocument[]): string {
 }
 
 const COMMON_WORDS = new Set(
-  "the and for with this that from your you are not only when what have into then use bot run task should will please".split(
+  "the and for with this that from your you are not only when what have into then use bot run task should will please am an as at be by do he if in is it me my no of on or so to up us we".split(
     " ",
   ),
 );
 
 function queryTerms(query: string): string[] {
-  return [...new Set(query.toLowerCase().match(/[\p{L}\p{N}_-]{3,}/gu) ?? [])]
+  return [...new Set(query.toLowerCase().match(/[\p{L}\p{N}][\p{L}\p{N}_-]*[\p{L}\p{N}]/gu) ?? [])]
     .filter((term) => !COMMON_WORDS.has(term))
     .slice(0, 64);
 }

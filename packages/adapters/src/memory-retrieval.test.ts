@@ -233,6 +233,45 @@ describe("task-relevant local memory", () => {
     expect(result!.indexOf("## orchids.md")).toBeLessThan(result!.indexOf("## garden.md"));
   });
 
+  it.each(["AI", "3D"])("selects two-character task memory for %s", async (term) => {
+    const store = {
+      read: async ({ scope }: { scope: string }) => ({
+        documents:
+          scope === "user"
+            ? []
+            : [
+                {
+                  id: "match",
+                  path: `${term.toLowerCase()}.md`,
+                  revision: 1,
+                  content: `${term} project details.`,
+                },
+                {
+                  id: "stop-word",
+                  path: "to.md",
+                  revision: 1,
+                  content: "Unrelated material.",
+                },
+                {
+                  id: "large",
+                  path: "history.md",
+                  revision: 1,
+                  content: "Old history. ".repeat(3_000),
+                },
+              ],
+      }),
+    } as unknown as MemoryStore;
+
+    const result = await loadAgentMemoryContext(store, "bot", context, 12 * 1024, {
+      query: `to ${term}`,
+    });
+
+    expect(result).toContain(`## ${term.toLowerCase()}.md`);
+    expect(result).toContain(`${term} project details.`);
+    expect(result).not.toContain("## to.md");
+    expect(Buffer.byteLength(result!)).toBeLessThanOrEqual(12 * 1024);
+  });
+
   it("searches original documents, lists with omitted query, and reads archived scope", async () => {
     const read = vi.fn(async (input: { scope: string; botId?: string; path?: string }) => ({
       documents:
