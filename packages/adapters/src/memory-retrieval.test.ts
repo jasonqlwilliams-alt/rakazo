@@ -188,6 +188,51 @@ describe("task-relevant local memory", () => {
     expect(docs[1]!.content.length).toBeGreaterThan(200_000);
   });
 
+  it("ranks matching bot memory ahead of lower-scoring user memory and core filler", async () => {
+    const store = {
+      read: async ({ scope }: { scope: string }) => ({
+        documents:
+          scope === "user"
+            ? [
+                {
+                  id: "weak",
+                  path: "garden.md",
+                  revision: 1,
+                  content: "I like orchids.",
+                },
+                ...Array.from({ length: 12 }, (_, index) => ({
+                  id: `unrelated-${index}`,
+                  path: `unrelated-${index}.md`,
+                  revision: 1,
+                  content: "Stored preference.",
+                })),
+              ]
+            : [
+                {
+                  id: "strong",
+                  path: "orchids.md",
+                  revision: 1,
+                  content: "Orchids need filtered light.",
+                },
+                {
+                  id: "large",
+                  path: "large.md",
+                  revision: 1,
+                  content: "Unrelated history. ".repeat(1_000),
+                },
+              ],
+      }),
+    } as unknown as MemoryStore;
+
+    const result = await loadAgentMemoryContext(store, "bot", context, 12 * 1024, {
+      query: "orchids",
+    });
+
+    expect(result).toContain("## orchids.md");
+    expect(result).toContain("## garden.md");
+    expect(result!.indexOf("## orchids.md")).toBeLessThan(result!.indexOf("## garden.md"));
+  });
+
   it("searches original documents, lists with omitted query, and reads archived scope", async () => {
     const read = vi.fn(async (input: { scope: string; botId?: string; path?: string }) => ({
       documents:

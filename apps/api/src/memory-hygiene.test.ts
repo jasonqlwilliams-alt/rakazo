@@ -193,6 +193,25 @@ describe("memory scope filtering and archiving", () => {
     expect(exported).not.toContain("Quarantined payload");
     expect(exported).not.toContain("Archived payload");
 
+    const botExport = await client.memory.exportMarkdown({ scope: "bot" });
+    expect(botExport).toContain("Bot note");
+    expect(botExport).not.toContain("User note");
+    expect(botExport).not.toContain("Archived payload");
+
+    const userExport = await client.memory.exportMarkdown({ scope: "user" });
+    expect(userExport).toContain("User note");
+    expect(userExport).not.toContain("Bot note");
+    expect(userExport).not.toContain("Archived payload");
+
+    const archiveExport = await client.memory.exportMarkdown({ scope: "archive" });
+    expect(archiveExport).toContain("Archived payload");
+    expect(archiveExport).not.toContain("Bot note");
+    expect(archiveExport).not.toContain("User note");
+
+    await expect(
+      client.memory.exportMarkdown({ scope: "quarantine" as "archive" }),
+    ).rejects.toThrow();
+
     await expect(
       client.memory.update({ documentId: "doc-quarantine", content: "edited" }),
     ).rejects.toThrow("Only bot or user memory documents can be edited.");

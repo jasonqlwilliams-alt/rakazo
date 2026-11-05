@@ -3377,7 +3377,7 @@ export function createRouter(deps: RouterDeps) {
           where: {
             spaceId: context.actor.spaceId,
             userId: context.actor.userId,
-            scope: { in: ["bot", "user"] },
+            scope: input.scope ?? { in: ["bot", "user"] },
             ...(input.botId ? { botId: input.botId } : {}),
           },
         });

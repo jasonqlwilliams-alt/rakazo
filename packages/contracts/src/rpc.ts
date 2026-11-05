@@ -518,7 +518,9 @@ export const appContract = {
       .input(z.object({ documentId: Id, content: z.string() }))
       .output(MemoryDocumentSchema),
     archive: oc.input(z.object({ documentId: Id })).output(MemoryDocumentSchema),
-    exportMarkdown: oc.input(z.object({ botId: Id.optional() })).output(z.string()),
+    exportMarkdown: oc
+      .input(z.object({ botId: Id.optional(), scope: MemoryScope.optional() }))
+      .output(z.string()),
     providerConfig: oc.output(SpaceMemoryConfigSchema.nullable()),
     connectProvider: oc
       .input(

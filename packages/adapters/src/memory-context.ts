@@ -167,8 +167,8 @@ function selectTaskMemory(
     .filter((item) => item.core || item.score > 0)
     .sort(
       (a, b) =>
-        Number(b.core) - Number(a.core) ||
         b.score - a.score ||
+        Number(b.core) - Number(a.core) ||
         memoryTimestamp(b.document.updatedAt) - memoryTimestamp(a.document.updatedAt),
     )
     .slice(0, 12)
