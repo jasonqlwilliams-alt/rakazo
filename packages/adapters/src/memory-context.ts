@@ -15,7 +15,7 @@ export function agentMemoryMaxBytes(env: NodeJS.ProcessEnv = process.env): numbe
 /** A section shorter than this carries no useful fact, so the document is named as omitted instead. */
 const MIN_SECTION_CONTENT_BYTES = 64;
 
-/** Every section is joined by this, and its cost is reserved for every section. */
+/** Excerpt allocation reserves this separator for each section; full-store rendering counts only joins. */
 const SECTION_SEPARATOR = "\n\n";
 
 const PREAMBLE =
@@ -180,7 +180,12 @@ function excerpt(content: string, terms: string[], core: boolean, maxBytes = 390
   const highlights = new Set<number>();
   if (matches.length > 0) {
     const last = matches[matches.length - 1]!;
-    for (const index of [candidates[0]!, candidates[candidates.length - 1]!, last.first, last.last]) {
+    for (const index of [
+      candidates[0]!,
+      candidates[candidates.length - 1]!,
+      last.first,
+      last.last,
+    ]) {
       highlights.add(index);
     }
     const slots = 6 - highlights.size;

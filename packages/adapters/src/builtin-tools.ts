@@ -781,8 +781,7 @@ export const builtinAgentTools: ConnectorTool[] = [
       required: ["messageId"],
     },
   },
-  // Semantic-memory tools: exposed by selectMemoryTools() only when a
-  // A Space memory provider is configured (which hides `remember`).
+  // Save and forget need a configured semantic provider; recall also reads local documents.
   {
     name: "save_memory",
     description:
