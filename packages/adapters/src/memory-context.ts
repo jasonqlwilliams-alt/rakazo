@@ -89,8 +89,9 @@ export async function loadAgentMemoryContext(
     return `${PREAMBLE}${constraints}${CLOSING}`;
   }
 
-  const selected = selectTaskMemory(documents, options.query);
-  return `${PREAMBLE}${constraints}${retrievalNote}${renderDocuments(selected, budget)}${CLOSING}`;
+  const terms = queryTerms(options.query);
+  const selected = selectTaskMemory(documents, terms);
+  return `${PREAMBLE}${constraints}${retrievalNote}${renderDocuments(selected, budget, terms)}${CLOSING}`;
 }
 
 /** Preserve explicit rules verbatim, independently of task relevance and excerpt limits. */
@@ -139,7 +140,7 @@ function queryTerms(query: string): string[] {
 function termMatch(text: string, term: string, last = false): number {
   const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const matches = text.matchAll(
-    new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "gu"),
+    new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "giu"),
   );
   let index = -1;
   for (const match of matches) {
@@ -153,23 +154,26 @@ function relevance(
   document: Pick<RecalledMemoryDocument, "path" | "content">,
   terms: string[],
 ): number {
-  const path = document.path.toLowerCase();
-  const body = document.content.toLowerCase();
   return terms.reduce(
     (score, term) =>
-      score + (termMatch(path, term) >= 0 ? 5 : 0) + (termMatch(body, term) >= 0 ? 1 : 0),
+      score +
+      (termMatch(document.path, term) >= 0 ? 5 : 0) +
+      (termMatch(document.content, term) >= 0 ? 1 : 0),
     0,
   );
 }
 
 function excerpt(content: string, terms: string[], core: boolean, maxBytes = 3900): string {
   if (byteLength(content) <= Math.min(4096, maxBytes)) return content;
-  const lower = content.toLowerCase();
-  const pieces = core ? [truncateUtf8(content, 1536)] : [];
   const matches = terms.flatMap((term) => {
-    const first = termMatch(lower, term);
-    return first < 0 ? [] : [{ first, last: termMatch(lower, term, true) }];
+    const first = termMatch(content, term);
+    return first < 0 ? [] : [{ first, last: termMatch(content, term, true) }];
   });
+  const separator = "\n[…]\n";
+  const suffix = "\n[excerpt; recall_memory reads the unchanged original]";
+  const bodyBudget = Math.min(3500, maxBytes - byteLength(suffix));
+  const prefixBytes = matches.length > 0 ? Math.floor(bodyBudget / 4) : bodyBudget;
+  const pieces = core ? [truncateUtf8(content, Math.min(1536, prefixBytes))] : [];
   const candidates = [...new Set(matches.flatMap(({ first, last }) => [first, last]))].sort(
     (a, b) => a - b,
   );
@@ -185,9 +189,6 @@ function excerpt(content: string, terms: string[], core: boolean, maxBytes = 390
     }
   }
   const positions = [...highlights].sort((a, b) => a - b);
-  const separator = "\n[…]\n";
-  const suffix = "\n[excerpt; recall_memory reads the unchanged original]";
-  const bodyBudget = Math.min(3500, maxBytes - byteLength(suffix));
   const separatorBytes = byteLength(separator);
   const available =
     bodyBudget -
@@ -212,17 +213,13 @@ function excerpt(content: string, terms: string[], core: boolean, maxBytes = 390
 
 function selectTaskMemory(
   documents: ScopedMemoryDocument[],
-  query: string,
+  terms: string[],
 ): ScopedMemoryDocument[] {
-  const terms = queryTerms(query);
-  const core = (document: ScopedMemoryDocument) =>
-    document.scope === "user" ||
-    /^(memory|profile|relationships|preferences)\.md$/i.test(document.path);
   return documents
     .filter((document) => !HOLD_INDEX_PATH.test(document.path))
     .map((document) => ({
       document,
-      core: core(document),
+      core: isCoreMemoryDocument(document),
       score: relevance(document, terms),
     }))
     .filter((item) => item.core || item.score > 0)
@@ -233,10 +230,14 @@ function selectTaskMemory(
         memoryTimestamp(b.document.updatedAt) - memoryTimestamp(a.document.updatedAt),
     )
     .slice(0, 12)
-    .map((item) => ({
-      ...item.document,
-      content: excerpt(item.document.content, terms, item.core),
-    }));
+    .map((item) => item.document);
+}
+
+function isCoreMemoryDocument(document: ScopedMemoryDocument): boolean {
+  return (
+    document.scope === "user" ||
+    /^(memory|profile|relationships|preferences)\.md$/i.test(document.path)
+  );
 }
 
 /** Local-only, bot/user/archive scoped retrieval. No provider, credentials, or mutation. */
@@ -319,7 +320,11 @@ export async function recallLocalMemory(
  * Whatever still does not fit is marked in place or named as omitted, never dropped
  * silently mid-fact.
  */
-function renderDocuments(documents: ScopedMemoryDocument[], budget: number): string {
+function renderDocuments(
+  documents: ScopedMemoryDocument[],
+  budget: number,
+  terms?: string[],
+): string {
   let included = documents;
   const omitted: ScopedMemoryDocument[] = [];
   let sized: Array<{ document: ScopedMemoryDocument; allotted: number }> = [];
@@ -338,7 +343,7 @@ function renderDocuments(documents: ScopedMemoryDocument[], budget: number): str
     included = sized.filter(fits).map((entry) => entry.document);
   }
 
-  const sections = sized.map((entry) => renderSection(entry.document, entry.allotted));
+  const sections = sized.map((entry) => renderSection(entry.document, entry.allotted, terms));
   if (omitted.length > 0) sections.push(omissionNote(omitted));
   // Every section reserves a separator it may not use, so the join already fits the
   // budget; the final clamp only guards the degenerate case where nothing fits at all.
@@ -372,10 +377,18 @@ function minimumSectionCost(document: ScopedMemoryDocument): number {
   );
 }
 
-function renderSection(document: ScopedMemoryDocument, allotted: number): string {
+function renderSection(document: ScopedMemoryDocument, allotted: number, terms?: string[]): string {
   const header = sectionHeader(document);
   const contentBudget = allotted - byteLength(SECTION_SEPARATOR) - byteLength(header);
   if (byteLength(document.content) <= contentBudget) return `${header}${document.content}`;
+  if (terms) {
+    return `${header}${excerpt(
+      document.content,
+      terms,
+      isCoreMemoryDocument(document),
+      contentBudget,
+    )}`;
+  }
   const notice = truncationNotice(document);
   const body = truncateUtf8(document.content, contentBudget - byteLength(notice));
   return `${header}${body}${notice}`;

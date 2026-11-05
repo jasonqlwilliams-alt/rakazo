@@ -154,6 +154,32 @@ describe("task-relevant local memory", () => {
   });
 
   it.each([
+    "Must not publish this draft.",
+    "Do not publish this draft.",
+    "Never publish this draft.",
+    "Hold this draft for review.",
+    "Stop publishing this draft.",
+    "Correction: This draft is private.",
+    "Withdrawn: Publishing permission ended.",
+    "Revoked: Publishing permission ended.",
+  ])("protects an older capitalized directive: %s", async (directive) => {
+    const content = `${directive}\n\n${"ordinary history ".repeat(2000)}\n\nRecent note.\n\nFinal note.`;
+    const store = {
+      read: async ({ scope }: { scope: string }) => ({
+        documents:
+          scope === "bot" ? [{ id: "rules", path: "old-log.md", revision: 1, content }] : [],
+      }),
+    } as unknown as MemoryStore;
+
+    const result = await loadAgentMemoryContext(store, "bot", context, 512, {
+      query: "unrelated orchids",
+    });
+
+    expect(result).toContain("<memory_constraints>");
+    expect(result).toContain(directive);
+  });
+
+  it.each([
     "state/holds_index",
     "state/holds_index.md",
     "state/holds_index_20261102.md",
@@ -524,6 +550,49 @@ describe("task-relevant local memory", () => {
     const recalled = await recallLocalMemory(store, "bot", context, { query: "orchids" });
 
     expect(recalled.documents[0]?.content).toContain("Orchids need filtered light.");
+    expect(Buffer.byteLength(recalled.documents[0]?.content ?? "")).toBeLessThanOrEqual(1200);
+  });
+
+  it("keeps late matches in every tightly allocated user excerpt", async () => {
+    const documents = Array.from({ length: 12 }, (_, index) => ({
+      id: `note-${index}`,
+      path: `note-${index}.md`,
+      revision: 1,
+      content: `${"Background notes. ".repeat(600)}Orchids need filtered light in note ${index}.`,
+    }));
+    const store = {
+      read: async ({ scope }: { scope: string }) => ({
+        documents: scope === "user" ? documents : [],
+      }),
+    } as unknown as MemoryStore;
+
+    const selected = await loadAgentMemoryContext(store, "bot", context, 12 * 1024, {
+      query: "orchids",
+    });
+
+    for (let index = 0; index < documents.length; index += 1) {
+      expect(selected).toContain(`Orchids need filtered light in note ${index}.`);
+    }
+    expect(Buffer.byteLength(selected!)).toBeLessThanOrEqual(12 * 1024);
+  });
+
+  it("finds late highlights after characters that expand when lowercased", async () => {
+    const content = `${"İ".repeat(6000)} Orchids need filtered light.`;
+    const store = {
+      read: async ({ scope }: { scope: string }) => ({
+        documents:
+          scope === "bot" ? [{ id: "notes", path: "notes.md", revision: 1, content }] : [],
+      }),
+    } as unknown as MemoryStore;
+
+    const selected = await loadAgentMemoryContext(store, "bot", context, 12 * 1024, {
+      query: "orchids",
+    });
+    const recalled = await recallLocalMemory(store, "bot", context, { query: "orchids" });
+
+    expect(selected).toContain("Orchids need filtered light.");
+    expect(recalled.documents[0]?.content).toContain("Orchids need filtered light.");
+    expect(Buffer.byteLength(selected!)).toBeLessThanOrEqual(12 * 1024);
     expect(Buffer.byteLength(recalled.documents[0]?.content ?? "")).toBeLessThanOrEqual(1200);
   });
 
