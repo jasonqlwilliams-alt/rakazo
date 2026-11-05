@@ -3327,20 +3327,22 @@ export function createRouter(deps: RouterDeps) {
               }
               const sourcePath = requireMemoryPath(doc.path);
               let suffix = 1;
-              let nextPath = requireMemoryPath(archivedMemoryPath(date, sourcePath, suffix));
+              let nextPath = requireMemoryPath(archivedMemoryPath(date, doc.scope, sourcePath, suffix));
               while (
                 await tx.memoryDocument.findFirst({
                   where: {
                     spaceId: context.actor.spaceId,
+                    userId: context.actor.userId,
                     scope: "archive",
-                    botId: doc.botId,
                     path: nextPath,
                   },
                   select: { id: true },
                 })
               ) {
                 suffix += 1;
-                nextPath = requireMemoryPath(archivedMemoryPath(date, sourcePath, suffix));
+                nextPath = requireMemoryPath(
+                  archivedMemoryPath(date, doc.scope, sourcePath, suffix),
+                );
               }
               const updated = await tx.memoryDocument.update({
                 where: { id: doc.id },
@@ -7220,8 +7222,13 @@ async function messagingConnectionDto(
   };
 }
 
-function archivedMemoryPath(date: string, sourcePath: string, suffix: number): string {
-  const base = `${date}/${sourcePath}`;
+function archivedMemoryPath(
+  date: string,
+  sourceScope: "bot" | "user",
+  sourcePath: string,
+  suffix: number,
+): string {
+  const base = `${date}/${sourceScope}/${sourcePath}`;
   if (suffix <= 1) return base;
   const slash = base.lastIndexOf("/");
   const dir = base.slice(0, slash + 1);

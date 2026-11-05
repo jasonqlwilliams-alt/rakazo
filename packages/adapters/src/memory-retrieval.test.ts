@@ -272,6 +272,38 @@ describe("task-relevant local memory", () => {
     expect(Buffer.byteLength(result!)).toBeLessThanOrEqual(12 * 1024);
   });
 
+  it("selects a relevant memory after more than 64 setup terms", async () => {
+    const store = {
+      read: async ({ scope }: { scope: string }) => ({
+        documents:
+          scope === "user"
+            ? []
+            : [
+                {
+                  id: "match",
+                  path: "orchids.md",
+                  revision: 1,
+                  content: "Orchids need filtered light.",
+                },
+                {
+                  id: "large",
+                  path: "history.md",
+                  revision: 1,
+                  content: "Unrelated history. ".repeat(3_000),
+                },
+              ],
+      }),
+    } as unknown as MemoryStore;
+    const setup = Array.from({ length: 64 }, (_, index) => `setup${index}`).join(" ");
+
+    const result = await loadAgentMemoryContext(store, "bot", context, 12 * 1024, {
+      query: `${setup} orchids`,
+    });
+
+    expect(result).toContain("## orchids.md");
+    expect(result).toContain("Orchids need filtered light.");
+  });
+
   it("searches original documents, lists with omitted query, and reads archived scope", async () => {
     const read = vi.fn(async (input: { scope: string; botId?: string; path?: string }) => ({
       documents:

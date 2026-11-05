@@ -4,6 +4,7 @@ import type { Actor } from "@rakazo/contracts";
 import type { PrismaClient } from "@rakazo/db";
 import { MarkdownMemoryStore } from "@rakazo/memory";
 import { describe, expect, it, vi } from "vitest";
+import { recallLocalMemory } from "../../../packages/adapters/src/memory-context.js";
 import type { RouterDeps } from "./router.js";
 import { createRouter } from "./router.js";
 
@@ -241,7 +242,7 @@ describe("memory scope filtering and archiving", () => {
         userId: "user-1",
         botId: "bot-1",
         scope: "archive",
-        path: `${today}/log/monthly.md`,
+        path: `${today}/bot/log/monthly.md`,
         content: "Earlier archived log",
         revision: 2,
         updatedAt: now,
@@ -253,7 +254,7 @@ describe("memory scope filtering and archiving", () => {
       id: "doc-1",
       scope: "archive",
       botId: "bot-1",
-      path: `${today}/log/monthly-2.md`,
+      path: `${today}/bot/log/monthly-2.md`,
       content: "First monthly log",
       revision: 4,
     });
@@ -267,6 +268,73 @@ describe("memory scope filtering and archiving", () => {
     await expect(client.memory.archive({ documentId: "doc-1" })).rejects.toThrow(
       "Only bot or user memory documents can be archived.",
     );
+  });
+
+  it("gives same-path bot and user archives separate recall addresses", async () => {
+    const now = new Date("2026-11-04T00:00:00.000Z");
+    const today = new Date().toISOString().slice(0, 10);
+    const { client, memory } = createFixture([
+      {
+        id: "bot-note",
+        spaceId: "space-1",
+        userId: "user-1",
+        botId: "bot-1",
+        scope: "bot",
+        path: "notes.md",
+        content: "B".repeat(5_000),
+        revision: 1,
+        updatedAt: now,
+      },
+      {
+        id: "user-note",
+        spaceId: "space-1",
+        userId: "user-1",
+        botId: null,
+        scope: "user",
+        path: "notes.md",
+        content: "U".repeat(5_000),
+        revision: 1,
+        updatedAt: now,
+      },
+    ]);
+
+    const botArchive = await client.memory.archive({ documentId: "bot-note" });
+    const userArchive = await client.memory.archive({ documentId: "user-note" });
+    expect(botArchive.path).toBe(`${today}/bot/notes.md`);
+    expect(userArchive.path).toBe(`${today}/user/notes.md`);
+
+    const recallContext = {
+      spaceId: "space-1",
+      userId: "user-1",
+      operationId: "op",
+      traceId: "tr",
+      signal: new AbortController().signal,
+    } as AdapterContext;
+    const listed = await recallLocalMemory(memory, "bot-1", recallContext, { scope: "archive" });
+    expect(listed.documents.map((doc) => doc.path)).toEqual([botArchive.path, userArchive.path]);
+
+    const botFirstPage = await recallLocalMemory(memory, "bot-1", recallContext, {
+      scope: "archive",
+      path: botArchive.path,
+    });
+    expect(botFirstPage.documents).toEqual([
+      expect.objectContaining({ content: "B".repeat(4096), nextOffset: 4096 }),
+    ]);
+    const botSecondPage = await recallLocalMemory(memory, "bot-1", recallContext, {
+      scope: "archive",
+      path: botArchive.path,
+      offset: 4096,
+    });
+    expect(botSecondPage.documents).toEqual([
+      expect.objectContaining({ content: "B".repeat(904), nextOffset: null }),
+    ]);
+    const userPage = await recallLocalMemory(memory, "bot-1", recallContext, {
+      scope: "archive",
+      path: userArchive.path,
+    });
+    expect(userPage.documents).toEqual([
+      expect.objectContaining({ content: "U".repeat(4096), nextOffset: 4096 }),
+    ]);
   });
 
   it("isolates MarkdownMemoryStore archive reads to the requesting bot and shared user archives", async () => {
