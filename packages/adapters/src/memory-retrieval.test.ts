@@ -454,6 +454,32 @@ describe("task-relevant local memory", () => {
     expect(Buffer.byteLength(selected!)).toBeLessThanOrEqual(12 * 1024);
   });
 
+  it("reserves excerpt space for a late matching task term", async () => {
+    const content = [
+      "Alpha context.",
+      "Alpha follow-up.",
+      "Beta context.",
+      "Beta follow-up.",
+      "Gamma context.",
+      "Gamma follow-up.",
+      "Orchids need filtered light.",
+    ].join("\n" + "background ".repeat(800));
+    const store = {
+      read: async ({ scope }: { scope: string }) => ({
+        documents:
+          scope === "bot" ? [{ id: "notes", path: "notes.md", revision: 1, content }] : [],
+      }),
+    } as unknown as MemoryStore;
+
+    const selected = await loadAgentMemoryContext(store, "bot", context, 12 * 1024, {
+      query: "alpha beta gamma orchids",
+    });
+
+    expect(selected).toContain("Alpha context.");
+    expect(selected).toContain("Orchids need filtered light.");
+    expect(Buffer.byteLength(selected!)).toBeLessThanOrEqual(12 * 1024);
+  });
+
   it("selects a relevant memory after more than 64 setup terms", async () => {
     const store = {
       read: async ({ scope }: { scope: string }) => ({

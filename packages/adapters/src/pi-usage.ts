@@ -39,11 +39,8 @@ export function normalizePiUsage(
   const outputTokens = token(usage?.output, "outputTokens");
   const cacheReadTokens = token(usage?.cacheRead, "cacheReadTokens");
   const cacheWriteTokens = token(usage?.cacheWrite, "cacheWriteTokens");
-  // OpenAI-family protocols never emit a cache-write bucket; treat its absence as inapplicable
-  // once real input and output token counts are present (excluding OpenRouter proxy billing).
   const cacheWriteInapplicable =
-    typeof model.api === "string" &&
-    (model.api.startsWith("openai-") || model.api === "azure-openai-responses") &&
+    model.api === "openai-codex-responses" &&
     model.provider !== "openrouter" &&
     cacheWriteTokens === null &&
     inputTokens !== null &&

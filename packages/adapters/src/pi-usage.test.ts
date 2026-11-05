@@ -525,6 +525,50 @@ describe("Pi usage accounting", () => {
       ).costUsd,
     ).toBeNull();
   });
+  it("derives Codex WebSocket totals and cost without a cache-write field", () => {
+    expect(
+      normalizePiUsage(
+        {
+          input: 100,
+          output: 20,
+          cacheRead: 5,
+          cacheWrite: 0,
+          cost: { input: 0.001, output: 0.002, cacheRead: 0.0001, cacheWrite: 0, total: 0.0031 },
+        },
+        {
+          provider: "openai-codex",
+          api: "openai-codex-responses",
+          cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 3 },
+        },
+      ),
+    ).toMatchObject({
+      cacheWriteTokens: null,
+      totalTokens: 125,
+      costUsd: 0.0031,
+      costSource: "pi-catalog-estimate",
+    });
+  });
+  it.each(["openai-responses", "openai-completions", "azure-openai-responses"] as const)(
+    "keeps missing cache-write usage unknown for SSE API %s",
+    (api) => {
+      expect(
+        normalizePiUsage(
+          {
+            input: 100,
+            output: 20,
+            cacheRead: 5,
+            cacheWrite: 0,
+            cost: { input: 0.001, output: 0.002, cacheRead: 0.0001, cacheWrite: 0, total: 0.0031 },
+          },
+          {
+            provider: "openai",
+            api,
+            cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 3 },
+          },
+        ),
+      ).toMatchObject({ cacheWriteTokens: null, totalTokens: null, costUsd: null });
+    },
+  );
   it("does not start model work when budget reservation fails", async () => {
     const fetcher = vi.fn();
     const push = vi.fn();

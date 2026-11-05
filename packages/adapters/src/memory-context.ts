@@ -166,14 +166,23 @@ function excerpt(content: string, terms: string[], core: boolean): string {
   if (byteLength(content) <= 4096) return content;
   const lower = content.toLowerCase();
   const pieces = core ? [truncateUtf8(content, 1536)] : [];
-  for (const term of terms) {
-    for (const index of [termMatch(lower, term), termMatch(lower, term, true)]) {
-      if (index < 0) continue;
-      const start = Math.max(0, index - 240);
-      const piece = content.slice(start, start + 700);
-      if (!pieces.includes(piece)) pieces.push(piece);
-    }
-    if (byteLength(pieces.join("\n[…]\n")) >= 3500) break;
+  const positions = [
+    ...new Set(
+      terms.flatMap((term) => [termMatch(lower, term), termMatch(lower, term, true)]),
+    ),
+  ].filter((index) => index >= 0);
+  const separatorBytes = byteLength("\n[…]\n");
+  const available =
+    3500 -
+    byteLength(pieces.join("\n[…]\n")) -
+    separatorBytes * Math.max(0, positions.length + pieces.length - 1);
+  const pieceBytes = positions.length
+    ? Math.max(0, Math.min(700, Math.floor(available / positions.length)))
+    : 0;
+  for (const index of positions) {
+    const start = Math.max(0, index - Math.min(240, Math.floor(pieceBytes / 8)));
+    const piece = truncateUtf8(content.slice(start), pieceBytes);
+    if (piece && !pieces.includes(piece)) pieces.push(piece);
   }
   return `${truncateUtf8(pieces.join("\n[…]\n") || content, 3900)}\n[excerpt; recall_memory reads the unchanged original]`;
 }
