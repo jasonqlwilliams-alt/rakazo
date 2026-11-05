@@ -269,7 +269,7 @@ export interface ConnectorCapabilities {
 export type ConnectorCatalogItem = ConnectionCatalogItem;
 
 export interface MemoryReadRequest {
-  scope: "bot" | "user";
+  scope: "bot" | "user" | "archive";
   botId?: string;
   path?: string;
 }
@@ -457,6 +457,10 @@ export interface AgentRunRequest {
   /** Awaited producer-side accounting, independent of event-consumer cancellation. */
   onUsage?: (event: Extract<AgentRuntimeEvent, { type: "usage" }>) => void | Promise<void>;
   contextStrategy?: AgentContextStrategy;
+  /** Per-run execution fuse, including nested tools. */
+  toolCallLimit?: number;
+  /** Durable tool-call count already recorded before this runtime invocation. */
+  toolCallsUsed?: number;
   /** Exclusive workflow cost bucket; retrieval tool turns are detected for answer calls. */
   usageOperationKind?: UsageOperationKind;
   botId: string;

@@ -15,9 +15,9 @@ const allThree = [
 ];
 
 describe("selectMemoryTools", () => {
-  it("keeps native remember and drops semantic memory tools when unconfigured", () => {
+  it("keeps native remember and local recall_memory when semantic memory is unconfigured", () => {
     const names = selectMemoryTools(allThree, false).map((t) => t.name);
-    expect(names).toEqual(["remember", "shell"]);
+    expect(names).toEqual(["remember", "recall_memory", "shell"]);
   });
 
   it("keeps semantic memory tools and drops native remember when configured", () => {

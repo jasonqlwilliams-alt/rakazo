@@ -36,7 +36,7 @@ export type RunStatus = z.infer<typeof RunStatus>;
 export const EffectStatus = z.enum(["intended", "completed", "failed", "ambiguous", "reconciled"]);
 export type EffectStatus = z.infer<typeof EffectStatus>;
 
-export const MemoryScope = z.enum(["bot", "user"]);
+export const MemoryScope = z.enum(["bot", "user", "archive"]);
 export type MemoryScope = z.infer<typeof MemoryScope>;
 
 export const SandboxKind = z.enum([

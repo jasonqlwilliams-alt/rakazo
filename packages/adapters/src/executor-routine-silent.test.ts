@@ -1,4 +1,4 @@
-import type { AgentRunRequest, AgentRuntimeEvent } from "@rakazo/adapter-kit";
+import type { AgentRunRequest, AgentRuntimeEvent, MemoryReadRequest } from "@rakazo/adapter-kit";
 import type { MessageBlock } from "@rakazo/contracts";
 import type { PrismaClient } from "@rakazo/db";
 import { describe, expect, it, vi } from "vitest";
@@ -29,11 +29,21 @@ function fixture({
   events,
   steering = [],
   priorBotMessages = [],
+  contextStrategy,
+  historyCompactionSummary = null,
+  historyCompactedUpToSeq = null,
+  toolCallsUsed = 0,
+  memoryContent,
 }: {
   trigger: "routine" | "user";
   events: AgentRuntimeEvent[];
   steering?: (typeof steeringQuestion)[];
   priorBotMessages?: MessageBlock[][];
+  contextStrategy?: "current" | "retrieval" | "snapshots" | "cache-aware";
+  historyCompactionSummary?: string | null;
+  historyCompactedUpToSeq?: number | null;
+  toolCallsUsed?: number;
+  memoryContent?: string;
 }) {
   const run = {
     id: "run-1",
@@ -105,7 +115,8 @@ function fixture({
         id: run.threadId,
         groupId: null,
         nextMessageSeq: 0,
-        historyCompactedUpToSeq: null,
+        historyCompactionSummary,
+        historyCompactedUpToSeq,
       })),
     },
     message: {
@@ -133,14 +144,23 @@ function fixture({
     scratchpadItem: { findMany: vi.fn(async () => []) },
     actionApprovalRule: { findMany: vi.fn(async () => []) },
     actionAutoReviewPreference: { findUnique: vi.fn(async () => ({ enabled: false })) },
+    event: { count: vi.fn(async () => toolCallsUsed) },
     externalEffect: { findMany: vi.fn(async () => []) },
     $transaction: vi.fn(async (work: (client: typeof tx) => unknown) => work(tx)),
   } as unknown as PrismaClient;
   const executor = createRunExecutor({
     prisma,
+    contextStrategy,
     runtime: { describe: () => ({ capabilities: { scripted: false } }), run: runtimeRun },
     sandbox: { describe: () => ({ capabilities: { graphical: false } }) },
-    memory: { read: async () => ({ documents: [] }) },
+    memory: {
+      read: async ({ scope }: MemoryReadRequest) => ({
+        documents:
+          scope === "bot" && memoryContent
+            ? [{ id: "mem-1", path: "archive.md", content: memoryContent, revision: 1 }]
+            : [],
+      }),
+    },
     memoryProviders: { resolve: async () => null },
     events: {
       append: vi.fn(async () => undefined),
@@ -462,5 +482,56 @@ describe("routine silent finish", () => {
       }),
       expect.anything(),
     );
+  });
+
+  it("omits legacy compacted thread summary under retrieval while keeping it under current", async () => {
+    const retrievalRun = fixture({
+      trigger: "user",
+      contextStrategy: "retrieval",
+      historyCompactionSummary: "Legacy compacted summary payload",
+      historyCompactedUpToSeq: 42,
+      events: [
+        { type: "text", text: "ok" },
+        { type: "done", text: "ok" },
+      ],
+    });
+    await retrievalRun.run();
+    expect(
+      retrievalRun
+        .request()
+        .history.some((m) => m.content.includes("Legacy compacted summary payload")),
+    ).toBe(false);
+
+    const currentRun = fixture({
+      trigger: "user",
+      contextStrategy: "current",
+      historyCompactionSummary: "Legacy compacted summary payload",
+      historyCompactedUpToSeq: 42,
+      events: [
+        { type: "text", text: "ok" },
+        { type: "done", text: "ok" },
+      ],
+    });
+    await currentRun.run();
+    expect(
+      currentRun
+        .request()
+        .history.some((m) => m.content.includes("Legacy compacted summary payload")),
+    ).toBe(true);
+  });
+
+  it("bounds routine runs to 40 tool calls with durable counts and a 12 KiB memory window", async () => {
+    const f = fixture({
+      trigger: "routine",
+      toolCallsUsed: 7,
+      memoryContent: "hourly check notes ".repeat(2000),
+      events: [{ type: "done" }],
+    });
+    await f.run();
+    expect(f.request()).toMatchObject({
+      toolCallLimit: 40,
+      toolCallsUsed: 7,
+    });
+    expect(Buffer.byteLength(f.request().instructions, "utf8")).toBeLessThan(20 * 1024);
   });
 });

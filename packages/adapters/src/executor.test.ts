@@ -1689,7 +1689,7 @@ describe("createRunExecutor", () => {
             })),
           },
           task: { create: taskCreate },
-          run: { create: runCreate },
+          run: { findFirst: vi.fn(async () => null), create: runCreate },
         }),
       ),
     } as unknown as PrismaClient;
@@ -1764,7 +1764,7 @@ describe("createRunExecutor", () => {
               findUnique: vi.fn(async () => claimedModel),
             },
             task: { create: taskCreate },
-            run: { create: runCreate },
+            run: { findFirst: vi.fn(async () => null), create: runCreate },
           }),
         ),
       } as unknown as PrismaClient;
@@ -1914,7 +1914,7 @@ describe("createRunExecutor", () => {
             })),
           },
           task: { create: taskCreate },
-          run: { create: runCreate },
+          run: { findFirst: vi.fn(async () => null), create: runCreate },
         }),
       ),
     } as unknown as PrismaClient;
@@ -1986,7 +1986,7 @@ describe("createRunExecutor", () => {
             })),
           },
           task: { create: taskCreate },
-          run: { create: runCreate },
+          run: { findFirst: vi.fn(async () => null), create: runCreate },
         }),
       ),
     } as unknown as PrismaClient;
@@ -2075,7 +2075,7 @@ description: Prepare standup notes
             })),
           },
           task: { create: taskCreate },
-          run: { create: vi.fn(async () => ({ id: "run-1" })) },
+          run: { findFirst: vi.fn(async () => null), create: vi.fn(async () => ({ id: "run-1" })) },
         }),
       ),
     } as unknown as PrismaClient;
@@ -2135,7 +2135,10 @@ description: Prepare standup notes
             })),
           },
           task: { create: vi.fn(async () => ({ id: "task-1" })) },
-          run: { create: vi.fn(async () => ({ id: "run-1", taskId: "task-1" })) },
+          run: {
+            findFirst: vi.fn(async () => null),
+            create: vi.fn(async () => ({ id: "run-1", taskId: "task-1" })),
+          },
         }),
       ),
     } as unknown as PrismaClient;
@@ -2200,7 +2203,10 @@ description: Prepare standup notes
               })),
             },
             task: { create: vi.fn(async () => ({ id: "task-1" })) },
-            run: { create: vi.fn(async () => ({ id: "run-1", taskId: "task-1" })) },
+            run: {
+              findFirst: vi.fn(async () => null),
+              create: vi.fn(async () => ({ id: "run-1", taskId: "task-1" })),
+            },
           });
         }
         return callback({
@@ -2516,6 +2522,7 @@ description: Prepare standup notes
           },
     );
     const prisma = {
+      computerExecutionLease: { findFirst: vi.fn(async () => null) },
       run: {
         findUnique: vi.fn(async () => run),
         findUniqueOrThrow: vi.fn(async () => ({ status: "leased", startedAt: null })),
@@ -2597,6 +2604,7 @@ description: Prepare standup notes
       leaseFence: 0,
     };
     const prisma = {
+      computerExecutionLease: { findFirst: vi.fn(async () => null) },
       run: {
         findUnique: vi.fn(async () => run),
         findUniqueOrThrow: vi.fn(async () => ({ status: "leased", startedAt: null })),

@@ -407,12 +407,44 @@ export function selectContext<T extends ContextMessage>(
   const exchangeLimit = keepPrefix
     ? Number.POSITIVE_INFINITY
     : Math.max(1, options.recentExchanges ?? 8);
-  let exchanges = 0;
+  const groupExchangeIds: Array<number | null> = [];
+  let currentExchange = 0;
+  let awaitingAssistantReply = false;
+  for (const group of groups) {
+    const firstRole = messages[group.indexes[0]!]!.role;
+    const hasToolResult = group.indexes.some((i) => messages[i]!.role === "toolResult");
+    if (firstRole === "system") {
+      groupExchangeIds.push(null);
+      continue;
+    }
+    if (firstRole === "user") {
+      currentExchange += 1;
+      awaitingAssistantReply = true;
+      groupExchangeIds.push(currentExchange);
+      continue;
+    }
+    if (hasToolResult) {
+      if (!awaitingAssistantReply) {
+        currentExchange += 1;
+        awaitingAssistantReply = true;
+      }
+      groupExchangeIds.push(currentExchange);
+      continue;
+    }
+    // Assistant-only group: completes an open user/tool turn, or counts on its own.
+    if (!awaitingAssistantReply) currentExchange += 1;
+    awaitingAssistantReply = false;
+    groupExchangeIds.push(currentExchange);
+  }
+  const seenExchanges = new Set<number>();
   // Retain a contiguous recent suffix. Skip no holes inside a retained tool group.
   for (let index = groups.length - 1; index >= 0; index--) {
     const group = groups[index]!;
-    if (group.indexes.some((i) => messages[i]!.role === "user")) exchanges += 1;
-    if (exchanges > exchangeLimit && !selected.has(group)) break;
+    const exchangeId = groupExchangeIds[index] ?? null;
+    if (exchangeId !== null && !seenExchanges.has(exchangeId)) {
+      if (seenExchanges.size + 1 > exchangeLimit && !selected.has(group)) break;
+      seenExchanges.add(exchangeId);
+    }
     if (selected.has(group)) continue;
     if (used + group.tokens > available) break;
     selected.add(group);

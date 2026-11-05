@@ -1,0 +1,262 @@
+import type { AdapterContext, MemoryStore } from "@rakazo/adapter-kit";
+import { describe, expect, it, vi } from "vitest";
+import { loadAgentMemoryContext, recallLocalMemory } from "./memory-context.js";
+
+const context = {
+  spaceId: "space",
+  userId: "owner",
+  botId: "bot",
+} as AdapterContext;
+
+const docs = [
+  {
+    id: "core",
+    path: "MEMORY.md",
+    content: "Core preference: concise answers.",
+    revision: 1,
+  },
+  {
+    id: "archive",
+    path: "archive.md",
+    content: "unrelated historical material ".repeat(10_000),
+    revision: 2,
+  },
+  {
+    id: "match",
+    path: "orchids.md",
+    content: "Orchids need filtered light and careful watering.",
+    revision: 3,
+  },
+];
+
+function memory() {
+  const read = vi.fn(async (input: { scope: string; path?: string }) => ({
+    documents:
+      input.scope === "bot" ? docs.filter((d) => !input.path || d.path === input.path) : [],
+  }));
+  return { read, store: { read } as unknown as MemoryStore };
+}
+
+describe("task-relevant local memory", () => {
+  it("emits the full memory store unchanged when all documents already fit maxBytes", async () => {
+    const store = {
+      read: async ({ scope }: { scope: string }) => ({
+        documents:
+          scope === "user"
+            ? [{ id: "u1", path: "preferences.md", revision: 1, content: "User likes tea." }]
+            : [
+                {
+                  id: "b1",
+                  path: "project-notes.md",
+                  revision: 2,
+                  content: "HOLD: Wait for sign-off before publishing.\n\nUnrelated fact: cedar.",
+                },
+                {
+                  id: "b2",
+                  path: "state/holds_index.md",
+                  revision: 1,
+                  content: "Active hold index entry.",
+                },
+              ],
+      }),
+    } as unknown as MemoryStore;
+
+    const result = await loadAgentMemoryContext(store, "bot", context, 32 * 1024, {
+      query: "Yes, go ahead",
+    });
+
+    expect(result).toContain("User likes tea.");
+    expect(result).toContain("Unrelated fact: cedar.");
+    expect(result).toContain("Active hold index entry.");
+    expect(result).not.toContain("<memory_constraints>");
+    expect(result).not.toContain("Memory excerpts selected for this task");
+  });
+
+  it("preserves a distant hold and appended correction on an unrelated task", async () => {
+    const hold = "HOLD: Do not publish the draft without direct approval.";
+    const correction = "CORRECTION: Earlier permission is WITHDRAWN; review is still required.";
+    const tail = "The prior exception is no longer applicable.";
+    const content =
+      "old material ".repeat(40_000) +
+      `\n\n${hold}\n\n` +
+      "more history ".repeat(5000) +
+      `\n\n${correction}\n\n${tail}\n\nReceipt footer.\n\n`;
+    const store = {
+      read: async ({ scope }: { scope: string }) => ({
+        documents:
+          scope === "user" ? [] : [{ id: "rules", path: "old-log.md", revision: 9, content }],
+      }),
+    } as unknown as MemoryStore;
+    const result = await loadAgentMemoryContext(store, "bot", context, 256, { query: "orchids" });
+    expect(result).toContain(hold);
+    expect(result).toContain(correction);
+    expect(result).toContain(tail);
+    expect(result!.indexOf(hold)).toBeLessThan(result!.indexOf(correction));
+  });
+
+  it.each([
+    "state/holds_index",
+    "state/holds_index.md",
+    "state/holds_index_20261102.md",
+    "state/holds-index-2026-11-02.md",
+  ])(
+    "pins a complete hold index at %s without duplicating it inside durable excerpts",
+    async (indexPath) => {
+      const content = "current restrictions and their original references\n".repeat(50);
+      const rule = "Do not send the report until its owner approves.";
+      const filler = "background log entry\n".repeat(400);
+      const store = {
+        read: async ({ scope }: { scope: string }) => ({
+          documents:
+            scope === "user"
+              ? []
+              : [
+                  { id: "index", path: indexPath, revision: 2, content },
+                  { id: "rule", path: "limits.md", revision: 1, content: rule },
+                  { id: "filler", path: "notes.md", revision: 1, content: filler },
+                ],
+        }),
+      } as unknown as MemoryStore;
+      const result = await loadAgentMemoryContext(store, "bot", context, 2048, {
+        query: "holds index status",
+      });
+      expect(result).toContain(content);
+      expect(result).toContain(rule);
+      expect(result!.split(content.trim()).length - 1).toBe(1);
+    },
+  );
+
+  it("fails closed instead of truncating an oversized protected rule", async () => {
+    const store = {
+      read: async ({ scope }: { scope: string }) => ({
+        documents:
+          scope === "user"
+            ? []
+            : [
+                {
+                  id: "rule",
+                  path: "rules.md",
+                  revision: 1,
+                  content: `HOLD: ${"x".repeat(270_000)}`,
+                },
+              ],
+      }),
+    } as unknown as MemoryStore;
+    await expect(
+      loadAgentMemoryContext(store, "bot", context, 1024, { query: "irrelevant" }),
+    ).rejects.toThrow("refusing to truncate holds or corrections");
+  });
+
+  it("pages multibyte originals and repairs an offset inside a surrogate pair", async () => {
+    const content = "🙂".repeat(5000);
+    const store = {
+      read: async () => ({
+        documents: [{ id: "unicode", path: "unicode.md", revision: 1, content }],
+      }),
+    } as unknown as MemoryStore;
+    let offset: number | null = 0;
+    let restored = "";
+    while (offset !== null) {
+      const result = await recallLocalMemory(store, "bot", context, {
+        path: "unicode.md",
+        scope: "bot",
+        offset,
+      });
+      const page = result.documents[0]!;
+      restored += page.content;
+      offset = "nextOffset" in page ? page.nextOffset : null;
+    }
+    expect(restored).toBe(content);
+    const result = await recallLocalMemory(store, "bot", context, {
+      path: "unicode.md",
+      scope: "bot",
+      offset: 1,
+    });
+    expect(result.documents[0]!.content).toMatch(/^🙂/);
+  });
+
+  it("keeps core preferences and task facts without injecting an irrelevant archive", async () => {
+    const { store } = memory();
+    const result = await loadAgentMemoryContext(store, "bot", context, 12 * 1024, {
+      query: "How should I water orchids?",
+    });
+    expect(result).toContain("concise answers");
+    expect(result).toContain("careful watering");
+    expect(result).not.toContain("unrelated historical material");
+    expect(result).toContain("recall_memory");
+    expect(Buffer.byteLength(result!)).toBeLessThanOrEqual(12 * 1024);
+    expect(docs[1]!.content.length).toBeGreaterThan(200_000);
+  });
+
+  it("searches original documents, lists with omitted query, and reads archived scope", async () => {
+    const read = vi.fn(async (input: { scope: string; botId?: string; path?: string }) => ({
+      documents:
+        input.scope === "archive"
+          ? [
+              {
+                id: "arch-1",
+                path: "2026-11-04/log.md",
+                content: "Archived cedar milestone details.",
+                revision: 4,
+              },
+            ].filter((d) => !input.path || d.path === input.path)
+          : input.scope === "bot"
+            ? docs.filter((d) => !input.path || d.path === input.path)
+            : [],
+    }));
+    const store = { read } as unknown as MemoryStore;
+
+    const listed = await recallLocalMemory(store, "bot", context, { scope: "archive" });
+    expect(listed.documents).toEqual([
+      expect.objectContaining({
+        path: "2026-11-04/log.md",
+        scope: "archive",
+        revision: 4,
+        content: undefined,
+      }),
+    ]);
+    expect(read).toHaveBeenCalledWith({ scope: "archive", botId: "bot" }, context);
+
+    const found = await recallLocalMemory(store, "bot", context, {
+      query: "historical",
+    });
+    expect(found.documents[0]?.path).toBe("archive.md");
+    let offset: number | null = 0;
+    let content = "";
+    while (offset !== null) {
+      const result = await recallLocalMemory(store, "bot", context, {
+        path: "archive.md",
+        scope: "bot",
+        offset,
+      });
+      const page = result.documents[0]!;
+      expect(Buffer.byteLength(page.content!)).toBeLessThanOrEqual(4096);
+      content += page.content;
+      offset = "nextOffset" in page ? page.nextOffset : null;
+    }
+    expect(content).toBe(docs[1]!.content);
+  });
+
+  it("retains a bounded relevant excerpt from the end of an oversized document", async () => {
+    const store = {
+      read: async ({ scope }: { scope: string }) => ({
+        documents:
+          scope === "user"
+            ? []
+            : [
+                {
+                  id: "large",
+                  path: "notes.md",
+                  revision: 1,
+                  content: `${"old text ".repeat(50_000)}\nUniqueCedar fact near the end.`,
+                },
+              ],
+      }),
+    } as unknown as MemoryStore;
+    const result = await loadAgentMemoryContext(store, "bot", context, 2048, {
+      query: "UniqueCedar",
+    });
+    expect(result).toContain("UniqueCedar fact");
+    expect(Buffer.byteLength(result!)).toBeLessThanOrEqual(2048);
+  });
+});

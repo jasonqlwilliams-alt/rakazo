@@ -138,12 +138,12 @@ const AGENT_TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const MAX_AGENT_TOOL_NAME_LENGTH = 64;
 const FALLBACK_AGENT_TOOL_NAME = "connector_tool";
 
-/** Optional self-host fuse. Unset, empty, or 0 means unlimited (default). */
+/** Finite default; an explicit zero disables the owner-configured general fuse. */
 export function maxToolCallsPerTurn(env: NodeJS.ProcessEnv = process.env): number {
   const raw = env.MAX_TOOL_CALLS_PER_TURN?.trim();
-  if (!raw) return 0;
+  if (!raw) return 200;
   const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+  if (!Number.isFinite(parsed) || parsed < 0) return 200;
   return Math.floor(parsed);
 }
 
@@ -239,7 +239,11 @@ export class PiAgentRuntime implements AgentRuntime {
         const toolDefs = request.tools;
         const nestedAgents = new Set<Agent>();
         const completionModel = modelForCompletion(model, request.model.maxTokens);
-        trackedBudget = toolCallBudgetFor(request.runId);
+        trackedBudget = toolCallBudgetFor(
+          request.runId,
+          request.toolCallLimit,
+          request.toolCallsUsed,
+        );
         const initialModelTarget: RuntimeModelTarget = {
           config: request.model,
           models,
@@ -2306,17 +2310,23 @@ function toolCallBudgetExceededMessage(limit: number) {
   return `I stopped after reaching the limit of ${limit} tool calls in this turn. Send another message to continue.`;
 }
 
-function toolCallBudgetFor(runId: string): ToolCallBudget {
+function toolCallBudgetFor(runId: string, requestedLimit?: number, used = 0): ToolCallBudget {
+  const configuredLimit = maxToolCallsPerTurn();
+  const limit =
+    requestedLimit === undefined
+      ? configuredLimit
+      : Math.min(requestedLimit, configuredLimit || requestedLimit);
   const existing = toolCallBudgetsByRun.get(runId);
   if (existing) {
     existing.inFlight = 0;
-    existing.limit = maxToolCallsPerTurn();
+    existing.limit = limit;
+    existing.count = Math.max(existing.count, used);
     return existing;
   }
   const budget: ToolCallBudget = {
-    count: 0,
+    count: used,
     exceeded: false,
-    limit: maxToolCallsPerTurn(),
+    limit,
     inFlight: 0,
   };
   if (budget.limit > 0) toolCallBudgetsByRun.set(runId, budget);

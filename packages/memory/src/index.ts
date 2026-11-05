@@ -31,7 +31,13 @@ export class MarkdownMemoryStore implements MemoryStore {
         spaceId: context.spaceId,
         userId: context.userId,
         scope: request.scope,
-        ...(request.botId ? { botId: request.botId } : {}),
+        ...(request.scope === "archive"
+          ? {
+              OR: request.botId ? [{ botId: request.botId }, { botId: null }] : [{ botId: null }],
+            }
+          : request.botId
+            ? { botId: request.botId }
+            : {}),
         ...(request.path ? { path: request.path } : {}),
       },
       orderBy: [{ updatedAt: "desc" }, { path: "asc" }],
@@ -55,7 +61,9 @@ export class MarkdownMemoryStore implements MemoryStore {
       where: {
         spaceId: context.spaceId,
         userId: context.userId,
-        ...(request.scope === "all" ? {} : { scope: request.scope }),
+        ...(request.scope === "all"
+          ? { scope: { in: ["bot", "user"] } }
+          : { scope: request.scope }),
         ...(request.botId ? { botId: request.botId } : {}),
       },
     });
