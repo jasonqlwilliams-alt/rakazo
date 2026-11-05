@@ -117,8 +117,9 @@ const COMMON_WORDS = new Set(
 );
 
 function queryTerms(query: string): string[] {
-  return [...new Set(query.toLowerCase().match(/[\p{L}\p{N}][\p{L}\p{N}_-]*[\p{L}\p{N}]/gu) ?? [])]
-    .filter((term) => !COMMON_WORDS.has(term));
+  return [
+    ...new Set(query.toLowerCase().match(/[\p{L}\p{N}][\p{L}\p{N}_-]*[\p{L}\p{N}]/gu) ?? []),
+  ].filter((term) => !COMMON_WORDS.has(term));
 }
 
 function relevance(

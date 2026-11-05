@@ -3327,7 +3327,9 @@ export function createRouter(deps: RouterDeps) {
               }
               const sourcePath = requireMemoryPath(doc.path);
               let suffix = 1;
-              let nextPath = requireMemoryPath(archivedMemoryPath(date, doc.scope, sourcePath, suffix));
+              let nextPath = requireMemoryPath(
+                archivedMemoryPath(date, doc.scope, sourcePath, suffix),
+              );
               while (
                 await tx.memoryDocument.findFirst({
                   where: {

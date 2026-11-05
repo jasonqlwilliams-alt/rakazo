@@ -32,9 +32,11 @@ re-reads the row when the job fires and returns immediately unless the routine
 is still `active` and `nextRunAt` still matches the scheduled instant.
 It atomically claims the fire and creates a task
 and a run with `trigger: "routine"` and the routine's ID, then queues
-`run.continue`. The `routine.fired` thread event is best effort; the run is the
-authoritative record. Recurring schedules enqueue their next wakeup. The saved
-prompt expands skill references before execution.
+`run.continue`. If a run for the same routine is still unfinished, the fire
+creates no new run; the next wakeup is queued and `lastRunAt` is restored.
+The `routine.fired` thread event is best effort; the run is the authoritative
+record. Recurring schedules enqueue their next wakeup. The saved prompt expands
+skill references before execution.
 
 A paused routine is inert at two levels: no wakeup job is enqueued while
 `active` is `false`, and a stray wakeup job would no-op on the `active` check.
@@ -43,6 +45,13 @@ Pausing an active routine cancels its pending wakeup job.
 `routines.testRun` bypasses the schedule and runs the routine's prompt
 immediately. It is a real run against the bot — it is not a dry run, and it is
 not gated by `active`.
+
+Routine runs use at most 12 KiB of ordinary memory context, 40 tool calls, and
+ten minutes of execution. The memory window includes the whole store when it
+fits; otherwise the run receives task-selected excerpts and can read originals
+with `recall_memory`. The protected rule and hold-index block has its own
+fail-closed ceiling; see `AGENT_MEMORY_MAX_BYTES` in [`.env.example`](../.env.example)
+for the configurable ordinary window.
 
 ## Notifications
 

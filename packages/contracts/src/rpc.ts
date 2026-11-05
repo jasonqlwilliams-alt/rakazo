@@ -511,6 +511,7 @@ export const appContract = {
     heartbeat: oc.input(botId).output(z.object({ ok: z.literal(true) })),
   },
   memory: {
+    /** List and Markdown export include bot and user documents by default; scope selects one, including archive. */
     list: oc
       .input(z.object({ botId: Id.optional(), scope: MemoryScope.optional() }))
       .output(z.array(MemoryDocumentSchema)),
