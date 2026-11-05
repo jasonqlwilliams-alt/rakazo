@@ -61,13 +61,23 @@ export async function loadAgentMemoryContext(
       left.path.localeCompare(right.path),
   );
 
+  const fullDocumentBytes = documents.reduce(
+    (sum, document, index) =>
+      sum +
+      (index > 0 ? byteLength(SECTION_SEPARATOR) : 0) +
+      byteLength(sectionHeader(document)) +
+      byteLength(document.content),
+    0,
+  );
   const standardBudget = maxBytes - byteLength(PREAMBLE) - byteLength(CLOSING);
-  const totalCost = documents.reduce((sum, document) => sum + sectionCost(document), 0);
+  if (fullDocumentBytes <= standardBudget) {
+    const fullDocuments = documents
+      .map((document) => `${sectionHeader(document)}${document.content}`)
+      .join(SECTION_SEPARATOR);
+    return `${PREAMBLE}${fullDocuments}${CLOSING}`;
+  }
   if (!options) {
     if (standardBudget <= 0) return truncateUtf8(`${PREAMBLE}${CLOSING}`, maxBytes);
-    return `${PREAMBLE}${renderDocuments(documents, standardBudget)}${CLOSING}`;
-  }
-  if (standardBudget > 0 && totalCost <= standardBudget) {
     return `${PREAMBLE}${renderDocuments(documents, standardBudget)}${CLOSING}`;
   }
 

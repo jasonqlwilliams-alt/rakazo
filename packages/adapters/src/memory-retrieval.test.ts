@@ -72,6 +72,29 @@ describe("task-relevant local memory", () => {
     expect(result).not.toContain("Memory excerpts selected for this task");
   });
 
+  it.each([1, 2])("keeps %i complete document(s) at the exact byte boundary", async (count) => {
+    const documents = Array.from({ length: count }, (_, index) => ({
+      id: `note-${index}`,
+      path: `note-${index}.md`,
+      revision: 1,
+      content: `Cedar project note ${index}.`,
+    }));
+    const store = {
+      read: async ({ scope }: { scope: string }) => ({
+        documents: scope === "bot" ? documents : [],
+      }),
+    } as unknown as MemoryStore;
+    const query = { query: "unrelated orchids" };
+    const full = await loadAgentMemoryContext(store, "bot", context, 32 * 1024, query);
+    const exactBytes = Buffer.byteLength(full!);
+
+    const exact = await loadAgentMemoryContext(store, "bot", context, exactBytes, query);
+
+    expect(exact).toBe(full);
+    expect(Buffer.byteLength(exact!)).toBe(exactBytes);
+    for (const document of documents) expect(exact).toContain(document.content);
+  });
+
   it("preserves a distant hold and appended correction on an unrelated task", async () => {
     const hold = "HOLD: Do not publish the draft without direct approval.";
     const correction = "CORRECTION: Earlier permission is WITHDRAWN; review is still required.";
