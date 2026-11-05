@@ -138,12 +138,11 @@ const AGENT_TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const MAX_AGENT_TOOL_NAME_LENGTH = 64;
 const FALLBACK_AGENT_TOOL_NAME = "connector_tool";
 
-/** Finite default; an explicit zero disables the owner-configured general fuse. */
 export function maxToolCallsPerTurn(env: NodeJS.ProcessEnv = process.env): number {
   const raw = env.MAX_TOOL_CALLS_PER_TURN?.trim();
-  if (!raw) return 200;
+  if (!raw) return 0;
   const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed < 0) return 200;
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
   return Math.floor(parsed);
 }
 

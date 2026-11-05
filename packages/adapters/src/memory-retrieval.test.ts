@@ -95,6 +95,42 @@ describe("task-relevant local memory", () => {
     for (const document of documents) expect(exact).toContain(document.content);
   });
 
+  it("clamps a tiny memory window without protected constraints", async () => {
+    const store = {
+      read: async ({ scope }: { scope: string }) => ({
+        documents:
+          scope === "bot"
+            ? [{ id: "note", path: "note.md", revision: 1, content: "Ordinary cedar facts." }]
+            : [],
+      }),
+    } as unknown as MemoryStore;
+
+    const result = await loadAgentMemoryContext(store, "bot", context, 64, {
+      query: "unrelated orchids",
+    });
+
+    expect(Buffer.byteLength(result!)).toBeLessThanOrEqual(64);
+    expect(result).not.toContain("Ordinary cedar facts.");
+  });
+
+  it("keeps protected constraints intact when the memory window is tiny", async () => {
+    const rule = "HOLD: Do not publish the draft.";
+    const store = {
+      read: async ({ scope }: { scope: string }) => ({
+        documents:
+          scope === "bot" ? [{ id: "rule", path: "rules.md", revision: 1, content: rule }] : [],
+      }),
+    } as unknown as MemoryStore;
+
+    const result = await loadAgentMemoryContext(store, "bot", context, 64, {
+      query: "unrelated orchids",
+    });
+
+    expect(result).toContain("<memory_constraints>");
+    expect(result).toContain(rule);
+    expect(Buffer.byteLength(result!)).toBeGreaterThan(64);
+  });
+
   it("preserves a distant hold and appended correction on an unrelated task", async () => {
     const hold = "HOLD: Do not publish the draft without direct approval.";
     const correction = "CORRECTION: Earlier permission is WITHDRAWN; review is still required.";

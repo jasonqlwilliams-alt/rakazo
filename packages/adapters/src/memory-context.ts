@@ -84,7 +84,10 @@ export async function loadAgentMemoryContext(
   const retrievalNote = `Memory excerpts selected for this task from ${documents.length} saved documents. Originals are unchanged. Use recall_memory to search other facts or read a document by its exact path and scope; use nextOffset to continue.\n`;
   const constraints = protectedMemoryContext(documents);
   const budget = standardBudget - byteLength(retrievalNote);
-  if (budget <= 0) return `${PREAMBLE}${constraints}${CLOSING}`;
+  if (budget <= 0) {
+    if (!constraints) return truncateUtf8(`${PREAMBLE}${CLOSING}`, maxBytes);
+    return `${PREAMBLE}${constraints}${CLOSING}`;
+  }
 
   const selected = selectTaskMemory(documents, options.query);
   return `${PREAMBLE}${constraints}${retrievalNote}${renderDocuments(selected, budget)}${CLOSING}`;
