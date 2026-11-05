@@ -510,6 +510,23 @@ describe("task-relevant local memory", () => {
     expect(Buffer.byteLength(recalled.documents[0]?.content ?? "")).toBeLessThanOrEqual(1200);
   });
 
+  it("keeps a late match in a short local recall snippet", async () => {
+    const content = `${"Background notes. ".repeat(110)}Orchids need filtered light.`;
+    const store = {
+      read: async ({ scope }: { scope: string }) => ({
+        documents:
+          scope === "bot" ? [{ id: "notes", path: "notes.md", revision: 1, content }] : [],
+      }),
+    } as unknown as MemoryStore;
+    expect(Buffer.byteLength(content)).toBeGreaterThan(1200);
+    expect(Buffer.byteLength(content)).toBeLessThan(4096);
+
+    const recalled = await recallLocalMemory(store, "bot", context, { query: "orchids" });
+
+    expect(recalled.documents[0]?.content).toContain("Orchids need filtered light.");
+    expect(Buffer.byteLength(recalled.documents[0]?.content ?? "")).toBeLessThanOrEqual(1200);
+  });
+
   it("selects a relevant memory after more than 64 setup terms", async () => {
     const store = {
       read: async ({ scope }: { scope: string }) => ({

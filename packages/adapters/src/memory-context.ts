@@ -163,7 +163,7 @@ function relevance(
 }
 
 function excerpt(content: string, terms: string[], core: boolean, maxBytes = 3900): string {
-  if (byteLength(content) <= 4096) return content;
+  if (byteLength(content) <= Math.min(4096, maxBytes)) return content;
   const lower = content.toLowerCase();
   const pieces = core ? [truncateUtf8(content, 1536)] : [];
   const matches = terms.flatMap((term) => {
