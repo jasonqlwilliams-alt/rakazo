@@ -781,8 +781,7 @@ export const builtinAgentTools: ConnectorTool[] = [
       required: ["messageId"],
     },
   },
-  // Semantic-memory tools: exposed by selectMemoryTools() only when a
-  // A Space memory provider is configured (which hides `remember`).
+  // Save and forget need a configured semantic provider; recall also reads local documents.
   {
     name: "save_memory",
     description:
@@ -797,13 +796,23 @@ export const builtinAgentTools: ConnectorTool[] = [
   },
   {
     name: "recall_memory",
-    description: "Semantically search this bot's durable memory for facts relevant to a query.",
+    description:
+      "Retrieve durable memory relevant to a query, or read local documents by exact path and scope (bot, user, or archive) with offset/nextOffset paging; omit query to list documents in the selected scope. Originals remain stored even when only excerpts fit the prompt.",
     inputSchema: {
       type: "object",
       properties: {
         query: { type: "string" },
+        path: {
+          type: "string",
+          description: "Exact relative document path for a local memory read.",
+        },
+        scope: { type: "string", enum: ["bot", "user", "archive"] },
+        offset: {
+          type: "integer",
+          minimum: 0,
+          description: "Use nextOffset from the previous result.",
+        },
       },
-      required: ["query"],
     },
   },
   {

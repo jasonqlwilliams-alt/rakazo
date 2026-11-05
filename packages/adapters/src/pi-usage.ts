@@ -25,7 +25,7 @@ const reportedCosts = new WeakMap<ReportedUsageFields, number>();
 const reportedValues = new WeakMap<ReportedUsageFields, Map<keyof AgentUsage, number>>();
 export function normalizePiUsage(
   usage: Partial<Usage> | undefined,
-  model: Pick<Model<Api>, "cost">,
+  model: Pick<Model<Api>, "cost"> & Partial<Pick<Model<Api>, "api" | "provider">>,
   reported: ReportedUsageFields = new Set(),
 ): AgentUsage {
   const token = (value: number | undefined, key: keyof AgentUsage) =>
@@ -39,8 +39,19 @@ export function normalizePiUsage(
   const outputTokens = token(usage?.output, "outputTokens");
   const cacheReadTokens = token(usage?.cacheRead, "cacheReadTokens");
   const cacheWriteTokens = token(usage?.cacheWrite, "cacheWriteTokens");
+  const cacheWriteInapplicable =
+    model.api === "openai-codex-responses" &&
+    model.provider !== "openrouter" &&
+    cacheWriteTokens === null &&
+    inputTokens !== null &&
+    outputTokens !== null;
   const rawTotal = reportedValues.get(reported)?.get("totalTokens");
-  const buckets = [inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens];
+  const buckets = [
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens ?? (cacheWriteInapplicable ? 0 : null),
+  ];
   const derivedTotal = buckets.every((value) => value !== null)
     ? buckets.reduce<number>((sum, value) => sum + value!, 0)
     : null;
@@ -57,7 +68,7 @@ export function normalizePiUsage(
     inputTokens !== null &&
     outputTokens !== null &&
     (model.cost.cacheRead === 0 || cacheReadTokens !== null) &&
-    (model.cost.cacheWrite === 0 || cacheWriteTokens !== null);
+    (model.cost.cacheWrite === 0 || cacheWriteTokens !== null || cacheWriteInapplicable);
   const providerCost = reportedCosts.get(reported);
   return {
     inputTokens,
@@ -77,6 +88,76 @@ export function normalizePiUsage(
     pricingVersion: providerCost !== undefined ? null : costKnown ? "pi-ai-1.3.0" : null,
     usageSource: reported.size ? "provider-reported-via-pi" : "pi-normalized",
   };
+}
+
+/** Record numeric usage field presence from a parsed SSE or WebSocket provider stream event. */
+export function observeProviderUsageEvent(rawEvent: unknown, reported: ReportedUsageFields): void {
+  if (!rawEvent || typeof rawEvent !== "object") return;
+  const event = rawEvent as {
+    usage?: Record<string, unknown>;
+    response?: { usage?: Record<string, unknown> };
+    message?: { usage?: Record<string, unknown> };
+  };
+  const usage = event.usage ?? event.response?.usage ?? event.message?.usage;
+  if (!usage || typeof usage !== "object") return;
+  const mark = (value: unknown, key: keyof AgentUsage) => {
+    if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) {
+      reported.add(key);
+      const values = reportedValues.get(reported) ?? new Map();
+      values.set(key, value);
+      reportedValues.set(reported, values);
+    }
+  };
+  const promptDetails =
+    usage.prompt_tokens_details && typeof usage.prompt_tokens_details === "object"
+      ? (usage.prompt_tokens_details as Record<string, unknown>)
+      : undefined;
+  const inputDetails =
+    usage.input_tokens_details && typeof usage.input_tokens_details === "object"
+      ? (usage.input_tokens_details as Record<string, unknown>)
+      : undefined;
+  const completionDetails =
+    usage.completion_tokens_details && typeof usage.completion_tokens_details === "object"
+      ? (usage.completion_tokens_details as Record<string, unknown>)
+      : undefined;
+  const outputDetails =
+    usage.output_tokens_details && typeof usage.output_tokens_details === "object"
+      ? (usage.output_tokens_details as Record<string, unknown>)
+      : undefined;
+  const cacheCreation =
+    usage.cache_creation && typeof usage.cache_creation === "object"
+      ? (usage.cache_creation as Record<string, unknown>)
+      : undefined;
+  const rawInput = usage.prompt_tokens ?? usage.input_tokens;
+  const includesCache =
+    usage.prompt_tokens !== undefined ||
+    event.response !== undefined ||
+    usage.input_tokens_details !== undefined;
+  const rawRead =
+    promptDetails?.cached_tokens ??
+    inputDetails?.cached_tokens ??
+    usage.prompt_cache_hit_tokens ??
+    usage.cached_tokens;
+  const rawWrite = promptDetails?.cache_write_tokens ?? inputDetails?.cache_write_tokens;
+  mark(
+    typeof rawInput === "number" && includesCache
+      ? Math.max(
+          0,
+          rawInput -
+            (typeof rawRead === "number" ? rawRead : 0) -
+            (typeof rawWrite === "number" ? rawWrite : 0),
+        )
+      : rawInput,
+    "inputTokens",
+  );
+  mark(usage.completion_tokens ?? usage.output_tokens, "outputTokens");
+  mark(usage.total_tokens, "totalTokens");
+  if (typeof usage.cost === "number" && Number.isFinite(usage.cost) && usage.cost >= 0)
+    reportedCosts.set(reported, usage.cost);
+  mark(rawRead ?? usage.cache_read_input_tokens, "cacheReadTokens");
+  mark(rawWrite ?? usage.cache_creation_input_tokens, "cacheWriteTokens");
+  mark(cacheCreation?.ephemeral_1h_input_tokens, "cacheWrite1hTokens");
+  mark(completionDetails?.reasoning_tokens ?? outputDetails?.reasoning_tokens, "reasoningTokens");
 }
 
 /** Read only bounded SSE frames, retaining field presence, never provider text or payloads. */
@@ -99,53 +180,7 @@ export function usageReportingFetch(
         .join("\n");
       if (!data || data === "[DONE]") return;
       try {
-        const event = JSON.parse(data);
-        const usage = event.usage ?? event.response?.usage ?? event.message?.usage;
-        if (!usage || typeof usage !== "object") return;
-        const mark = (value: unknown, key: keyof AgentUsage) => {
-          if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) {
-            reported.add(key);
-            const values = reportedValues.get(reported) ?? new Map();
-            values.set(key, value);
-            reportedValues.set(reported, values);
-          }
-        };
-        const rawInput = usage.prompt_tokens ?? usage.input_tokens;
-        const includesCache =
-          usage.prompt_tokens !== undefined ||
-          event.response !== undefined ||
-          usage.input_tokens_details !== undefined;
-        const rawRead =
-          usage.prompt_tokens_details?.cached_tokens ??
-          usage.input_tokens_details?.cached_tokens ??
-          usage.prompt_cache_hit_tokens ??
-          usage.cached_tokens;
-        const rawWrite =
-          usage.prompt_tokens_details?.cache_write_tokens ??
-          usage.input_tokens_details?.cache_write_tokens;
-        mark(
-          typeof rawInput === "number" && includesCache
-            ? Math.max(
-                0,
-                rawInput -
-                  (typeof rawRead === "number" ? rawRead : 0) -
-                  (typeof rawWrite === "number" ? rawWrite : 0),
-              )
-            : rawInput,
-          "inputTokens",
-        );
-        mark(usage.completion_tokens ?? usage.output_tokens, "outputTokens");
-        mark(usage.total_tokens, "totalTokens");
-        if (typeof usage.cost === "number" && Number.isFinite(usage.cost) && usage.cost >= 0)
-          reportedCosts.set(reported, usage.cost);
-        mark(rawRead ?? usage.cache_read_input_tokens, "cacheReadTokens");
-        mark(rawWrite ?? usage.cache_creation_input_tokens, "cacheWriteTokens");
-        mark(usage.cache_creation?.ephemeral_1h_input_tokens, "cacheWrite1hTokens");
-        mark(
-          usage.completion_tokens_details?.reasoning_tokens ??
-            usage.output_tokens_details?.reasoning_tokens,
-          "reasoningTokens",
-        );
+        observeProviderUsageEvent(JSON.parse(data), reported);
       } catch {
         /* Invalid/non-JSON SSE frames are handled by the provider parser. */
       }
@@ -266,21 +301,33 @@ export function observedPiStream(
         : undefined;
       options?.signal?.throwIfAborted();
       started = true;
-      // Some Pi adapters reject custom fetch outright. Only audited SSE families opt in.
-      const collectRawUsage =
-        /^(openai-|anthropic-)/.test(model.api) && !model.provider.startsWith("google");
-      // Each guarded reservation covers one HTTP attempt, not hidden SDK retries.
-      const streamOptions = {
+      // Some Pi adapters reject custom fetch outright. Only audited SSE/WebSocket families opt in.
+      const collectRawFetchUsage =
+        /^(openai-|anthropic-)/.test(model.api) &&
+        model.api !== "openai-codex-responses" &&
+        !model.provider.startsWith("google");
+      const collectStreamEventUsage = model.api === "openai-codex-responses";
+      const userStreamEvent = options?.onProviderStreamEvent;
+      // Each guarded reservation covers one provider attempt, not hidden SDK retries.
+      const streamOptions: SimpleStreamOptions = {
         ...options,
         ...(cacheRetention ? { cacheRetention } : {}),
         ...(observer ? { maxRetries: 0 } : {}),
+        ...(collectStreamEventUsage
+          ? {
+              onProviderStreamEvent: async (data, eventModel) => {
+                observeProviderUsageEvent(data, reported);
+                await userStreamEvent?.(data, eventModel);
+              },
+            }
+          : {}),
       };
       let upstream: ReturnType<Models["streamSimple"]>;
       try {
         upstream = models.streamSimple(
           model,
           preparedContext,
-          collectRawUsage
+          collectRawFetchUsage
             ? {
                 ...streamOptions,
                 fetch: usageReportingFetch(streamOptions?.fetch ?? globalThis.fetch, reported),

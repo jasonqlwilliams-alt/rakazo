@@ -101,7 +101,7 @@ import {
   VoiceStatusSchema,
 } from "./domain.js";
 import { ComputerCommandSchema, DIRECT_MESSAGE_MAX_LENGTH, ProductEventSchema } from "./events.js";
-import { Id, IsoDate } from "./ids.js";
+import { Id, IsoDate, MemoryScope } from "./ids.js";
 import {
   IntegrationProviderConfigSchema,
   IntegrationSetupStateSchema,
@@ -511,13 +511,17 @@ export const appContract = {
     heartbeat: oc.input(botId).output(z.object({ ok: z.literal(true) })),
   },
   memory: {
+    /** List and Markdown export include bot and user documents by default; scope selects one, including archive. */
     list: oc
-      .input(z.object({ botId: Id.optional(), scope: z.enum(["bot", "user"]).optional() }))
+      .input(z.object({ botId: Id.optional(), scope: MemoryScope.optional() }))
       .output(z.array(MemoryDocumentSchema)),
     update: oc
       .input(z.object({ documentId: Id, content: z.string() }))
       .output(MemoryDocumentSchema),
-    exportMarkdown: oc.input(z.object({ botId: Id.optional() })).output(z.string()),
+    archive: oc.input(z.object({ documentId: Id })).output(MemoryDocumentSchema),
+    exportMarkdown: oc
+      .input(z.object({ botId: Id.optional(), scope: MemoryScope.optional() }))
+      .output(z.string()),
     providerConfig: oc.output(SpaceMemoryConfigSchema.nullable()),
     connectProvider: oc
       .input(

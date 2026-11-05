@@ -95,6 +95,35 @@ describe("bounded context selection", () => {
     expect(selected.messages).toEqual([history[0], history[18], history[19]]);
     expect(selected.droppedMessages).toBe(17);
   });
+  it("counts consecutive assistant-only posts toward recentExchanges without splitting paired turns", () => {
+    const routinePosts = [
+      ...Array.from({ length: 12 }, (_, index) => ({
+        role: "assistant" as const,
+        content: `routine post ${index}`,
+      })),
+      user("status check"),
+    ];
+    const selectedPosts = selectContext(routinePosts, {
+      budget,
+      strategy: "retrieval",
+      recentExchanges: 3,
+    });
+    expect(selectedPosts.messages).toEqual([routinePosts[10], routinePosts[11], routinePosts[12]]);
+
+    const paired = [
+      user("first question"),
+      { role: "assistant" as const, content: "first answer" },
+      user("second question"),
+      { role: "assistant" as const, content: "second answer" },
+      user("third question"),
+    ];
+    const selectedPaired = selectContext(paired, {
+      budget,
+      strategy: "retrieval",
+      recentExchanges: 2,
+    });
+    expect(selectedPaired.messages).toEqual([paired[2], paired[3], paired[4]]);
+  });
   it("retains a warm useful prefix when budget allows, cold selection performs no summary work", () => {
     const history = Array.from({ length: 20 }, (_, index) => user(`exchange ${index}`));
     expect(

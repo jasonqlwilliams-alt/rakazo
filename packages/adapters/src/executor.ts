@@ -277,7 +277,11 @@ import {
   needsOAuthProbe,
   parseMcpServerToolArgs,
 } from "./mcp-server-tool.js";
-import { loadAgentMemoryContext } from "./memory-context.js";
+import {
+  agentMemoryMaxBytes,
+  loadAgentMemoryContext,
+  recallLocalMemory,
+} from "./memory-context.js";
 import type { MemoryProviderResolver } from "./memory-provider-factory.js";
 import { selectMemoryTools } from "./memory-tools.js";
 import {
@@ -3411,6 +3415,23 @@ export function createRunExecutor(deps: ExecutorDeps) {
           },
         });
         if (updated.count !== 1) return null;
+        // The schedule-row claim serializes concurrent wakeups. Advance this firing,
+        // but do not create another execution while the same routine is unfinished.
+        const activeRun = await tx.run.findFirst({
+          where: {
+            routineId: routine.id,
+            status: { notIn: ["completed", "failed", "cancelled"] },
+          },
+          select: { id: true },
+        });
+        if (activeRun) {
+          const retryAt = nextRunAt ?? new Date(Date.now() + 60_000);
+          await tx.routine.update({
+            where: { id: routine.id },
+            data: { active: true, nextRunAt: retryAt, lastRunAt: previousLastRunAt },
+          });
+          return { skipped: true as const, retryAt };
+        }
         // The claim locks the row, so this is the model that was committed when it fired.
         const currentModel = await tx.routine.findUnique({
           where: { id: routine.id },
@@ -3442,6 +3463,10 @@ export function createRunExecutor(deps: ExecutorDeps) {
         });
       });
       if (!claimed) return;
+      if ("skipped" in claimed) {
+        await deps.jobs.enqueue(routineWakeupJob(routine.id, claimed.retryAt));
+        return;
+      }
       // Enqueue continuation first so a thread-signal failure cannot strand the run.
       try {
         await deps.jobs.enqueue(runContinueJob(claimed.id));
@@ -3581,6 +3606,8 @@ export function createRunExecutor(deps: ExecutorDeps) {
       let retainComputerLease = false;
       let screenRelease: { computer: ComputerRef; context: AdapterContext } | undefined;
       let runAbortController: AbortController | null = null;
+      let routineTimeout: ReturnType<typeof setTimeout> | undefined;
+      let routineTimeoutError = null as Error | null;
       let detachShutdown: (() => void) | undefined;
       const heartbeat = setInterval(() => {
         void Promise.all([
@@ -3714,6 +3741,22 @@ export function createRunExecutor(deps: ExecutorDeps) {
               )
             : null;
         runAbortController = new AbortController();
+        if (run.trigger === "routine") {
+          const startedAt = current.startedAt ?? run.startedAt ?? now;
+          const remaining = 10 * 60_000 - (Date.now() - startedAt.getTime());
+          const expireRoutine = () => {
+            if (!leaseValid || deps.shutdownSignal?.aborted) return;
+            const timeoutError = new Error("Routine exceeded its ten-minute execution limit");
+            routineTimeoutError = timeoutError;
+            runAbortController?.abort(timeoutError);
+          };
+          if (remaining <= 0) {
+            expireRoutine();
+          } else {
+            routineTimeout = setTimeout(expireRoutine, remaining);
+            routineTimeout.unref?.();
+          }
+        }
         if (!leaseValid) runAbortController.abort();
         if (deps.shutdownSignal?.aborted) runAbortController.abort(deps.shutdownSignal.reason);
         const onShutdown = () => runAbortController?.abort(deps.shutdownSignal?.reason);
@@ -3785,8 +3828,14 @@ export function createRunExecutor(deps: ExecutorDeps) {
                 | "system",
               content: messageToAgentHistoryText(m),
             })),
-            summary: delegationMayRead ? thread.historyCompactionSummary : null,
-            historyCompactedUpToSeq: delegationMayRead ? thread.historyCompactedUpToSeq : null,
+            summary:
+              delegationMayRead && contextStrategy === "current"
+                ? thread.historyCompactionSummary
+                : null,
+            historyCompactedUpToSeq:
+              delegationMayRead && contextStrategy === "current"
+                ? thread.historyCompactedUpToSeq
+                : null,
           },
           messagingChannelRun,
         );
@@ -3859,7 +3908,15 @@ export function createRunExecutor(deps: ExecutorDeps) {
           loadCurrentTurnImages(deps, turnBlocks, context),
           messagingChannelRun || !delegationMayRead
             ? Promise.resolve("")
-            : loadAgentMemoryContext(deps.memory, bot.id, context),
+            : loadAgentMemoryContext(
+                deps.memory,
+                bot.id,
+                context,
+                run.trigger === "routine"
+                  ? Math.min(agentMemoryMaxBytes(), 12 * 1024)
+                  : agentMemoryMaxBytes(),
+                { query: task.prompt },
+              ),
           messagingChannelRun || !delegationMayRead
             ? Promise.resolve("")
             : loadAgentScratchpadContext(deps, {
@@ -5933,6 +5990,32 @@ export function createRunExecutor(deps: ExecutorDeps) {
             });
           }
           if (name === "recall_memory") {
+            const query = typeof args.query === "string" ? args.query : "";
+            if (
+              !semanticMemory ||
+              args.path !== undefined ||
+              args.scope !== undefined ||
+              args.offset !== undefined ||
+              query.trim() === ""
+            ) {
+              const resolved =
+                args.path === undefined ? null : resolveMemoryPath(String(args.path));
+              if (resolved && !resolved.ok) return finish({ error: resolved.reason });
+              return finish(
+                redactConnectorPayload(
+                  await recallLocalMemory(deps.memory, bot.id, context, {
+                    query,
+                    path: resolved?.ok ? resolved.path : undefined,
+                    scope:
+                      args.scope === "bot" || args.scope === "user" || args.scope === "archive"
+                        ? args.scope
+                        : undefined,
+                    offset: typeof args.offset === "number" ? args.offset : undefined,
+                  }),
+                  runSecrets,
+                ),
+              );
+            }
             return semanticMemory!.recall(
               {
                 query: String(args.query ?? ""),
@@ -6858,7 +6941,9 @@ export function createRunExecutor(deps: ExecutorDeps) {
             beforeModel,
             workerId,
             fence,
-            !leaseValid || Boolean(runAbortController?.signal.aborted),
+            !leaseValid ||
+              Boolean(deps.shutdownSignal?.aborted) ||
+              (Boolean(runAbortController?.signal.aborted) && !routineTimeoutError),
           )
         ) {
           return;
@@ -6886,6 +6971,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
         );
 
         try {
+          if (routineTimeoutError) throw routineTimeoutError;
           const runtimeEvents = deps.runtime.run(
             {
               botId: bot.id,
@@ -6904,6 +6990,14 @@ export function createRunExecutor(deps: ExecutorDeps) {
               },
               prompt,
               contextStrategy,
+              ...(run.trigger === "routine"
+                ? {
+                    toolCallLimit: 40,
+                    toolCallsUsed: await deps.prisma.event.count({
+                      where: { runId, type: "agent.tool.called" },
+                    }),
+                  }
+                : {}),
               instructions: userTurnInstructions({
                 botInstructions: delegationMayRead
                   ? runIdentityInstruction(bot, run.trigger)
@@ -7457,6 +7551,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
           }
 
           if (approvalPausePending || !leaseValid) return;
+          if (routineTimeoutError) throw routineTimeoutError;
           approvedEffectReplays.assertDrained();
           pendingProgress += progressRedactor.finish();
           await flushProgress();
@@ -7681,6 +7776,30 @@ export function createRunExecutor(deps: ExecutorDeps) {
           }
         }
       } catch (setupError) {
+        const expired = routineTimeoutError;
+        if (expired && leaseValid && !deps.shutdownSignal?.aborted) {
+          const message = redactSecrets(expired.message, runSecrets);
+          const failed = await deps.events.finalizeRun({
+            spaceId: run.spaceId,
+            threadId: run.threadId,
+            botId: run.botId,
+            runId,
+            taskId: run.taskId,
+            attemptId: attempt.id,
+            leaseOwner: workerId,
+            leaseFence: fence,
+            outcome: "failed",
+            error: message,
+          });
+          if (failed) {
+            if (failed.continuationRunId) {
+              await deps.jobs
+                .enqueue(runContinueJob(failed.continuationRunId))
+                .catch((error) => getLogger().error("steering continuation enqueue", error));
+            }
+          }
+          return;
+        }
         const computerBusy = setupError instanceof ComputerBusyError;
         const retryForever = computerBusy || isTooManyDatabaseConnections(setupError);
         if (!computerBusy) {
@@ -7729,6 +7848,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
         }
       } finally {
         detachShutdown?.();
+        if (routineTimeout) clearTimeout(routineTimeout);
         clearInterval(heartbeat);
         if (!retainComputerLease) {
           if (screenRelease) {

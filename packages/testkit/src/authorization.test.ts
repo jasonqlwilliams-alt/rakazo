@@ -132,6 +132,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
       ["computer/heartbeat", { botId: "missing-bot" }],
       ["memory/list", {}],
       ["memory/update", { documentId: "missing-memory", content: "Nope" }],
+      ["memory/archive", { documentId: "missing-memory" }],
       ["memory/exportMarkdown", {}],
       ["routines/list", { botId: "missing-bot" }],
       ["routines/create", routineInput("missing-bot")],
@@ -432,6 +433,7 @@ describeWithDatabase("API authorization and resource isolation", () => {
       ["agentSkills/update", { skillId: ownerAgentSkill.id, description: "Stolen" }],
       ["agentSkills/remove", { skillId: ownerAgentSkill.id }],
       ["memory/update", { documentId: ownerMemory.id, content: "stolen" }],
+      ["memory/archive", { documentId: ownerMemory.id }],
       ["connections/complete", { connectionId: ownerConnection.connectionId }],
     ] satisfies Array<[string, unknown]>;
     await Promise.all(

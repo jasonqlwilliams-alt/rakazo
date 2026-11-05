@@ -249,6 +249,7 @@ function fixture({
     },
     actionApprovalRule: { findMany: vi.fn(async () => rules) },
     actionAutoReviewPreference: { findUnique: vi.fn(async () => ({ enabled: autoReview })) },
+    event: { count: vi.fn(async () => 0) },
     externalEffect,
   };
   const pauseRunForInput = vi.fn(async () => {

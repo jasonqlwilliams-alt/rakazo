@@ -14,6 +14,7 @@ import type {
 import {
   computerControlExpireJobKey,
   messagingDeliverJob,
+  requireMemoryPath,
   routineJobKey,
   routineWakeupJob,
   runContinueJob,
@@ -137,6 +138,7 @@ import type {
   ExportManifest,
   McpServer,
   Me,
+  MemoryScope,
   ProductEvent,
   Routine,
   SpaceNavigation,
@@ -221,6 +223,7 @@ import {
   toTicketCommentDto,
   toTicketDto,
   touchGroupUpdatedAt,
+  withTransactionRetry,
 } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import { deleteAgentSecret, listAgentSecrets, putAgentSecret } from "./agent-secrets.js";
@@ -3252,12 +3255,12 @@ export function createRouter(deps: RouterDeps) {
             spaceId: context.actor.spaceId,
             userId: context.actor.userId,
             ...(input.botId ? { botId: input.botId } : {}),
-            ...(input.scope ? { scope: input.scope } : {}),
+            scope: input.scope ?? { in: ["bot", "user"] },
           },
         });
         return docs.map((doc) => ({
           id: doc.id,
-          scope: doc.scope as "bot" | "user",
+          scope: doc.scope as MemoryScope,
           botId: doc.botId,
           path: doc.path,
           content: doc.content,
@@ -3274,9 +3277,14 @@ export function createRouter(deps: RouterDeps) {
           },
         });
         if (!doc) throw new IsolationError();
+        if (doc.scope !== "bot" && doc.scope !== "user") {
+          throw new ORPCError("BAD_REQUEST", {
+            message: "Only bot or user memory documents can be edited.",
+          });
+        }
         const updated = await deps.memory.commit(
           {
-            scope: doc.scope as "bot" | "user",
+            scope: doc.scope,
             botId: doc.botId ?? undefined,
             path: doc.path,
             content: input.content,
@@ -3291,7 +3299,7 @@ export function createRouter(deps: RouterDeps) {
         );
         return {
           id: updated.id,
-          scope: doc.scope as "bot" | "user",
+          scope: doc.scope,
           botId: doc.botId,
           path: updated.path,
           content: updated.content,
@@ -3299,11 +3307,81 @@ export function createRouter(deps: RouterDeps) {
           updatedAt: new Date().toISOString(),
         };
       }),
+      archive: authed.memory.archive.handler(async ({ context, input }) => {
+        const date = new Date().toISOString().slice(0, 10);
+        const archived = await withTransactionRetry(() =>
+          deps.prisma.$transaction(
+            async (tx) => {
+              const doc = await tx.memoryDocument.findFirst({
+                where: {
+                  id: input.documentId,
+                  spaceId: context.actor.spaceId,
+                  userId: context.actor.userId,
+                },
+              });
+              if (!doc) throw new IsolationError();
+              if (doc.scope !== "bot" && doc.scope !== "user") {
+                throw new ORPCError("BAD_REQUEST", {
+                  message: "Only bot or user memory documents can be archived.",
+                });
+              }
+              const sourcePath = requireMemoryPath(doc.path);
+              let suffix = 1;
+              let nextPath = requireMemoryPath(
+                archivedMemoryPath(date, doc.scope, sourcePath, suffix),
+              );
+              while (
+                await tx.memoryDocument.findFirst({
+                  where: {
+                    spaceId: context.actor.spaceId,
+                    userId: context.actor.userId,
+                    scope: "archive",
+                    path: nextPath,
+                  },
+                  select: { id: true },
+                })
+              ) {
+                suffix += 1;
+                nextPath = requireMemoryPath(
+                  archivedMemoryPath(date, doc.scope, sourcePath, suffix),
+                );
+              }
+              const updated = await tx.memoryDocument.update({
+                where: { id: doc.id },
+                data: {
+                  scope: "archive",
+                  path: nextPath,
+                  revision: doc.revision + 1,
+                },
+              });
+              await tx.memoryRevision.create({
+                data: {
+                  documentId: updated.id,
+                  revision: updated.revision,
+                  content: updated.content,
+                },
+              });
+              return updated;
+            },
+            { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+          ),
+        );
+        return {
+          id: archived.id,
+          scope: "archive" as const,
+          botId: archived.botId,
+          path: archived.path,
+          content: archived.content,
+          revision: archived.revision,
+          updatedAt: archived.updatedAt.toISOString(),
+        };
+      }),
       exportMarkdown: authed.memory.exportMarkdown.handler(async ({ context, input }) => {
         const docs = await deps.prisma.memoryDocument.findMany({
           where: {
             spaceId: context.actor.spaceId,
             userId: context.actor.userId,
+            scope: input.scope ?? { in: ["bot", "user"] },
             ...(input.botId ? { botId: input.botId } : {}),
           },
         });
@@ -7144,4 +7222,21 @@ async function messagingConnectionDto(
     status: connection.status as "pending" | "approved" | "declined" | "revoked",
     incoming,
   };
+}
+
+function archivedMemoryPath(
+  date: string,
+  sourceScope: "bot" | "user",
+  sourcePath: string,
+  suffix: number,
+): string {
+  const base = `${date}/${sourceScope}/${sourcePath}`;
+  if (suffix <= 1) return base;
+  const slash = base.lastIndexOf("/");
+  const dir = base.slice(0, slash + 1);
+  const file = base.slice(slash + 1);
+  const dot = file.lastIndexOf(".");
+  const numbered =
+    dot > 0 ? `${file.slice(0, dot)}-${suffix}${file.slice(dot)}` : `${file}-${suffix}`;
+  return `${dir}${numbered}`;
 }

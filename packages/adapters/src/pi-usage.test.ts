@@ -525,6 +525,50 @@ describe("Pi usage accounting", () => {
       ).costUsd,
     ).toBeNull();
   });
+  it("derives Codex WebSocket totals and cost without a cache-write field", () => {
+    expect(
+      normalizePiUsage(
+        {
+          input: 100,
+          output: 20,
+          cacheRead: 5,
+          cacheWrite: 0,
+          cost: { input: 0.001, output: 0.002, cacheRead: 0.0001, cacheWrite: 0, total: 0.0031 },
+        },
+        {
+          provider: "openai-codex",
+          api: "openai-codex-responses",
+          cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 3 },
+        },
+      ),
+    ).toMatchObject({
+      cacheWriteTokens: null,
+      totalTokens: 125,
+      costUsd: 0.0031,
+      costSource: "pi-catalog-estimate",
+    });
+  });
+  it.each(["openai-responses", "openai-completions", "azure-openai-responses"] as const)(
+    "keeps missing cache-write usage unknown for SSE API %s",
+    (api) => {
+      expect(
+        normalizePiUsage(
+          {
+            input: 100,
+            output: 20,
+            cacheRead: 5,
+            cacheWrite: 0,
+            cost: { input: 0.001, output: 0.002, cacheRead: 0.0001, cacheWrite: 0, total: 0.0031 },
+          },
+          {
+            provider: "openai",
+            api,
+            cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 3 },
+          },
+        ),
+      ).toMatchObject({ cacheWriteTokens: null, totalTokens: null, costUsd: null });
+    },
+  );
   it("does not start model work when budget reservation fails", async () => {
     const fetcher = vi.fn();
     const push = vi.fn();
@@ -566,5 +610,176 @@ describe("Pi usage accounting", () => {
     const response = await fetcher("https://model.example.test");
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
     expect(reported.has("inputTokens")).toBe(true);
+  });
+  it("does not count SSE provider events through the WebSocket observer", async () => {
+    const sseModel: Model<Api> = { ...model, provider: "openai", api: "openai-responses" };
+    const callerHook = vi.fn();
+    const events: AgentRuntimeEvent[] = [];
+    const terminal = {
+      role: "assistant" as const,
+      content: [{ type: "text" as const, text: "Ready" }],
+      api: sseModel.api,
+      provider: sseModel.provider,
+      model: sseModel.id,
+      usage: { input: 7, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 9 },
+      stopReason: "stop" as const,
+      timestamp: 1,
+    };
+    const fakeModels = {
+      streamSimple: (
+        _m: Model<Api>,
+        _ctx: Context,
+        opts?: {
+          onProviderStreamEvent?: (data: unknown, model: Model<Api>) => Promise<void> | void;
+        },
+      ) => ({
+        async *[Symbol.asyncIterator]() {
+          await opts?.onProviderStreamEvent?.(
+            { response: { usage: { input_tokens: 7, output_tokens: 2, total_tokens: 9 } } },
+            sseModel,
+          );
+          yield { type: "done" as const, reason: "stop" as const, message: terminal };
+        },
+        result: async () => terminal,
+      }),
+    } as unknown as Parameters<typeof observedPiStream>[0];
+
+    const stream = observedPiStream(
+      fakeModels,
+      sseModel,
+      { messages: [] },
+      { onProviderStreamEvent: callerHook },
+      (event) => events.push(event),
+    );
+    for await (const _event of stream) {
+    }
+
+    expect(callerHook).toHaveBeenCalledOnce();
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: "usage",
+        usageSource: "pi-normalized",
+        totalTokens: null,
+      }),
+    ]);
+  });
+  it("observes WebSocket provider stream events and treats inapplicable OpenAI cacheWrite as zero for cost and totals", async () => {
+    const codexModel: Model<Api> = {
+      provider: "openai-codex",
+      id: "gpt-6.1-sol",
+      api: "openai-codex-responses",
+      name: "GPT-6.1 Sol",
+      baseUrl: "https://chatgpt.com/backend-api",
+      reasoning: true,
+      input: ["text"],
+      cost: { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
+      contextWindow: 500_000,
+      maxTokens: 16_384,
+    };
+    const callerHook = vi.fn();
+    const events: AgentRuntimeEvent[] = [];
+    const fakeModels = {
+      streamSimple: (
+        _m: Model<Api>,
+        _ctx: Context,
+        opts?: {
+          onProviderStreamEvent?: (data: unknown, model: Model<Api>) => Promise<void> | void;
+        },
+      ) => {
+        const terminal = {
+          role: "assistant" as const,
+          content: [{ type: "text" as const, text: "Ready" }],
+          api: codexModel.api,
+          provider: codexModel.provider,
+          model: codexModel.id,
+          usage: {
+            input: 1000,
+            output: 50,
+            cacheRead: 200,
+            cacheWrite: 0,
+            reasoning: 10,
+            totalTokens: 1250,
+            cost: {
+              input: 0.002,
+              output: 0.0005,
+              cacheRead: 0.00002,
+              cacheWrite: 0,
+              total: 0.00252,
+            },
+          },
+          stopReason: "stop" as const,
+          timestamp: 1,
+        };
+        return {
+          async *[Symbol.asyncIterator]() {
+            await opts?.onProviderStreamEvent?.(
+              {
+                type: "response.completed",
+                response: {
+                  usage: {
+                    input_tokens: 1200,
+                    input_tokens_details: { cached_tokens: 200 },
+                    output_tokens: 50,
+                    output_tokens_details: { reasoning_tokens: 10 },
+                  },
+                },
+              },
+              codexModel,
+            );
+            yield { type: "done" as const, reason: "stop" as const, message: terminal };
+          },
+          result: async () => terminal,
+        };
+      },
+    } as unknown as Parameters<typeof observedPiStream>[0];
+
+    const stream = observedPiStream(
+      fakeModels,
+      codexModel,
+      { messages: [{ role: "user", content: "ping", timestamp: 1 }] },
+      { onProviderStreamEvent: callerHook },
+      (event) => events.push(event),
+    );
+    for await (const _event of stream) {
+    }
+
+    expect(callerHook).toHaveBeenCalledOnce();
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: "usage",
+        inputTokens: 1000,
+        outputTokens: 50,
+        cacheReadTokens: 200,
+        cacheWriteTokens: null,
+        reasoningTokens: 10,
+        totalTokens: 1250,
+        costUsd: 0.00252,
+        costSource: "pi-catalog-estimate",
+        usageSource: "provider-reported-via-pi",
+      }),
+    ]);
+
+    expect(
+      normalizePiUsage(
+        {
+          input: 1000,
+          output: 50,
+          cacheRead: 0,
+          cacheWrite: 0,
+          cost: { input: 0.003, output: 0.00075, cacheRead: 0, cacheWrite: 0, total: 0.00375 },
+        },
+        {
+          provider: "anthropic",
+          api: "anthropic-messages",
+          cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+        },
+        new Set(["inputTokens", "outputTokens", "cacheReadTokens"]),
+      ),
+    ).toMatchObject({
+      cacheWriteTokens: null,
+      totalTokens: null,
+      costUsd: null,
+      costSource: null,
+    });
   });
 });

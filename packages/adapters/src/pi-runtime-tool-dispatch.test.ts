@@ -1686,7 +1686,7 @@ describe("Pi connector tool dispatch", () => {
     });
   });
 
-  it("allows more than 80 tool calls by default when no fuse is configured", async () => {
+  it("allows more than 80 tool calls when the ordinary turn fuse is unset", async () => {
     fakeAgentState.mode = "parent-limit";
     const executeTool = vi.fn(async () => ({ ok: true }));
     const runtime = new PiAgentRuntime();
@@ -1840,15 +1840,64 @@ describe("Pi connector tool dispatch", () => {
     );
   });
 
-  it("treats unset, empty, and non-positive MAX_TOOL_CALLS_PER_TURN as unlimited", () => {
+  it("leaves ordinary turns unlimited unless an owner sets a positive finite limit", () => {
     expect(maxToolCallsPerTurn({})).toBe(0);
     expect(maxToolCallsPerTurn({ MAX_TOOL_CALLS_PER_TURN: "" })).toBe(0);
     expect(maxToolCallsPerTurn({ MAX_TOOL_CALLS_PER_TURN: "0" })).toBe(0);
     expect(maxToolCallsPerTurn({ MAX_TOOL_CALLS_PER_TURN: "-5" })).toBe(0);
     expect(maxToolCallsPerTurn({ MAX_TOOL_CALLS_PER_TURN: "abc" })).toBe(0);
+    expect(maxToolCallsPerTurn({ MAX_TOOL_CALLS_PER_TURN: "Infinity" })).toBe(0);
     expect(maxToolCallsPerTurn({ MAX_TOOL_CALLS_PER_TURN: "80" })).toBe(80);
     expect(maxToolCallsPerTurn({ MAX_TOOL_CALLS_PER_TURN: " 12.9 " })).toBe(12);
   });
+
+  it.each([
+    { ownerLimit: undefined, effectiveLimit: 40 },
+    { ownerLimit: "80", effectiveLimit: 40 },
+    { ownerLimit: "25", effectiveLimit: 25 },
+  ])(
+    "enforces a routine's durable tool budget with owner limit $ownerLimit",
+    async ({ ownerLimit, effectiveLimit }) => {
+      if (ownerLimit === undefined) delete process.env.MAX_TOOL_CALLS_PER_TURN;
+      else process.env.MAX_TOOL_CALLS_PER_TURN = ownerLimit;
+      fakeAgentState.mode = "parent-limit";
+      const executeTool = vi.fn(async () => ({ ok: true }));
+      const runtime = new PiAgentRuntime();
+      const events: unknown[] = [];
+
+      for await (const event of runtime.run(
+        {
+          botId: "b",
+          threadId: "t",
+          runId: `routine-limit-${ownerLimit ?? "unset"}`,
+          prompt: "continue the routine",
+          instructions: "Use shell.",
+          history: [],
+          tools: [shellTool],
+          model: { provider: "test", id: "dispatch-test-model" },
+          toolCallLimit: 40,
+          toolCallsUsed: 7,
+          executeTool,
+        },
+        {
+          operationId: "routine-limit",
+          traceId: "routine-limit",
+          spaceId: "w",
+          userId: "u",
+          signal: new AbortController().signal,
+        },
+      )) {
+        events.push(event);
+      }
+
+      expect(executeTool).toHaveBeenCalledTimes(effectiveLimit - 7);
+      expect(fakeAgentState.abortCount).toBeGreaterThanOrEqual(1);
+      expect(events).toContainEqual({
+        type: "progress",
+        text: `Stopped: more than ${effectiveLimit} tool calls in one turn.`,
+      });
+    },
+  );
 
   it("lets a parallel tool batch finish before the optional fuse aborts", async () => {
     process.env.MAX_TOOL_CALLS_PER_TURN = "2";

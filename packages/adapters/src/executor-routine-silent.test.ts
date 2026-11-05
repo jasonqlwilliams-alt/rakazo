@@ -1,4 +1,4 @@
-import type { AgentRunRequest, AgentRuntimeEvent } from "@rakazo/adapter-kit";
+import type { AgentRunRequest, AgentRuntimeEvent, MemoryReadRequest } from "@rakazo/adapter-kit";
 import type { MessageBlock } from "@rakazo/contracts";
 import type { PrismaClient } from "@rakazo/db";
 import { describe, expect, it, vi } from "vitest";
@@ -29,11 +29,27 @@ function fixture({
   events,
   steering = [],
   priorBotMessages = [],
+  contextStrategy,
+  historyCompactionSummary = null,
+  historyCompactedUpToSeq = null,
+  toolCallsUsed = 0,
+  memoryContent,
+  startedAt = null,
+  semanticRecall,
+  onRequest,
 }: {
   trigger: "routine" | "user";
   events: AgentRuntimeEvent[];
   steering?: (typeof steeringQuestion)[];
   priorBotMessages?: MessageBlock[][];
+  contextStrategy?: "current" | "retrieval" | "snapshots" | "cache-aware";
+  historyCompactionSummary?: string | null;
+  historyCompactedUpToSeq?: number | null;
+  toolCallsUsed?: number;
+  memoryContent?: string;
+  startedAt?: Date | null;
+  semanticRecall?: (req: unknown) => Promise<unknown>;
+  onRequest?: (request: AgentRunRequest) => Promise<void>;
 }) {
   const run = {
     id: "run-1",
@@ -46,12 +62,14 @@ function fixture({
     trigger,
     routineId: trigger === "routine" ? "routine-1" : null,
     leaseFence: 0,
+    startedAt,
   };
   const thread = { unread: false };
   const postedMessages: MessageBlock[][] = [];
   const notify = vi.fn(async () => undefined);
   const finalizeRun = vi.fn(async () => ({ continuationRunId: null }));
   const runtimeRun = vi.fn(async function* (request: AgentRunRequest) {
+    await onRequest?.(request);
     await request.claimSteering?.([]);
     yield* events;
   });
@@ -105,7 +123,8 @@ function fixture({
         id: run.threadId,
         groupId: null,
         nextMessageSeq: 0,
-        historyCompactedUpToSeq: null,
+        historyCompactionSummary,
+        historyCompactedUpToSeq,
       })),
     },
     message: {
@@ -133,15 +152,32 @@ function fixture({
     scratchpadItem: { findMany: vi.fn(async () => []) },
     actionApprovalRule: { findMany: vi.fn(async () => []) },
     actionAutoReviewPreference: { findUnique: vi.fn(async () => ({ enabled: false })) },
+    event: { count: vi.fn(async () => toolCallsUsed) },
     externalEffect: { findMany: vi.fn(async () => []) },
     $transaction: vi.fn(async (work: (client: typeof tx) => unknown) => work(tx)),
   } as unknown as PrismaClient;
   const executor = createRunExecutor({
     prisma,
+    contextStrategy,
     runtime: { describe: () => ({ capabilities: { scripted: false } }), run: runtimeRun },
     sandbox: { describe: () => ({ capabilities: { graphical: false } }) },
-    memory: { read: async () => ({ documents: [] }) },
-    memoryProviders: { resolve: async () => null },
+    memory: {
+      read: async ({ scope }: MemoryReadRequest) => ({
+        documents:
+          scope === "bot" && memoryContent
+            ? [{ id: "mem-1", path: "archive.md", content: memoryContent, revision: 1 }]
+            : [],
+      }),
+    },
+    memoryProviders: {
+      resolve: async () =>
+        semanticRecall
+          ? {
+              defaultScope: "bot",
+              provider: { recall: semanticRecall },
+            }
+          : null,
+    },
     events: {
       append: vi.fn(async () => undefined),
       notify: vi.fn(async () => undefined),
@@ -161,6 +197,10 @@ function fixture({
     request: () => runtimeRun.mock.calls[0]![0],
     finalBlocks: () =>
       (finalizeRun.mock.calls[0] as unknown as [{ blocks: MessageBlock[] }])[0].blocks,
+    async continueRun() {
+      run.status = "queued";
+      await executor.continueRun(run.id, "worker-1");
+    },
     async run() {
       run.status = "queued";
       await executor.continueRun(run.id, "worker-1");
@@ -462,5 +502,110 @@ describe("routine silent finish", () => {
       }),
       expect.anything(),
     );
+  });
+
+  it("omits legacy compacted thread summary under retrieval while keeping it under current", async () => {
+    const retrievalRun = fixture({
+      trigger: "user",
+      contextStrategy: "retrieval",
+      historyCompactionSummary: "Legacy compacted summary payload",
+      historyCompactedUpToSeq: 42,
+      events: [
+        { type: "text", text: "ok" },
+        { type: "done", text: "ok" },
+      ],
+    });
+    await retrievalRun.run();
+    expect(
+      retrievalRun
+        .request()
+        .history.some((m) => m.content.includes("Legacy compacted summary payload")),
+    ).toBe(false);
+
+    const currentRun = fixture({
+      trigger: "user",
+      contextStrategy: "current",
+      historyCompactionSummary: "Legacy compacted summary payload",
+      historyCompactedUpToSeq: 42,
+      events: [
+        { type: "text", text: "ok" },
+        { type: "done", text: "ok" },
+      ],
+    });
+    await currentRun.run();
+    expect(
+      currentRun
+        .request()
+        .history.some((m) => m.content.includes("Legacy compacted summary payload")),
+    ).toBe(true);
+  });
+
+  it("bounds routine runs to 40 tool calls with durable counts and a 12 KiB memory window", async () => {
+    const f = fixture({
+      trigger: "routine",
+      toolCallsUsed: 7,
+      memoryContent: "hourly check notes ".repeat(2000),
+      events: [{ type: "done" }],
+    });
+    await f.run();
+    expect(f.request()).toMatchObject({
+      toolCallLimit: 40,
+      toolCallsUsed: 7,
+    });
+    expect(Buffer.byteLength(f.request().instructions, "utf8")).toBeLessThan(20 * 1024);
+  });
+
+  it("finalizes an expired routine as failed during setup instead of leaving it running", async () => {
+    const f = fixture({
+      trigger: "routine",
+      startedAt: new Date(Date.now() - 11 * 60_000),
+      events: [{ type: "done" }],
+    });
+    await f.continueRun();
+    expect(f.runtimeRun).not.toHaveBeenCalled();
+    expect(f.finalizeRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: "failed",
+        error: "Routine exceeded its ten-minute execution limit",
+      }),
+    );
+  });
+
+  it("routes explicit scope and offset recall_memory calls to local memory when semantic memory is configured", async () => {
+    const semanticRecall = vi.fn(async () => ({ items: [{ text: "semantic match" }] }));
+    const results: unknown[] = [];
+    const f = fixture({
+      trigger: "user",
+      memoryContent: "orchid watering schedule",
+      semanticRecall,
+      onRequest: async (request) => {
+        results.push(
+          await request.executeTool!(
+            "recall_memory",
+            { query: "orchid", scope: "bot" },
+            "call-scoped",
+          ),
+        );
+        results.push(
+          await request.executeTool!("recall_memory", { query: "orchid", offset: 0 }, "call-paged"),
+        );
+        results.push(
+          await request.executeTool!("recall_memory", { query: "orchid" }, "call-semantic"),
+        );
+      },
+      events: [
+        { type: "text", text: "ok" },
+        { type: "done", text: "ok" },
+      ],
+    });
+    await f.run();
+    expect(semanticRecall).toHaveBeenCalledTimes(1);
+    expect(results[0]).toMatchObject({
+      documents: [expect.objectContaining({ scope: "bot", path: "archive.md" })],
+    });
+    expect(results[1]).toMatchObject({
+      documents: [expect.objectContaining({ scope: "bot", path: "archive.md" })],
+    });
+    expect(results[2]).toEqual({ items: [{ text: "semantic match" }] });
   });
 });
