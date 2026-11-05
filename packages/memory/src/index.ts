@@ -61,9 +61,7 @@ export class MarkdownMemoryStore implements MemoryStore {
       where: {
         spaceId: context.spaceId,
         userId: context.userId,
-        ...(request.scope === "all"
-          ? { scope: { in: ["bot", "user"] } }
-          : { scope: request.scope }),
+        ...(request.scope === "all" ? {} : { scope: request.scope }),
         ...(request.botId ? { botId: request.botId } : {}),
       },
     });

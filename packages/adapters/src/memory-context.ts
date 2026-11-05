@@ -154,11 +154,12 @@ function excerpt(content: string, terms: string[], core: boolean): string {
   const lower = content.toLowerCase();
   const pieces = core ? [truncateUtf8(content, 1536)] : [];
   for (const term of terms) {
-    const index = termMatch(lower, term, true);
-    if (index < 0) continue;
-    const start = Math.max(0, index - 240);
-    const piece = content.slice(start, start + 700);
-    if (!pieces.includes(piece)) pieces.push(piece);
+    for (const index of [termMatch(lower, term), termMatch(lower, term, true)]) {
+      if (index < 0) continue;
+      const start = Math.max(0, index - 240);
+      const piece = content.slice(start, start + 700);
+      if (!pieces.includes(piece)) pieces.push(piece);
+    }
     if (byteLength(pieces.join("\n[…]\n")) >= 3500) break;
   }
   return `${truncateUtf8(pieces.join("\n[…]\n") || content, 3900)}\n[excerpt; recall_memory reads the unchanged original]`;

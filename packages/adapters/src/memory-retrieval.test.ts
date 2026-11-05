@@ -369,6 +369,32 @@ describe("task-relevant local memory", () => {
     expect(selected).toContain("AI defines project scope.");
   });
 
+  it("keeps the first fact and a later match from an oversized document", async () => {
+    const store = {
+      read: async ({ scope }: { scope: string }) => ({
+        documents:
+          scope === "user"
+            ? []
+            : [
+                {
+                  id: "notes",
+                  path: "notes.md",
+                  revision: 1,
+                  content: `Orchids need filtered light. ${"background ".repeat(3_000)}Orchids`,
+                },
+              ],
+      }),
+    } as unknown as MemoryStore;
+
+    const selected = await loadAgentMemoryContext(store, "bot", context, 12 * 1024, {
+      query: "orchids",
+    });
+
+    expect(selected).toContain("Orchids need filtered light.");
+    expect(selected).toContain("Orchids\n[excerpt;");
+    expect(Buffer.byteLength(selected!)).toBeLessThanOrEqual(12 * 1024);
+  });
+
   it("selects a relevant memory after more than 64 setup terms", async () => {
     const store = {
       read: async ({ scope }: { scope: string }) => ({

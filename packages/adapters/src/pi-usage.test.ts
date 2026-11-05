@@ -567,6 +567,58 @@ describe("Pi usage accounting", () => {
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
     expect(reported.has("inputTokens")).toBe(true);
   });
+  it("does not count SSE provider events through the WebSocket observer", async () => {
+    const sseModel: Model<Api> = { ...model, provider: "openai", api: "openai-responses" };
+    const callerHook = vi.fn();
+    const events: AgentRuntimeEvent[] = [];
+    const terminal = {
+      role: "assistant" as const,
+      content: [{ type: "text" as const, text: "Ready" }],
+      api: sseModel.api,
+      provider: sseModel.provider,
+      model: sseModel.id,
+      usage: { input: 7, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 9 },
+      stopReason: "stop" as const,
+      timestamp: 1,
+    };
+    const fakeModels = {
+      streamSimple: (
+        _m: Model<Api>,
+        _ctx: Context,
+        opts?: {
+          onProviderStreamEvent?: (data: unknown, model: Model<Api>) => Promise<void> | void;
+        },
+      ) => ({
+        async *[Symbol.asyncIterator]() {
+          await opts?.onProviderStreamEvent?.(
+            { response: { usage: { input_tokens: 7, output_tokens: 2, total_tokens: 9 } } },
+            sseModel,
+          );
+          yield { type: "done" as const, reason: "stop" as const, message: terminal };
+        },
+        result: async () => terminal,
+      }),
+    } as unknown as Parameters<typeof observedPiStream>[0];
+
+    const stream = observedPiStream(
+      fakeModels,
+      sseModel,
+      { messages: [] },
+      { onProviderStreamEvent: callerHook },
+      (event) => events.push(event),
+    );
+    for await (const _event of stream) {
+    }
+
+    expect(callerHook).toHaveBeenCalledOnce();
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: "usage",
+        usageSource: "pi-normalized",
+        totalTokens: null,
+      }),
+    ]);
+  });
   it("observes WebSocket provider stream events and treats inapplicable OpenAI cacheWrite as zero for cost and totals", async () => {
     const codexModel: Model<Api> = {
       provider: "openai-codex",

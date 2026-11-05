@@ -306,10 +306,10 @@ export function observedPiStream(
       started = true;
       // Some Pi adapters reject custom fetch outright. Only audited SSE/WebSocket families opt in.
       const collectRawFetchUsage =
-        /^(openai-|anthropic-)/.test(model.api) && !model.provider.startsWith("google");
-      const collectStreamEventUsage =
-        (collectRawFetchUsage || model.api === "azure-openai-responses") &&
+        /^(openai-|anthropic-)/.test(model.api) &&
+        model.api !== "openai-codex-responses" &&
         !model.provider.startsWith("google");
+      const collectStreamEventUsage = model.api === "openai-codex-responses";
       const userStreamEvent = options?.onProviderStreamEvent;
       // Each guarded reservation covers one provider attempt, not hidden SDK retries.
       const streamOptions: SimpleStreamOptions = {

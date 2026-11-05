@@ -9,8 +9,8 @@
 
 export const DEFAULT_MEMORY_PATH = "MEMORY.md";
 
-/** Leading `bot: `, `user: `, `archive: `, `bot/`, or `user/` — the rendered scope leaking into the path. */
-const SCOPE_PREFIX = /^(?:(?:bot|user)[ \t]*[:/]|archive[ \t]*:)[ \t]*/i;
+/** Leading `bot: `, `user: `, `bot/`, or `user/` — the rendered scope leaking into the path. */
+const SCOPE_PREFIX = /^(?:bot|user)[ \t]*[:/][ \t]*/i;
 
 /** A path is a document key, so it carries neither the scope separator nor whitespace. */
 const INVALID_PATH_CHARACTERS = /[:\s]/;

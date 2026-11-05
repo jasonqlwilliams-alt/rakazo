@@ -46,6 +46,20 @@ describe("memory store contract shape", () => {
       orderBy: [{ updatedAt: "desc" }, { path: "asc" }],
     });
   });
+
+  it("searches archived documents when scope is all", async () => {
+    const archived = { path: "archive/notes.md", content: "Archived orchid care", scope: "archive" };
+    const findMany = vi.fn(async ({ where }: { where: { scope?: string | { in: string[] } } }) => {
+      if (where.scope === undefined || where.scope === "archive") return [archived];
+      if (typeof where.scope === "object" && where.scope.in.includes("archive")) return [archived];
+      return [];
+    });
+    const store = new MarkdownMemoryStore({ memoryDocument: { findMany } } as never);
+
+    await expect(store.search({ scope: "all", query: "orchid" }, context)).resolves.toEqual([
+      expect.objectContaining({ path: "archive/notes.md" }),
+    ]);
+  });
 });
 
 describe("commit path normalisation", () => {
@@ -75,7 +89,7 @@ describe("commit path normalisation", () => {
     },
   );
 
-  it.each(["notes: today.md", "history/my digest.md", "bot: ", "/etc/passwd", "../../escape.md"])(
+  it.each(["notes: today.md", "archive: notes.md", "history/my digest.md", "bot: ", "/etc/passwd", "../../escape.md"])(
     "rejects %j rather than silently creating a document",
     async (path) => {
       const { store, prisma } = storeWithDocument(undefined);
