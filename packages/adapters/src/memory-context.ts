@@ -162,29 +162,52 @@ function relevance(
   );
 }
 
-function excerpt(content: string, terms: string[], core: boolean): string {
+function excerpt(content: string, terms: string[], core: boolean, maxBytes = 3900): string {
   if (byteLength(content) <= 4096) return content;
   const lower = content.toLowerCase();
   const pieces = core ? [truncateUtf8(content, 1536)] : [];
-  const positions = [
-    ...new Set(
-      terms.flatMap((term) => [termMatch(lower, term), termMatch(lower, term, true)]),
-    ),
-  ].filter((index) => index >= 0);
-  const separatorBytes = byteLength("\n[…]\n");
+  const matches = terms.flatMap((term) => {
+    const first = termMatch(lower, term);
+    return first < 0 ? [] : [{ first, last: termMatch(lower, term, true) }];
+  });
+  const candidates = [...new Set(matches.flatMap(({ first, last }) => [first, last]))].sort(
+    (a, b) => a - b,
+  );
+  const highlights = new Set<number>();
+  if (matches.length > 0) {
+    const last = matches[matches.length - 1]!;
+    for (const index of [candidates[0]!, candidates[candidates.length - 1]!, last.first, last.last]) {
+      highlights.add(index);
+    }
+    const slots = 6 - highlights.size;
+    for (let sample = 1; sample <= slots; sample += 1) {
+      highlights.add(candidates[Math.floor((sample * (candidates.length - 1)) / (slots + 1))]!);
+    }
+  }
+  const positions = [...highlights].sort((a, b) => a - b);
+  const separator = "\n[…]\n";
+  const suffix = "\n[excerpt; recall_memory reads the unchanged original]";
+  const bodyBudget = Math.min(3500, maxBytes - byteLength(suffix));
+  const separatorBytes = byteLength(separator);
   const available =
-    3500 -
-    byteLength(pieces.join("\n[…]\n")) -
+    bodyBudget -
+    byteLength(pieces.join(separator)) -
     separatorBytes * Math.max(0, positions.length + pieces.length - 1);
   const pieceBytes = positions.length
     ? Math.max(0, Math.min(700, Math.floor(available / positions.length)))
     : 0;
   for (const index of positions) {
-    const start = Math.max(0, index - Math.min(240, Math.floor(pieceBytes / 8)));
+    const rawStart = Math.max(0, index - Math.min(240, Math.floor(pieceBytes / 8)));
+    const start =
+      rawStart > 0 &&
+      /[\uDC00-\uDFFF]/.test(content[rawStart] ?? "") &&
+      /[\uD800-\uDBFF]/.test(content[rawStart - 1] ?? "")
+        ? rawStart - 1
+        : rawStart;
     const piece = truncateUtf8(content.slice(start), pieceBytes);
     if (piece && !pieces.includes(piece)) pieces.push(piece);
   }
-  return `${truncateUtf8(pieces.join("\n[…]\n") || content, 3900)}\n[excerpt; recall_memory reads the unchanged original]`;
+  return `${truncateUtf8(pieces.join(separator) || content, bodyBudget)}${suffix}`;
 }
 
 function selectTaskMemory(
@@ -280,7 +303,7 @@ export async function recallLocalMemory(
       scope: document.scope,
       revision: document.revision,
       content: terms.length
-        ? truncateUtf8(excerpt(document.content, terms, false), 1200)
+        ? truncateUtf8(excerpt(document.content, terms, false, 1200), 1200)
         : undefined,
       bytes: byteLength(document.content),
     })),

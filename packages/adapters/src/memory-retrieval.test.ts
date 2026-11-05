@@ -480,6 +480,36 @@ describe("task-relevant local memory", () => {
     expect(Buffer.byteLength(selected!)).toBeLessThanOrEqual(12 * 1024);
   });
 
+  it("keeps early and late multibyte facts with hundreds of repeated task terms", async () => {
+    const setupTerms = Array.from({ length: 250 }, (_, index) =>
+      `setup${index.toString().padStart(3, "0")}`,
+    );
+    const content =
+      setupTerms
+        .map((term) => `${term} starts 🌺. ${"background🌺".repeat(5)} ${term} ends 🌺.`)
+        .join("\n") +
+      `\n${"history🌺".repeat(500)}\nOrchids need filtered light 🌺.`;
+    const store = {
+      read: async ({ scope }: { scope: string }) => ({
+        documents:
+          scope === "bot" ? [{ id: "notes", path: "notes.md", revision: 1, content }] : [],
+      }),
+    } as unknown as MemoryStore;
+    const query = `${setupTerms.join(" ")} orchids background`;
+    expect(Buffer.byteLength(content)).toBeGreaterThan(12 * 1024);
+
+    const selected = await loadAgentMemoryContext(store, "bot", context, 12 * 1024, { query });
+    const recalled = await recallLocalMemory(store, "bot", context, { query });
+
+    expect(selected).toContain("setup000 starts 🌺.");
+    expect(selected).toContain("Orchids need filtered light 🌺.");
+    expect(selected).not.toContain("�");
+    expect(Buffer.byteLength(selected!)).toBeLessThanOrEqual(12 * 1024);
+    expect(recalled.documents[0]?.content).toContain("Orchids need filtered light 🌺.");
+    expect(recalled.documents[0]?.content).not.toContain("�");
+    expect(Buffer.byteLength(recalled.documents[0]?.content ?? "")).toBeLessThanOrEqual(1200);
+  });
+
   it("selects a relevant memory after more than 64 setup terms", async () => {
     const store = {
       read: async ({ scope }: { scope: string }) => ({
