@@ -44,6 +44,10 @@ function fixture() {
     run: {
       findUnique: vi.fn(async () => ({ ...run })),
       findUniqueOrThrow: vi.fn(async () => ({ ...run })),
+      findFirst: vi.fn(async () => ({
+        bot: { notifyOnFinish: true },
+        thread: { groupId: null },
+      })),
       findMany: vi.fn(
         async ({
           where,
@@ -87,6 +91,7 @@ function fixture() {
       ),
     },
     bot: {
+      findUnique: vi.fn(async () => ({ name: "Reviewer" })),
       findUniqueOrThrow: vi.fn(async () => ({
         id: run.botId,
         name: "Reviewer",
@@ -221,6 +226,29 @@ describe("durable setup failure handling", () => {
     expect(f.enqueue).not.toHaveBeenCalled();
     expect(f.task.prompt).toBe("Review the sample function");
     expect(f.messages).toEqual(originalPrompt);
+  });
+
+  it("notifies an opted-in bot's user of a redacted terminal setup refusal", async () => {
+    const f = fixture();
+    const send = vi.fn(async () => undefined);
+    f.deps.notifications = { send } as unknown as NonNullable<typeof f.deps.notifications>;
+    provision.mockRejectedValue(
+      new PermanentSetupError("Pinned computer reuse checks failed: sample-secret"),
+    );
+    await createRunExecutor(f.deps).continueRun(f.run.id, "worker");
+    expect(f.run.status).toBe("failed");
+    expect(send).toHaveBeenCalledOnce();
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "failure",
+        title: "Reviewer failed",
+        body: f.run.error,
+        botId: f.run.botId,
+        threadId: f.run.threadId,
+      }),
+      expect.any(Object),
+    );
+    expect(JSON.stringify(send.mock.calls)).not.toContain("sample-secret");
   });
 
   it("persists a bounded budget and backoff across queue reconciliation and executor replacement", async () => {

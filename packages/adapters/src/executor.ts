@@ -3588,6 +3588,18 @@ export function createRunExecutor(deps: ExecutorDeps) {
               .enqueue(runContinueJob(failed.continuationRunId))
               .catch((error) => getLogger().error("steering continuation enqueue", error));
           }
+          if (failed && runSendsFinishNotification(run.trigger) && !failed.continuationRunId) {
+            const notifyingBot = await deps.prisma.bot
+              .findUnique({ where: { id: run.botId }, select: { name: true } })
+              .catch(() => null);
+            await notifyRun(deps, run, {
+              kind: "failure",
+              title: `${notifyingBot?.name ?? "Bot"} failed`,
+              body: message.slice(0, 180),
+              botId: run.botId,
+              threadId: run.threadId,
+            });
+          }
           return;
         }
 
