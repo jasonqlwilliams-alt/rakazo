@@ -3,6 +3,7 @@ import type { PrismaClient } from "@rakazo/db";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type * as ComputerLifecycle from "./computer-lifecycle.js";
 import { ComputerBusyError } from "./computer-lifecycle.js";
+import { DockerSandboxProvider } from "./docker-sandbox.js";
 import { createRunExecutor, MAX_SETUP_FAILURES, setupRetryDelay } from "./executor.js";
 import { createJobReconciler } from "./job-reconciler.js";
 
@@ -177,6 +178,7 @@ function fixture() {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
   provision.mockReset();
   acquire.mockReset();
   acquire.mockResolvedValue(null);
@@ -395,6 +397,37 @@ describe("durable setup failure handling", () => {
     expect(f.run.setupRetryAt).toBeNull();
     expect(f.attempts.every((attempt) => attempt.status === "deferred")).toBe(true);
     expect(f.finalizeRun).not.toHaveBeenCalled();
+  });
+
+  it("defers repeated space-limit responses without consuming the setup budget", async () => {
+    const f = fixture();
+    const fetchMock = vi.fn(async () =>
+      Response.json({ error: "Computer limit reached for space (max: 5)" }, { status: 429 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = new DockerSandboxProvider("http://supervisor.test", "test-token");
+    provision.mockImplementation(() =>
+      provider.provision(
+        { botId: f.run.botId, homePath: "/unused" },
+        {
+          operationId: f.run.id,
+          traceId: f.run.id,
+          spaceId: f.run.spaceId,
+          userId: f.run.userId,
+          signal: new AbortController().signal,
+        },
+      ),
+    );
+    for (let i = 0; i < MAX_SETUP_FAILURES + 2; i++) {
+      await createRunExecutor(f.deps).continueRun(f.run.id, "worker");
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(MAX_SETUP_FAILURES + 2);
+    expect(f.run.status).toBe("queued");
+    expect(f.run.setupFailureCount).toBe(0);
+    expect(f.run.setupRetryAt).toBeNull();
+    expect(f.attempts.every((attempt) => attempt.status === "deferred")).toBe(true);
+    expect(f.finalizeRun).not.toHaveBeenCalled();
+    expect(f.runtimeRun).not.toHaveBeenCalled();
   });
 
   it("cannot fail or requeue a cancelled run when provisioning loses a race with Stop", async () => {

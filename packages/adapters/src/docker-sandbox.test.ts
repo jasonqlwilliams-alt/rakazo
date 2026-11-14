@@ -7,6 +7,7 @@ import {
   MAX_SANDBOX_SUCCESS_RESPONSE_BYTES,
   SCREEN_RELEASE_TIMEOUT_MS,
 } from "./docker-sandbox.js";
+import { ComputerBusyError } from "./computer-lifecycle.js";
 import { isSandboxGoneError } from "./e2b-sandbox.js";
 
 const context = {
@@ -161,7 +162,7 @@ describe("Docker sandbox", () => {
     });
   });
 
-  it("keeps a 429 computer limit reachable for a later retry", async () => {
+  it("classifies a 429 space limit as computer contention", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
@@ -173,8 +174,7 @@ describe("Docker sandbox", () => {
     const error = await provider
       .provision({ botId: "bot", homePath: "/tmp/bot" }, context)
       .catch((cause: unknown) => cause);
-    expect(error).toBeInstanceOf(Error);
-    expect(error).not.toBeInstanceOf(PermanentSetupError);
+    expect(error).toBeInstanceOf(ComputerBusyError);
   });
 
   it("stops a streamed file response at the caller-derived encoded limit", async () => {

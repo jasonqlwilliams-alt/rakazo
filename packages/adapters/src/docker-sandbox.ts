@@ -20,6 +20,7 @@ import type {
 import { PermanentSetupError } from "@rakazo/adapter-kit";
 import { boundedSandboxCommandTimeoutMs, resolveSupervisorToken } from "@rakazo/core";
 import { outgoingCorrelationHeaders } from "@rakazo/logging";
+import { ComputerBusyError } from "./computer-lifecycle.js";
 import {
   boundedComputerActions,
   clampRounded,
@@ -159,6 +160,9 @@ export class DockerSandboxProvider implements SandboxProvider {
     });
     if (!res.ok) {
       const detail = await safeBody(res, context.signal);
+      if (res.status === 429 && /Computer limit reached for space \(max: \d+\)/i.test(detail)) {
+        throw new ComputerBusyError();
+      }
       // Translate structured refusals to the provider-neutral contract. The legacy
       // supervisor used HTTP 500 for this exact pin refusal; support it during rollout.
       let refusal: { code?: string; error?: string } = {};
