@@ -159,11 +159,6 @@ export class DockerSandboxProvider implements SandboxProvider {
     });
     if (!res.ok) {
       const detail = await safeBody(res, context.signal);
-      // Match team-screen style: regex on safeBody (already ≤200 chars), not JSON.parse.
-      const limitError = detail.match(/Computer limit reached for space \(max: \d+\)/i)?.[0];
-      if (res.status === 429 && limitError) {
-        throw new PermanentSetupError(limitError);
-      }
       // Translate structured refusals to the provider-neutral contract. The legacy
       // supervisor used HTTP 500 for this exact pin refusal; support it during rollout.
       let refusal: { code?: string; error?: string } = {};

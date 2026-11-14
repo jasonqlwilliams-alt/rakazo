@@ -3546,6 +3546,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
           leaseOwner: workerId,
           leaseFence: fence,
           leaseExpiresAt: new Date(Date.now() + 5 * 60_000),
+          setupRetryAt: null,
           error: null,
           checkpoint: null,
         },

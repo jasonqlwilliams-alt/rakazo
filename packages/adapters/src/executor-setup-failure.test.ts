@@ -57,10 +57,12 @@ function fixture() {
                 status: "queued",
                 OR: [{ setupRetryAt: null }, { setupRetryAt: { lte: expect.any(Date) } }],
               },
+              { status: "waiting_takeover", setupRetryAt: { lte: expect.any(Date) } },
             ]),
           );
-          return run.status === "queued" &&
-            (!run.setupRetryAt || run.setupRetryAt.getTime() <= Date.now())
+          const due = run.setupRetryAt && run.setupRetryAt.getTime() <= Date.now();
+          return (run.status === "queued" && (!run.setupRetryAt || due)) ||
+            (run.status === "waiting_takeover" && due)
             ? [{ id: run.id, updatedAt: run.updatedAt }]
             : [];
         },
@@ -241,6 +243,51 @@ describe("durable setup failure handling", () => {
     }
     expect(f.run.status).toBe("failed");
     expect(f.run.error).toContain("repeated attempts");
+    f.enqueue.mockClear();
+    await f.reconciler.reconcileOnce();
+    expect(f.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("recovers a due held takeover setup retry after enqueue is lost", async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    f.run.status = "waiting_takeover";
+    provision.mockRejectedValue(new Error("daemon temporarily unavailable"));
+    await f.reconciler.reconcileOnce();
+    expect(f.enqueue).not.toHaveBeenCalled();
+    f.enqueue.mockRejectedValueOnce(new Error("queue unavailable"));
+    await expect(createRunExecutor(f.deps).continueRun(f.run.id, "worker-1")).rejects.toThrow(
+      "queue unavailable",
+    );
+    expect(f.run.status).toBe("waiting_takeover");
+    expect(f.run.checkpoint).toBeNull();
+    expect(f.run.setupFailureCount).toBe(1);
+    expect(f.run.setupRetryAt?.getTime()).toBe(Date.now() + setupRetryDelay(1));
+    f.enqueue.mockClear();
+    await f.reconciler.reconcileOnce();
+    expect(f.enqueue).not.toHaveBeenCalled();
+    vi.setSystemTime(f.run.setupRetryAt!);
+    await f.reconciler.reconcileOnce();
+    expect(f.enqueue).toHaveBeenCalledOnce();
+    f.enqueue.mockClear();
+    await createRunExecutor(f.deps).continueRun(f.run.id, "worker-2");
+    expect(provision).toHaveBeenCalledTimes(2);
+    expect(f.run.status).toBe("waiting_takeover");
+    expect(f.run.checkpoint).toBeNull();
+    expect(f.run.setupFailureCount).toBe(2);
+    expect(f.runtimeRun).not.toHaveBeenCalled();
+  });
+
+  it("does not reconcile a consumed setup retry during takeover contention", async () => {
+    const f = fixture();
+    f.run.status = "waiting_takeover";
+    f.run.setupFailureCount = 1;
+    f.run.setupRetryAt = new Date(Date.now() - 1_000);
+    acquire.mockRejectedValue(new ComputerBusyError());
+    await createRunExecutor(f.deps).continueRun(f.run.id, "worker");
+    expect(f.run.status).toBe("waiting_takeover");
+    expect(f.run.setupFailureCount).toBe(1);
+    expect(f.run.setupRetryAt).toBeNull();
     f.enqueue.mockClear();
     await f.reconciler.reconcileOnce();
     expect(f.enqueue).not.toHaveBeenCalled();

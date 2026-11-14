@@ -161,7 +161,7 @@ describe("Docker sandbox", () => {
     });
   });
 
-  it("translates a 429 computer limit reached error from the supervisor", async () => {
+  it("keeps a 429 computer limit reachable for a later retry", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
@@ -170,9 +170,11 @@ describe("Docker sandbox", () => {
     );
     const provider = new DockerSandboxProvider("http://supervisor.test", "test-token");
 
-    await expect(
-      provider.provision({ botId: "bot", homePath: "/tmp/bot" }, context),
-    ).rejects.toThrow("Computer limit reached for space (max: 5)");
+    const error = await provider
+      .provision({ botId: "bot", homePath: "/tmp/bot" }, context)
+      .catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(PermanentSetupError);
   });
 
   it("stops a streamed file response at the caller-derived encoded limit", async () => {
