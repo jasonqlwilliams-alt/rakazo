@@ -174,7 +174,15 @@ export class DockerSandboxProvider implements SandboxProvider {
       }
       const pinnedRefusal =
         "Pinned computer reuse checks failed; creation or replacement is disabled";
-      if (refusal?.error === pinnedRefusal) throw new PermanentSetupError(pinnedRefusal);
+      const retainedReasons = [
+        pinnedRefusal,
+        "Pinned computer image is unavailable; creation or replacement is disabled",
+        "Pinned computer's owned team network is unavailable; creation or replacement is disabled",
+        "Pinned computer network lacks restricted egress; creation or replacement is disabled",
+      ];
+      if (refusal?.error && retainedReasons.includes(refusal.error)) {
+        throw new PermanentSetupError(refusal.error);
+      }
       if (
         refusal?.code === "PERMANENT_SETUP_FAILURE" ||
         [400, 401, 403, 404, 409, 422].includes(res.status)

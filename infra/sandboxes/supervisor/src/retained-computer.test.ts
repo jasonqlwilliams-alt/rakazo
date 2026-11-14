@@ -13,6 +13,7 @@ function fixture() {
       NetworkMode: "existing",
       PortBindings: { "6080/tcp": [{ HostIp: "127.0.0.1", HostPort: "32768" }] },
     },
+    NetworkSettings: { Networks: { existing: { NetworkID: "net-owned" } } },
     Mounts: [{ Type: "bind", Source: "/data/home", Destination: "/home/rakazo", RW: true }],
   } as Docker.ContainerInspectInfo;
 }
@@ -72,5 +73,23 @@ describe("operator-pinned retained computer", () => {
     const publicPort = fixture();
     publicPort.HostConfig.PortBindings["6080/tcp"]![0]!.HostIp = "0.0.0.0";
     expect(() => check(publicPort)).toThrow();
+  });
+  it("refuses missing, additional, or stale network attachments", () => {
+    const ownedEndpoint = fixture().NetworkSettings.Networks.existing!;
+    const missing = fixture();
+    missing.NetworkSettings.Networks = {};
+    expect(() => check(missing)).toThrow();
+    const other = fixture();
+    other.NetworkSettings.Networks = {
+      other: { ...ownedEndpoint, NetworkID: "net-other" },
+    };
+    expect(() => check(other)).toThrow();
+    const extra = fixture();
+    extra.NetworkSettings.Networks.other = { ...ownedEndpoint, NetworkID: "net-other" };
+    expect(() => check(extra)).toThrow();
+    const stale = fixture();
+    expect(() =>
+      assertRetainedComputer(stale, id, "sha256:image", "/data/home", "existing", "net-new"),
+    ).toThrow();
   });
 });

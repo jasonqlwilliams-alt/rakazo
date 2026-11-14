@@ -222,16 +222,43 @@ app.post("/computers", async (c) => {
         // SANDBOX_RETAINED_ALLOW_HOMEKEY is a comma-separated homeKey allowlist;
         // those homeKeys fall through to normal provision/create while every other stays pinned.
         const info = existing ? await existing.inspect() : undefined;
-        const desired = await docker.getImage(COMPUTER_IMAGE).inspect();
+        const desired = await docker
+          .getImage(COMPUTER_IMAGE)
+          .inspect()
+          .catch((error) => {
+            if ((error as { statusCode?: number })?.statusCode === 404) {
+              throw new PermanentSetupError(
+                "Pinned computer image is unavailable; creation or replacement is disabled",
+              );
+            }
+            throw error;
+          });
+        const teamNetwork =
+          networkMode === computerNetworkNameFor(body.botId)
+            ? await inspectNetworkIfPresent(networkMode)
+            : undefined;
         const expectedNetwork =
           networkMode === computerNetworkNameFor(body.botId)
-            ? retainedComputerNetwork(
-                body.botId,
-                networkOwner,
-                await inspectNetworkIfPresent(networkMode),
-              )
+            ? retainedComputerNetwork(body.botId, networkOwner, teamNetwork)
             : networkMode;
-        assertRetainedComputer(info, retainedId, desired.Id, storage.homePath, expectedNetwork);
+        if (
+          teamNetwork &&
+          computerEgressMode === "restricted" &&
+          teamNetwork.Options?.["com.docker.network.bridge.name"] !==
+            computerBridgeNameFor(body.botId)
+        ) {
+          throw new PermanentSetupError(
+            "Pinned computer network lacks restricted egress; creation or replacement is disabled",
+          );
+        }
+        assertRetainedComputer(
+          info,
+          retainedId,
+          desired.Id,
+          storage.homePath,
+          expectedNetwork,
+          teamNetwork?.Id,
+        );
         const started = !info.State.Running;
         if (started) await existing!.start();
         return c.json({ id: info.Id, image: COMPUTER_IMAGE, resumed: true, started });

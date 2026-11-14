@@ -11,8 +11,14 @@ export function retainedComputerNetwork(
   network: Docker.NetworkInspectInfo | undefined,
 ): string {
   const name = computerNetworkNameFor(botId);
+  if (!network) {
+    throw new PermanentSetupError(
+      "Pinned computer's owned team network is unavailable; creation or replacement is disabled",
+    );
+  }
   if (
-    network?.Name !== name ||
+    !network.Id ||
+    network.Name !== name ||
     network.Labels?.["rakazo.botId"] !== botId ||
     network.Labels?.["rakazo.computerOwner"] !== owner
   ) {
@@ -28,8 +34,10 @@ export function assertRetainedComputer(
   expectedImage: string,
   homePath: string,
   expectedNetwork: string | undefined,
+  expectedNetworkId?: string,
 ): asserts info is Docker.ContainerInspectInfo {
   const ports = Object.values(info?.HostConfig.PortBindings ?? {}).flat();
+  const attachedNetworks = info?.NetworkSettings?.Networks ?? {};
   const valid =
     /^[a-f0-9]{64}$/.test(pin) &&
     info?.Id === pin &&
@@ -37,8 +45,12 @@ export function assertRetainedComputer(
     !info.State.Dead &&
     !info.State.Paused &&
     !info.State.Restarting &&
-    Boolean(expectedNetwork) &&
+    typeof expectedNetwork === "string" &&
+    expectedNetwork.length > 0 &&
     info.HostConfig.NetworkMode === expectedNetwork &&
+    Object.keys(attachedNetworks).length === 1 &&
+    Boolean(attachedNetworks[expectedNetwork]) &&
+    (!expectedNetworkId || attachedNetworks[expectedNetwork]?.NetworkID === expectedNetworkId) &&
     info.Mounts.some(
       (mount) =>
         mount.Type === "bind" &&

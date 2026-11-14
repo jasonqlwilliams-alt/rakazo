@@ -614,6 +614,22 @@ describe("provisioning failure classification", () => {
       ).rejects.toThrow(pinError);
     },
   );
+  it.each([
+    "Pinned computer image is unavailable; creation or replacement is disabled",
+    "Pinned computer's owned team network is unavailable; creation or replacement is disabled",
+    "Pinned computer network lacks restricted egress; creation or replacement is disabled",
+  ])("preserves a safe retained setup reason: %s", async (reason) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({ code: "PERMANENT_SETUP_FAILURE", error: reason }, { status: 409 }),
+      ),
+    );
+    const provider = new DockerSandboxProvider("http://supervisor.test", "test-token");
+    await expect(
+      provider.provision({ botId: "bot", homePath: "/tmp/bot" }, context),
+    ).rejects.toThrow(reason);
+  });
   it.each([400, 401, 403, 404, 409, 422])(
     "makes HTTP %s terminal without exposing response details",
     async (status) => {

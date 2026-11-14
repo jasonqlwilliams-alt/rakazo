@@ -1,6 +1,10 @@
 import { resolveSupervisorToken } from "@rakazo/core";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { computerNetworkNameFor, computerNetworkOwnerFor } from "./computer-spec.js";
+import {
+  computerBridgeNameFor,
+  computerNetworkNameFor,
+  computerNetworkOwnerFor,
+} from "./computer-spec.js";
 
 const mock = vi.hoisted(() => ({
   inspect: vi.fn(),
@@ -46,6 +50,9 @@ function info() {
     HostConfig: {
       NetworkMode: "existing",
       PortBindings: { "6080/tcp": [{ HostIp: "127.0.0.1", HostPort: "0" }] },
+    },
+    NetworkSettings: {
+      Networks: { existing: { NetworkID: "net-service" } } as Record<string, { NetworkID: string }>,
     },
     Mounts: [
       { Type: "bind", Source: "/host/data/homes/home", Destination: "/home/rakazo", RW: true },
@@ -118,10 +125,21 @@ it("does not bypass workspace ownership for the pinned ID", async () => {
   expect(mock.remove).not.toHaveBeenCalled();
 });
 it("does not build a missing computer image or replace a missing pinned computer", async () => {
-  mock.image.mockRejectedValue(new Error("image missing"));
-  expect((await provision()).status).toBe(500);
+  mock.image.mockRejectedValue(Object.assign(new Error("private image details"), { statusCode: 404 }));
+  const response = await provision();
+  expect(response.status).toBe(409);
+  expect(await response.json()).toEqual({
+    code: "PERMANENT_SETUP_FAILURE",
+    error: "Pinned computer image is unavailable; creation or replacement is disabled",
+  });
   expect(mock.build).not.toHaveBeenCalled();
   expect(mock.create).not.toHaveBeenCalled();
+});
+it("keeps transient image inspection failures retryable", async () => {
+  mock.image.mockRejectedValue(Object.assign(new Error("daemon unavailable"), { statusCode: 503 }));
+  const response = await provision();
+  expect(response.status).toBe(500);
+  expect(await response.json()).not.toHaveProperty("code", "PERMANENT_SETUP_FAILURE");
 });
 it("lets SANDBOX_RETAINED_ALLOW_HOMEKEY homeKeys bypass the retained-computer pin", async () => {
   vi.stubEnv("SANDBOX_SCREEN_NETWORK", "internal");
@@ -173,8 +191,12 @@ it.each(["published", "isolated"])("wakes its owned team network in %s topology"
   const team = info();
   team.State.Running = false;
   team.HostConfig.NetworkMode = computerNetworkNameFor("home");
+  team.NetworkSettings.Networks = {
+    [computerNetworkNameFor("home")]: { NetworkID: "net-owned" },
+  };
   mock.inspect.mockResolvedValue(team);
   mock.network.mockResolvedValue({
+    Id: "net-owned",
     Name: computerNetworkNameFor("home"),
     Labels: {
       "rakazo.botId": "home",
@@ -197,8 +219,12 @@ it.each(["other-team", "other-owner", "other-name", "missing-labels", "wrong-con
     team.HostConfig.NetworkMode = computerNetworkNameFor(
       defect === "wrong-container-network" ? "other" : "home",
     );
+    team.NetworkSettings.Networks = {
+      [computerNetworkNameFor("home")]: { NetworkID: "net-owned" },
+    };
     mock.inspect.mockResolvedValue(team);
     mock.network.mockResolvedValue({
+      Id: "net-owned",
       Name: computerNetworkNameFor(defect === "other-name" ? "other" : "home"),
       Labels:
         defect === "missing-labels"
@@ -219,3 +245,84 @@ it.each(["other-team", "other-owner", "other-name", "missing-labels", "wrong-con
     expect(mock.remove).not.toHaveBeenCalled();
   },
 );
+it.each(["missing", "other-team", "extra", "stale-id"])(
+  "refuses a pin with %s actual network attachment",
+  async (defect) => {
+    vi.stubEnv("SANDBOX_SCREEN_NETWORK", "isolated");
+    const team = info();
+    team.State.Running = false;
+    team.HostConfig.NetworkMode = computerNetworkNameFor("home");
+    team.NetworkSettings.Networks =
+      defect === "missing"
+        ? {}
+        : defect === "other-team"
+          ? { [computerNetworkNameFor("other")]: { NetworkID: "net-other" } }
+          : {
+              [computerNetworkNameFor("home")]: {
+                NetworkID: defect === "stale-id" ? "net-old" : "net-owned",
+              },
+              ...(defect === "extra" ? { other: { NetworkID: "net-other" } } : {}),
+            };
+    mock.inspect.mockResolvedValue(team);
+    mock.network.mockResolvedValue({
+      Id: "net-owned",
+      Name: computerNetworkNameFor("home"),
+      Labels: {
+        "rakazo.botId": "home",
+        "rakazo.computerOwner": computerNetworkOwnerFor("/host/data", undefined),
+      },
+    });
+    const response = await provision();
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "PERMANENT_SETUP_FAILURE" });
+    expect(mock.start).not.toHaveBeenCalled();
+    expect(mock.create).not.toHaveBeenCalled();
+    expect(mock.remove).not.toHaveBeenCalled();
+  },
+);
+it("refuses a missing owned team network with a terminal reason", async () => {
+  vi.stubEnv("SANDBOX_SCREEN_NETWORK", "isolated");
+  const team = info();
+  team.HostConfig.NetworkMode = computerNetworkNameFor("home");
+  mock.inspect.mockResolvedValue(team);
+  mock.network.mockRejectedValue(Object.assign(new Error("no such network"), { statusCode: 404 }));
+  const response = await provision();
+  expect(response.status).toBe(409);
+  expect(await response.json()).toEqual({
+    code: "PERMANENT_SETUP_FAILURE",
+    error: "Pinned computer's owned team network is unavailable; creation or replacement is disabled",
+  });
+  expect(mock.start).not.toHaveBeenCalled();
+  expect(mock.create).not.toHaveBeenCalled();
+  expect(mock.remove).not.toHaveBeenCalled();
+});
+it.each([false, true])("uses only a named restricted bridge: %s", async (namedBridge) => {
+  vi.stubEnv("SANDBOX_SCREEN_NETWORK", "isolated");
+  vi.stubEnv("SANDBOX_COMPUTER_EGRESS", "restricted");
+  const team = info();
+  team.State.Running = false;
+  team.HostConfig.NetworkMode = computerNetworkNameFor("home");
+  team.NetworkSettings.Networks = {
+    [computerNetworkNameFor("home")]: { NetworkID: "net-owned" },
+  };
+  mock.inspect.mockResolvedValue(team);
+  mock.network.mockResolvedValue({
+    Id: "net-owned",
+    Name: computerNetworkNameFor("home"),
+    Labels: {
+      "rakazo.botId": "home",
+      "rakazo.computerOwner": computerNetworkOwnerFor("/host/data", undefined),
+    },
+    Options: namedBridge
+      ? { "com.docker.network.bridge.name": computerBridgeNameFor("home") }
+      : {},
+  });
+  const response = await provision();
+  expect(response.status).toBe(namedBridge ? 200 : 409);
+  if (!namedBridge) {
+    expect(await response.json()).toMatchObject({ code: "PERMANENT_SETUP_FAILURE" });
+  }
+  expect(mock.start).toHaveBeenCalledTimes(namedBridge ? 1 : 0);
+  expect(mock.create).not.toHaveBeenCalled();
+  expect(mock.remove).not.toHaveBeenCalled();
+});
