@@ -136,7 +136,12 @@ function fixture() {
   const runtimeRun = vi.fn();
   const enqueue = vi.fn(async () => undefined);
   const finalizeRun = vi.fn(
-    async (input: { leaseOwner: string; leaseFence: number; error: string; attemptId?: string }) => {
+    async (input: {
+      leaseOwner: string;
+      leaseFence: number;
+      error: string;
+      attemptId?: string;
+    }) => {
       if (
         (run.status !== "running" && (input.attemptId || run.status !== "leased")) ||
         run.leaseOwner !== input.leaseOwner ||
@@ -352,9 +357,7 @@ describe("durable setup failure handling", () => {
       }
       expect(f.run.status).toBe("failed");
       expect(f.run.error).toContain("repeated attempts");
-      expect(f.finalizeRun).toHaveBeenCalledWith(
-        expect.objectContaining({ outcome: "failed" }),
-      );
+      expect(f.finalizeRun).toHaveBeenCalledWith(expect.objectContaining({ outcome: "failed" }));
       expect(f.finalizeRun.mock.calls.at(-1)?.[0]).not.toHaveProperty("attemptId");
       f.enqueue.mockClear();
       await f.reconciler.reconcileOnce();

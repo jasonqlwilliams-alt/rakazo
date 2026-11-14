@@ -15,7 +15,7 @@ function fixture() {
     },
     NetworkSettings: { Networks: { existing: { NetworkID: "net-owned" } } },
     Mounts: [{ Type: "bind", Source: "/data/home", Destination: "/home/rakazo", RW: true }],
-  } as Docker.ContainerInspectInfo;
+  } as unknown as Docker.ContainerInspectInfo;
 }
 function check(info: Docker.ContainerInspectInfo | undefined, pin = id) {
   return assertRetainedComputer(info, pin, "sha256:image", "/data/home", "existing");

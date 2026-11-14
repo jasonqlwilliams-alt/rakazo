@@ -1,13 +1,13 @@
 import type { ProcessEvent } from "@rakazo/adapter-kit";
 import { PermanentSetupError } from "@rakazo/adapter-kit";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ComputerBusyError } from "./computer-lifecycle.js";
 import {
   DockerSandboxProvider,
   MAX_SANDBOX_ERROR_RESPONSE_BYTES,
   MAX_SANDBOX_SUCCESS_RESPONSE_BYTES,
   SCREEN_RELEASE_TIMEOUT_MS,
 } from "./docker-sandbox.js";
-import { ComputerBusyError } from "./computer-lifecycle.js";
 import { isSandboxGoneError } from "./e2b-sandbox.js";
 
 const context = {
@@ -178,7 +178,10 @@ describe("Docker sandbox", () => {
   });
 
   it("classifies a 429 without a readable body as computer contention", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 429 })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("", { status: 429 })),
+    );
     const provider = new DockerSandboxProvider("http://supervisor.test", "test-token");
     await expect(
       provider.provision({ botId: "bot", homePath: "/tmp/bot" }, context),

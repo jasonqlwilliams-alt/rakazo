@@ -125,7 +125,9 @@ it("does not bypass workspace ownership for the pinned ID", async () => {
   expect(mock.remove).not.toHaveBeenCalled();
 });
 it("does not build a missing computer image or replace a missing pinned computer", async () => {
-  mock.image.mockRejectedValue(Object.assign(new Error("private image details"), { statusCode: 404 }));
+  mock.image.mockRejectedValue(
+    Object.assign(new Error("private image details"), { statusCode: 404 }),
+  );
   const response = await provision();
   expect(response.status).toBe(409);
   expect(await response.json()).toEqual({
@@ -290,7 +292,8 @@ it("refuses a missing owned team network with a terminal reason", async () => {
   expect(response.status).toBe(409);
   expect(await response.json()).toEqual({
     code: "PERMANENT_SETUP_FAILURE",
-    error: "Pinned computer's owned team network is unavailable; creation or replacement is disabled",
+    error:
+      "Pinned computer's owned team network is unavailable; creation or replacement is disabled",
   });
   expect(mock.start).not.toHaveBeenCalled();
   expect(mock.create).not.toHaveBeenCalled();
@@ -313,9 +316,7 @@ it.each([false, true])("uses only a named restricted bridge: %s", async (namedBr
       "rakazo.botId": "home",
       "rakazo.computerOwner": computerNetworkOwnerFor("/host/data", undefined),
     },
-    Options: namedBridge
-      ? { "com.docker.network.bridge.name": computerBridgeNameFor("home") }
-      : {},
+    Options: namedBridge ? { "com.docker.network.bridge.name": computerBridgeNameFor("home") } : {},
   });
   const response = await provision();
   expect(response.status).toBe(namedBridge ? 200 : 409);

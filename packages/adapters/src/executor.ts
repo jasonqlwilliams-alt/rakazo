@@ -3583,9 +3583,10 @@ export function createRunExecutor(deps: ExecutorDeps) {
             outcome: "failed",
             error: message,
           });
-          if (failed?.continuationRunId) {
+          const continuationRunId = failed ? failed.continuationRunId : undefined;
+          if (continuationRunId) {
             await deps.jobs
-              .enqueue(runContinueJob(failed.continuationRunId))
+              .enqueue(runContinueJob(continuationRunId))
               .catch((error) => getLogger().error("steering continuation enqueue", error));
           }
           if (failed && runSendsFinishNotification(run.trigger) && !failed.continuationRunId) {

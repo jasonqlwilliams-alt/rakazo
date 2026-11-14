@@ -93,6 +93,8 @@ Before exporting a remote workspace, remote backends quiesce desktop browsers so
 
 The disposable OS image is not a portable disk snapshot. System packages installed outside the workspace are lost when moving to another provider; durable machine customization should be represented by a reproducible image or setup recipe. This is what makes a future backend switch practical instead of trying to translate vendor-specific VM snapshots.
 
+When an operator pins a Docker computer for reuse, the supervisor resumes only that exact container with its configured image, writable home, expected network, and loopback-only ports. On per-bot networks, its single attached network must be its owned team network. A missing image or owned network, an unexpected network attachment, or an incompatible restricted-egress bridge refuses reuse without replacing the pin and fails the run with a redacted reason. Transient setup failures retry with backoff up to five failures per run; the budget survives worker replacement and reconciliation. Computer-capacity contention defers the run without consuming that budget.
+
 Docker computers include `uv` for rootless Python CLI installs. Run `uv tool install <package>`; the tool environments, command shims, managed Python versions, and cache stay under the persistent home. This installs Python command-line tools, not system packages such as `apt` dependencies. The image also ships GitHub's `gh` CLI; bots authenticate the CLI through device flow, and gh stores that credential under the persistent home. `pdftotext`, `pandoc`, and `openpyxl` are available to extract text from PDFs, documents, and spreadsheets.
 
 ## Verification
