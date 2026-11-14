@@ -160,7 +160,7 @@ export class DockerSandboxProvider implements SandboxProvider {
     });
     if (!res.ok) {
       const detail = await safeBody(res, context.signal);
-      if (res.status === 429 && /Computer limit reached for space \(max: \d+\)/i.test(detail)) {
+      if (res.status === 429) {
         throw new ComputerBusyError();
       }
       // Translate structured refusals to the provider-neutral contract. The legacy
