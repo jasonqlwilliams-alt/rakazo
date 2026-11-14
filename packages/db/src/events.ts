@@ -151,7 +151,6 @@ interface FinalizeRunBase {
   botId: string;
   runId: string;
   taskId: string;
-  attemptId: string;
   leaseOwner: string;
   leaseFence: number;
 }
@@ -160,10 +159,11 @@ export type FinalizeRunInput = FinalizeRunBase &
   (
     | {
         outcome: "completed";
+        attemptId: string;
         blocks: MessageBlock[];
         markUnread?: boolean;
       }
-    | { outcome: "failed"; error: string }
+    | { outcome: "failed"; error: string; attemptId?: string }
   );
 
 export interface PauseRunForInput {
@@ -1355,7 +1355,7 @@ async function finalizeRunOnce(
         threadId: input.threadId,
         botId: input.botId,
         taskId: input.taskId,
-        status: "running",
+        status: input.attemptId ? "running" : { in: ["leased", "running"] },
         leaseOwner: input.leaseOwner,
         leaseFence: input.leaseFence,
       },
@@ -1369,20 +1369,22 @@ async function finalizeRunOnce(
     });
     if (terminal.count !== 1) return null;
 
-    const attempt = await tx.attempt.updateMany({
-      where: {
-        id: input.attemptId,
-        runId: input.runId,
-        fence: input.leaseFence,
-        status: "running",
-      },
-      data: {
-        status: input.outcome,
-        error: input.outcome === "failed" ? input.error : null,
-        finishedAt: now,
-      },
-    });
-    if (attempt.count !== 1) throw new Error("Active run attempt was not available to finalize");
+    if (input.attemptId) {
+      const attempt = await tx.attempt.updateMany({
+        where: {
+          id: input.attemptId,
+          runId: input.runId,
+          fence: input.leaseFence,
+          status: "running",
+        },
+        data: {
+          status: input.outcome,
+          error: input.outcome === "failed" ? input.error : null,
+          finishedAt: now,
+        },
+      });
+      if (attempt.count !== 1) throw new Error("Active run attempt was not available to finalize");
+    }
 
     const task = await tx.task.updateMany({
       where: {

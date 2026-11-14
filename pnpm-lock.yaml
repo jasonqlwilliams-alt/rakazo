@@ -466,6 +466,9 @@ importers:
       '@hono/node-server':
         specifier: 2.1.1
         version: 2.1.1(hono@4.13.7)
+      '@rakazo/adapter-kit':
+        specifier: workspace:*
+        version: link:../../../packages/adapter-kit
       '@rakazo/core':
         specifier: workspace:*
         version: link:../../../packages/core

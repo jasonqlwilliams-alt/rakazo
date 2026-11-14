@@ -182,7 +182,11 @@ export function createJobReconciler(
             AND: [
               {
                 OR: [
-                  { status: "queued" },
+                  {
+                    status: "queued",
+                    OR: [{ setupRetryAt: null }, { setupRetryAt: { lte: now } }],
+                  },
+                  { status: "waiting_takeover", setupRetryAt: { lte: now } },
                   {
                     status: { in: ["leased", "running"] },
                     leaseExpiresAt: { lte: now },

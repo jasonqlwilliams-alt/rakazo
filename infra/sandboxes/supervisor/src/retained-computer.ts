@@ -1,4 +1,31 @@
+import { PermanentSetupError } from "@rakazo/adapter-kit";
 import type Docker from "dockerode";
+import { computerNetworkNameFor } from "./computer-spec.js";
+
+const REFUSAL = "Pinned computer reuse checks failed; creation or replacement is disabled";
+
+/** Resolve only this computer's network, owned by this installation, without changing it. */
+export function retainedComputerNetwork(
+  botId: string,
+  owner: string,
+  network: Docker.NetworkInspectInfo | undefined,
+): string {
+  const name = computerNetworkNameFor(botId);
+  if (!network) {
+    throw new PermanentSetupError(
+      "Pinned computer's owned team network is unavailable; creation or replacement is disabled",
+    );
+  }
+  if (
+    !network.Id ||
+    network.Name !== name ||
+    network.Labels?.["rakazo.botId"] !== botId ||
+    network.Labels?.["rakazo.computerOwner"] !== owner
+  ) {
+    throw new PermanentSetupError(REFUSAL);
+  }
+  return name;
+}
 
 /** Explicit maintenance pin: reuse one existing computer without changing its runtime identity. */
 export function assertRetainedComputer(
@@ -6,9 +33,11 @@ export function assertRetainedComputer(
   pin: string,
   expectedImage: string,
   homePath: string,
-  supervisorNetworks: string[],
+  expectedNetwork: string | undefined,
+  expectedNetworkId?: string,
 ): asserts info is Docker.ContainerInspectInfo {
   const ports = Object.values(info?.HostConfig.PortBindings ?? {}).flat();
+  const attachedNetworks = info?.NetworkSettings?.Networks ?? {};
   const valid =
     /^[a-f0-9]{64}$/.test(pin) &&
     info?.Id === pin &&
@@ -16,7 +45,12 @@ export function assertRetainedComputer(
     !info.State.Dead &&
     !info.State.Paused &&
     !info.State.Restarting &&
-    supervisorNetworks.includes(info.HostConfig.NetworkMode ?? "") &&
+    typeof expectedNetwork === "string" &&
+    expectedNetwork.length > 0 &&
+    info.HostConfig.NetworkMode === expectedNetwork &&
+    Object.keys(attachedNetworks).length === 1 &&
+    Boolean(attachedNetworks[expectedNetwork]) &&
+    (!expectedNetworkId || attachedNetworks[expectedNetwork]?.NetworkID === expectedNetworkId) &&
     info.Mounts.some(
       (mount) =>
         mount.Type === "bind" &&
@@ -33,6 +67,6 @@ export function assertRetainedComputer(
         port.HostIp === "127.0.0.1",
     );
   if (!valid) {
-    throw new Error("Pinned computer reuse checks failed; creation or replacement is disabled");
+    throw new PermanentSetupError(REFUSAL);
   }
 }

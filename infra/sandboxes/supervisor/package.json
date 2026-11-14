@@ -10,6 +10,7 @@
     "test": "vitest run --root ../../.. infra/sandboxes/supervisor/src"
   },
   "dependencies": {
+    "@rakazo/adapter-kit": "workspace:*",
     "@hono/node-server": "2.1.1",
     "@rakazo/core": "workspace:*",
     "@rakazo/logging": "workspace:*",

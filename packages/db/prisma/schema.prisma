@@ -678,6 +678,9 @@ model Run {
   leaseOwner           String?
   leaseFence           Int              @default(0)
   leaseExpiresAt       DateTime?
+  // Setup retry state belongs to the run, not a replaceable queue job or worker.
+  setupFailureCount    Int              @default(0)
+  setupRetryAt         DateTime?
   checkpoint           String?
   clientNonce          String?
   sourceMessageId      String?
