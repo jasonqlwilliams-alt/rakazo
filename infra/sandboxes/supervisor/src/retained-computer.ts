@@ -1,4 +1,25 @@
+import { PermanentSetupError } from "@rakazo/adapter-kit";
 import type Docker from "dockerode";
+import { computerNetworkNameFor } from "./computer-spec.js";
+
+const REFUSAL = "Pinned computer reuse checks failed; creation or replacement is disabled";
+
+/** Resolve only this computer's network, owned by this installation, without changing it. */
+export function retainedComputerNetwork(
+  botId: string,
+  owner: string,
+  network: Docker.NetworkInspectInfo | undefined,
+): string {
+  const name = computerNetworkNameFor(botId);
+  if (
+    network?.Name !== name ||
+    network.Labels?.["rakazo.botId"] !== botId ||
+    network.Labels?.["rakazo.computerOwner"] !== owner
+  ) {
+    throw new PermanentSetupError(REFUSAL);
+  }
+  return name;
+}
 
 /** Explicit maintenance pin: reuse one existing computer without changing its runtime identity. */
 export function assertRetainedComputer(
@@ -6,7 +27,7 @@ export function assertRetainedComputer(
   pin: string,
   expectedImage: string,
   homePath: string,
-  supervisorNetworks: string[],
+  expectedNetwork: string | undefined,
 ): asserts info is Docker.ContainerInspectInfo {
   const ports = Object.values(info?.HostConfig.PortBindings ?? {}).flat();
   const valid =
@@ -16,7 +37,8 @@ export function assertRetainedComputer(
     !info.State.Dead &&
     !info.State.Paused &&
     !info.State.Restarting &&
-    supervisorNetworks.includes(info.HostConfig.NetworkMode ?? "") &&
+    Boolean(expectedNetwork) &&
+    info.HostConfig.NetworkMode === expectedNetwork &&
     info.Mounts.some(
       (mount) =>
         mount.Type === "bind" &&
@@ -33,6 +55,6 @@ export function assertRetainedComputer(
         port.HostIp === "127.0.0.1",
     );
   if (!valid) {
-    throw new Error("Pinned computer reuse checks failed; creation or replacement is disabled");
+    throw new PermanentSetupError(REFUSAL);
   }
 }

@@ -1,5 +1,6 @@
 import { resolveSupervisorToken } from "@rakazo/core";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { computerNetworkNameFor, computerNetworkOwnerFor } from "./computer-spec.js";
 
 const mock = vi.hoisted(() => ({
   inspect: vi.fn(),
@@ -10,6 +11,7 @@ const mock = vi.hoisted(() => ({
   build: vi.fn(),
   image: vi.fn(),
   supervisor: vi.fn(),
+  network: vi.fn(),
 }));
 vi.mock("dockerode", () => ({
   default: class {
@@ -17,6 +19,9 @@ vi.mock("dockerode", () => ({
       return id === "supervisor"
         ? { inspect: mock.supervisor }
         : { inspect: mock.inspect, start: mock.start, remove: mock.remove };
+    }
+    getNetwork() {
+      return { inspect: mock.network };
     }
     listContainers = mock.list;
     createContainer = mock.create;
@@ -53,7 +58,7 @@ beforeEach(() => {
   vi.spyOn(process, "getuid").mockReturnValue(0);
   vi.stubEnv("HOSTNAME", "supervisor");
   vi.stubEnv("DATA_DIR", "/data");
-  vi.stubEnv("SANDBOX_SCREEN_NETWORK", "isolated");
+  vi.stubEnv("SANDBOX_SCREEN_NETWORK", "internal");
   vi.stubEnv("SANDBOX_RETAINED_COMPUTER_ID", id);
   vi.stubEnv("SANDBOX_SUPERVISOR_TOKEN", "deterministic-local-test-token-only");
   mock.supervisor.mockResolvedValue({
@@ -107,7 +112,7 @@ it("does not bypass workspace ownership for the pinned ID", async () => {
   const other = info();
   other.Config.Labels["rakazo.workspaceId"] = "other";
   mock.inspect.mockResolvedValue(other);
-  expect((await provision()).status).toBe(500);
+  expect((await provision()).status).toBe(409);
   expect(mock.start).not.toHaveBeenCalled();
   expect(mock.create).not.toHaveBeenCalled();
   expect(mock.remove).not.toHaveBeenCalled();
@@ -161,3 +166,56 @@ it("refuses deletion of the owned pin and rejects a different requesting space",
   ).toBe(409);
   expect(mock.remove).not.toHaveBeenCalled();
 });
+
+// Real retained team topology: the supervisor stays on the service network.
+it.each(["published", "isolated"])("wakes its owned team network in %s topology", async (mode) => {
+  vi.stubEnv("SANDBOX_SCREEN_NETWORK", mode);
+  const team = info();
+  team.State.Running = false;
+  team.HostConfig.NetworkMode = computerNetworkNameFor("home");
+  mock.inspect.mockResolvedValue(team);
+  mock.network.mockResolvedValue({
+    Name: computerNetworkNameFor("home"),
+    Labels: {
+      "rakazo.botId": "home",
+      "rakazo.computerOwner": computerNetworkOwnerFor("/host/data", undefined),
+    },
+  });
+  const response = await provision();
+  expect(response.status, await response.clone().text()).toBe(200);
+  expect(mock.start).toHaveBeenCalledOnce();
+  expect(mock.create).not.toHaveBeenCalled();
+  expect(mock.remove).not.toHaveBeenCalled();
+});
+
+it.each(["other-team", "other-owner", "other-name", "missing-labels", "wrong-container-network"])(
+  "refuses a team network with %s before starting the pin",
+  async (defect) => {
+    vi.stubEnv("SANDBOX_SCREEN_NETWORK", "isolated");
+    const team = info();
+    team.State.Running = false;
+    team.HostConfig.NetworkMode = computerNetworkNameFor(
+      defect === "wrong-container-network" ? "other" : "home",
+    );
+    mock.inspect.mockResolvedValue(team);
+    mock.network.mockResolvedValue({
+      Name: computerNetworkNameFor(defect === "other-name" ? "other" : "home"),
+      Labels:
+        defect === "missing-labels"
+          ? {}
+          : {
+              "rakazo.botId": defect === "other-team" ? "other" : "home",
+              "rakazo.computerOwner":
+                defect === "other-owner"
+                  ? "other"
+                  : computerNetworkOwnerFor("/host/data", undefined),
+            },
+    });
+    const response = await provision();
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: "PERMANENT_SETUP_FAILURE" });
+    expect(mock.start).not.toHaveBeenCalled();
+    expect(mock.create).not.toHaveBeenCalled();
+    expect(mock.remove).not.toHaveBeenCalled();
+  },
+);

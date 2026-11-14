@@ -17,6 +17,7 @@ import type {
   ScreenSession,
   TerminalRequest,
 } from "@rakazo/adapter-kit";
+import { PermanentSetupError } from "@rakazo/adapter-kit";
 import { boundedSandboxCommandTimeoutMs, resolveSupervisorToken } from "@rakazo/core";
 import { outgoingCorrelationHeaders } from "@rakazo/logging";
 import {
@@ -161,7 +162,27 @@ export class DockerSandboxProvider implements SandboxProvider {
       // Match team-screen style: regex on safeBody (already ≤200 chars), not JSON.parse.
       const limitError = detail.match(/Computer limit reached for space \(max: \d+\)/i)?.[0];
       if (res.status === 429 && limitError) {
-        throw new Error(limitError);
+        throw new PermanentSetupError(limitError);
+      }
+      // Translate structured refusals to the provider-neutral contract. The legacy
+      // supervisor used HTTP 500 for this exact pin refusal; support it during rollout.
+      let refusal: { code?: string; error?: string } = {};
+      try {
+        refusal = JSON.parse(detail);
+      } catch {
+        // Truncated or non-JSON diagnostics remain a bounded transient failure.
+      }
+      const pinnedRefusal =
+        "Pinned computer reuse checks failed; creation or replacement is disabled";
+      if (refusal?.error === pinnedRefusal) throw new PermanentSetupError(pinnedRefusal);
+      if (
+        refusal?.code === "PERMANENT_SETUP_FAILURE" ||
+        [400, 401, 403, 404, 409, 422].includes(res.status)
+      ) {
+        // Never expose arbitrary response text, host paths, or credentials in a refusal.
+        throw new PermanentSetupError(
+          "Computer setup was refused; check the sandbox configuration.",
+        );
       }
       throw new Error(`sandbox provision failed: ${res.status} ${detail}`.trim());
     }

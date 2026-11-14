@@ -1,4 +1,5 @@
 import type { ProcessEvent } from "@rakazo/adapter-kit";
+import { PermanentSetupError } from "@rakazo/adapter-kit";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DockerSandboxProvider,
@@ -591,5 +592,51 @@ describe("Docker sandbox stopped containers", () => {
     await expect(
       provider.connectScreen(computer, { view: "stream", interactive: false }, context),
     ).resolves.toMatchObject({ url: null });
+  });
+});
+
+describe("provisioning failure classification", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const pinError = "Pinned computer reuse checks failed; creation or replacement is disabled";
+  it.each([500, 409])(
+    "makes a retained pin refusal terminal, including legacy HTTP %s",
+    async (status) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => Response.json({ error: pinError }, { status })),
+      );
+      const provider = new DockerSandboxProvider("http://supervisor.test", "test-token");
+      await expect(
+        provider.provision({ botId: "bot", homePath: "/tmp/bot" }, context),
+      ).rejects.toThrow(PermanentSetupError);
+      await expect(
+        provider.provision({ botId: "bot", homePath: "/tmp/bot" }, context),
+      ).rejects.toThrow(pinError);
+    },
+  );
+  it.each([400, 401, 403, 404, 409, 422])(
+    "makes HTTP %s terminal without exposing response details",
+    async (status) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => Response.json({ error: "private detail" }, { status })),
+      );
+      const provider = new DockerSandboxProvider("http://supervisor.test", "test-token");
+      await expect(
+        provider.provision({ botId: "bot", homePath: "/tmp/bot" }, context),
+      ).rejects.toThrow("Computer setup was refused; check the sandbox configuration.");
+    },
+  );
+  it.each([429, 500, 502, 503])("keeps HTTP %s transient", async (status) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ error: "unavailable" }, { status })),
+    );
+    const provider = new DockerSandboxProvider("http://supervisor.test", "test-token");
+    const error = await provider
+      .provision({ botId: "bot", homePath: "/tmp/bot" }, context)
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(PermanentSetupError);
   });
 });

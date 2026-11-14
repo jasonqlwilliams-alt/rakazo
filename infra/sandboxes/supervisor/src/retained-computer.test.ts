@@ -17,7 +17,7 @@ function fixture() {
   } as Docker.ContainerInspectInfo;
 }
 function check(info: Docker.ContainerInspectInfo | undefined, pin = id) {
-  return assertRetainedComputer(info, pin, "sha256:image", "/data/home", ["existing"]);
+  return assertRetainedComputer(info, pin, "sha256:image", "/data/home", "existing");
 }
 describe("operator-pinned retained computer", () => {
   it("reuses the exact existing legacy runtime without changing its user or network", () => {
@@ -65,7 +65,7 @@ describe("operator-pinned retained computer", () => {
       expect(() => check(info)).toThrow();
     }
   });
-  it("refuses a network outside the supervisor and publicly exposed ports", () => {
+  it("refuses a network other than the expected network and publicly exposed ports", () => {
     const info = fixture();
     info.HostConfig.NetworkMode = "other";
     expect(() => check(info)).toThrow();

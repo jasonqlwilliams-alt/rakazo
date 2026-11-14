@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
+import { PermanentSetupError } from "@rakazo/adapter-kit";
 import {
   boundedSandboxCommandTimeoutMs,
   readBoundedJsonResponse,
@@ -57,7 +58,7 @@ import {
   xdotoolCommand,
 } from "./computer-spec.js";
 import { assertComputerHomeWritable } from "./home-ownership.js";
-import { assertRetainedComputer } from "./retained-computer.js";
+import { assertRetainedComputer, retainedComputerNetwork } from "./retained-computer.js";
 import {
   assertRequestIdentity,
   attemptComputerControl,
@@ -222,13 +223,15 @@ app.post("/computers", async (c) => {
         // those homeKeys fall through to normal provision/create while every other stays pinned.
         const info = existing ? await existing.inspect() : undefined;
         const desired = await docker.getImage(COMPUTER_IMAGE).inspect();
-        assertRetainedComputer(
-          info,
-          retainedId,
-          desired.Id,
-          storage.homePath,
-          Object.keys(runtimeInfo?.NetworkSettings.Networks ?? {}),
-        );
+        const expectedNetwork =
+          networkMode === computerNetworkNameFor(body.botId)
+            ? retainedComputerNetwork(
+                body.botId,
+                networkOwner,
+                await inspectNetworkIfPresent(networkMode),
+              )
+            : networkMode;
+        assertRetainedComputer(info, retainedId, desired.Id, storage.homePath, expectedNetwork);
         const started = !info.State.Running;
         if (started) await existing!.start();
         return c.json({ id: info.Id, image: COMPUTER_IMAGE, resumed: true, started });
@@ -371,6 +374,9 @@ app.post("/computers", async (c) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    if (error instanceof PermanentSetupError) {
+      return c.json({ code: error.code, error: message }, 409);
+    }
     return c.json({ error: message }, 500);
   }
 });

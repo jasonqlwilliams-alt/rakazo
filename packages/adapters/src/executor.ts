@@ -31,6 +31,7 @@ import {
   DEFAULT_CONTEXT_STRATEGY,
   historyCompactJob,
   MEMORY_REVISION_CONFLICT_ERROR,
+  PermanentSetupError,
   resolveMemoryPath,
   routineJobKey,
   routineWakeupJob,
@@ -118,7 +119,6 @@ import {
   findDefaultModelCredential,
   findModelCredential,
   InvalidSpaceNameError,
-  isTooManyDatabaseConnections,
   loadRunHistoryMessages,
   parseComputerMode,
   readHistory,
@@ -3521,6 +3521,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
       const run = await deps.prisma.run.findUnique({ where: { id: runId } });
       if (!run) return;
       if (isTerminal(run.status as RunStatus)) return;
+      if (run.setupRetryAt && run.setupRetryAt.getTime() > Date.now()) return;
       let { resumeCheckpoint, heldForTakeover, resumeHeldLease, takeoverResume } =
         takeoverContinuePlan(run);
 
@@ -3530,6 +3531,8 @@ export function createRunExecutor(deps: ExecutorDeps) {
         where: {
           id: runId,
           ...continueRunClaimFence(run),
+          leaseFence: run.leaseFence,
+          AND: [{ OR: [{ setupRetryAt: null }, { setupRetryAt: { lte: now } }] }],
           OR: [
             { status: { in: ["queued", "waiting_input", "waiting_takeover"] } },
             {
@@ -7777,8 +7780,19 @@ export function createRunExecutor(deps: ExecutorDeps) {
         }
       } catch (setupError) {
         const expired = routineTimeoutError;
-        if (expired && leaseValid && !deps.shutdownSignal?.aborted) {
-          const message = redactSecrets(expired.message, runSecrets);
+        const computerBusy = setupError instanceof ComputerBusyError;
+        const failureCount = (run.setupFailureCount ?? 0) + 1;
+        const terminal =
+          expired ??
+          (setupError instanceof PermanentSetupError
+            ? setupError
+            : !computerBusy && failureCount >= MAX_SETUP_FAILURES
+              ? new Error(
+                  "Run setup failed after repeated attempts; check the sandbox and connection settings.",
+                )
+              : null);
+        if (terminal && leaseValid && !deps.shutdownSignal?.aborted) {
+          const message = redactSecrets(terminal.message, runSecrets);
           const failed = await deps.events.finalizeRun({
             spaceId: run.spaceId,
             threadId: run.threadId,
@@ -7800,8 +7814,7 @@ export function createRunExecutor(deps: ExecutorDeps) {
           }
           return;
         }
-        const computerBusy = setupError instanceof ComputerBusyError;
-        const retryForever = computerBusy || isTooManyDatabaseConnections(setupError);
+
         if (!computerBusy) {
           // undici collapses every network failure to "fetch failed"; the cause names the
           // host and errno, which is the only part worth paging over.
@@ -7819,6 +7832,9 @@ export function createRunExecutor(deps: ExecutorDeps) {
             ),
           );
         }
+        const retryAt = new Date(
+          Date.now() + (computerBusy ? computerRetryDelay(fence) : setupRetryDelay(failureCount)),
+        );
         const released = await writeComputerRunRequeue(
           deps,
           runId,
@@ -7826,25 +7842,19 @@ export function createRunExecutor(deps: ExecutorDeps) {
           fence,
           resumeCheckpoint,
           heldForTakeover,
-          retryForever ? null : "Run setup failed; retrying",
+          computerBusy ? null : "Run setup failed; retrying",
+          computerBusy ? undefined : { setupFailureCount: failureCount, setupRetryAt: retryAt },
         );
         if (released) {
           await deps.prisma.attempt.update({
             where: { id: attempt.id },
             data: {
-              status: "setup_failed",
-              error: retryForever ? null : "Run setup failed; retrying",
+              status: computerBusy ? "deferred" : "setup_failed",
+              error: computerBusy ? null : "Run setup failed; retrying",
               finishedAt: new Date(),
             },
           });
-          if (retryForever) {
-            await deps.jobs.enqueue({
-              ...runContinueJob(runId),
-              availableAt: new Date(Date.now() + computerRetryDelay(fence)),
-            });
-            return;
-          }
-          throw new Error("Run setup failed; retrying");
+          await deps.jobs.enqueue({ ...runContinueJob(runId), availableAt: retryAt });
         }
       } finally {
         detachShutdown?.();
@@ -8025,6 +8035,12 @@ async function renewRunLease(
     data: { leaseExpiresAt: new Date(Date.now() + 5 * 60_000) },
   });
   return renewed.count === 1;
+}
+
+// Only failed setup consumes this run's budget; contention and model work do not.
+export const MAX_SETUP_FAILURES = 5;
+export function setupRetryDelay(failures: number): number {
+  return Math.min(60_000, 5_000 * 2 ** Math.max(0, failures - 1));
 }
 
 function computerRetryDelay(fence: number): number {
@@ -8660,6 +8676,7 @@ async function writeComputerRunRequeue(
   resumeCheckpoint: TakeoverResumeCheckpoint | null,
   heldForTakeover = false,
   error: string | null = null,
+  setupRetry?: { setupFailureCount: number; setupRetryAt: Date },
 ): Promise<boolean> {
   const whereLease = {
     id: runId,
@@ -8668,6 +8685,7 @@ async function writeComputerRunRequeue(
     leaseFence: fence,
   };
   const releasedHold = {
+    ...setupRetry,
     status: "queued" as const,
     error,
     leaseOwner: null,
@@ -8683,7 +8701,7 @@ async function writeComputerRunRequeue(
   if (preserve.count === 1) return true;
   const planned = await deps.prisma.run.updateMany({
     where: { ...whereLease, checkpoint: null },
-    data: computerRunRequeueData(resumeCheckpoint, error, heldForTakeover),
+    data: { ...computerRunRequeueData(resumeCheckpoint, error, heldForTakeover), ...setupRetry },
   });
   if (planned.count === 1) return true;
   const retried = await deps.prisma.run.updateMany({
