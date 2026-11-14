@@ -7,9 +7,10 @@ import { createRunExecutor, MAX_SETUP_FAILURES, setupRetryDelay } from "./execut
 import { createJobReconciler } from "./job-reconciler.js";
 
 const provision = vi.hoisted(() => vi.fn());
+const acquire = vi.hoisted(() => vi.fn(async () => null));
 vi.mock("./computer-lifecycle.js", async (importOriginal) => ({
   ...(await importOriginal<typeof ComputerLifecycle>()),
-  acquireComputerExecutionLease: async () => null,
+  acquireComputerExecutionLease: acquire,
   provisionComputer: provision,
 }));
 
@@ -127,19 +128,21 @@ function fixture() {
   const runtimeRun = vi.fn();
   const enqueue = vi.fn(async () => undefined);
   const finalizeRun = vi.fn(
-    async (input: { leaseOwner: string; leaseFence: number; error: string; attemptId: string }) => {
+    async (input: { leaseOwner: string; leaseFence: number; error: string; attemptId?: string }) => {
       if (
-        run.status !== "running" ||
+        (run.status !== "running" && (input.attemptId || run.status !== "leased")) ||
         run.leaseOwner !== input.leaseOwner ||
         run.leaseFence !== input.leaseFence
       )
         return null;
       Object.assign(run, { status: "failed", completedAt: new Date(), error: input.error });
       task.status = "failed";
-      Object.assign(attempts.find((attempt) => attempt.id === input.attemptId)!, {
-        status: "failed",
-        error: input.error,
-      });
+      if (input.attemptId) {
+        Object.assign(attempts.find((attempt) => attempt.id === input.attemptId)!, {
+          status: "failed",
+          error: input.error,
+        });
+      }
       return { continuationRunId: null };
     },
   );
@@ -173,6 +176,8 @@ function fixture() {
 afterEach(() => {
   vi.useRealTimers();
   provision.mockReset();
+  acquire.mockReset();
+  acquire.mockResolvedValue(null);
 });
 
 describe("durable setup failure handling", () => {
@@ -239,6 +244,97 @@ describe("durable setup failure handling", () => {
     f.enqueue.mockClear();
     await f.reconciler.reconcileOnce();
     expect(f.enqueue).not.toHaveBeenCalled();
+  });
+
+  it.each(["computer lease", "attempt creation"])(
+    "bounds pre-attempt %s failures across reconciliation",
+    async (stage) => {
+      vi.useFakeTimers();
+      const f = fixture();
+      const originalPrompt = structuredClone(f.messages);
+      if (stage === "computer lease") {
+        acquire.mockRejectedValue(new Error("lease storage unavailable"));
+      } else {
+        f.prisma.attempt.create.mockRejectedValue(new Error("attempt storage unavailable"));
+      }
+      for (let failures = 1; failures <= MAX_SETUP_FAILURES; failures++) {
+        await createRunExecutor(f.deps).continueRun(f.run.id, `worker-${failures}`);
+        expect(f.attempts).toHaveLength(0);
+        expect(f.runtimeRun).not.toHaveBeenCalled();
+        if (failures === MAX_SETUP_FAILURES) break;
+        expect(f.run.status).toBe("queued");
+        expect(f.run.setupFailureCount).toBe(failures);
+        expect(f.run.setupRetryAt?.getTime()).toBe(Date.now() + setupRetryDelay(failures));
+        f.enqueue.mockClear();
+        await f.reconciler.reconcileOnce();
+        await createRunExecutor(f.deps).continueRun(f.run.id, "premature-worker");
+        expect(f.enqueue).not.toHaveBeenCalled();
+        vi.setSystemTime(f.run.setupRetryAt!);
+        await f.reconciler.reconcileOnce();
+        expect(f.enqueue).toHaveBeenCalledOnce();
+      }
+      expect(f.run.status).toBe("failed");
+      expect(f.run.error).toContain("repeated attempts");
+      expect(f.finalizeRun).toHaveBeenCalledWith(
+        expect.objectContaining({ outcome: "failed" }),
+      );
+      expect(f.finalizeRun.mock.calls.at(-1)?.[0]).not.toHaveProperty("attemptId");
+      f.enqueue.mockClear();
+      await f.reconciler.reconcileOnce();
+      expect(f.enqueue).not.toHaveBeenCalled();
+      expect(f.task.prompt).toBe("Review the sample function");
+      expect(f.messages).toEqual(originalPrompt);
+    },
+  );
+
+  it("bounds a transient failure before the run reaches running", async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    f.prisma.run.findUniqueOrThrow.mockRejectedValue(new Error("run read unavailable"));
+    for (let failures = 1; failures <= MAX_SETUP_FAILURES; failures++) {
+      await createRunExecutor(f.deps).continueRun(f.run.id, `worker-${failures}`);
+      if (failures === MAX_SETUP_FAILURES) break;
+      expect(f.run.status).toBe("queued");
+      expect(f.run.setupFailureCount).toBe(failures);
+      expect(f.run.setupRetryAt?.getTime()).toBe(Date.now() + setupRetryDelay(failures));
+      f.enqueue.mockClear();
+      await f.reconciler.reconcileOnce();
+      expect(f.enqueue).not.toHaveBeenCalled();
+      vi.setSystemTime(f.run.setupRetryAt!);
+      await f.reconciler.reconcileOnce();
+      expect(f.enqueue).toHaveBeenCalledOnce();
+    }
+    expect(f.run.status).toBe("failed");
+    expect(f.attempts).toHaveLength(0);
+    expect(provision).not.toHaveBeenCalled();
+    expect(f.runtimeRun).not.toHaveBeenCalled();
+    f.enqueue.mockClear();
+    await f.reconciler.reconcileOnce();
+    expect(f.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("fails a permanent pre-attempt refusal without retrying", async () => {
+    const f = fixture();
+    acquire.mockRejectedValue(new PermanentSetupError("Computer lease refused: sample-secret"));
+    await createRunExecutor(f.deps).continueRun(f.run.id, "worker");
+    expect(f.run.status).toBe("failed");
+    expect(f.run.error).toContain("Computer lease refused");
+    expect(f.run.error).not.toContain("sample-secret");
+    expect(f.attempts).toHaveLength(0);
+    expect(f.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("keeps pre-attempt computer contention outside the budget", async () => {
+    const f = fixture();
+    acquire.mockRejectedValue(new ComputerBusyError());
+    for (let i = 0; i < MAX_SETUP_FAILURES + 1; i++) {
+      await createRunExecutor(f.deps).continueRun(f.run.id, "worker");
+    }
+    expect(f.run.status).toBe("queued");
+    expect(f.run.setupFailureCount).toBe(0);
+    expect(f.run.setupRetryAt).toBeNull();
+    expect(f.attempts).toHaveLength(0);
+    expect(f.finalizeRun).not.toHaveBeenCalled();
   });
 
   it("keeps busy-computer deferrals outside the setup budget", async () => {
