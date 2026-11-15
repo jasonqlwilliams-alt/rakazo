@@ -176,7 +176,8 @@ frames through `FORWARD`). Rules match interface names rather than subnets, so c
 create/delete cycles need no firewall maintenance; deleting a computer removes its
 traffic from the match and nothing else. A computer provisioned before the flag flips
 is replaced on its next provision — resuming it on an unnamed bridge would bypass the
-restriction.
+restriction. An explicitly pinned computer is refused instead of replaced when its bridge
+does not match the restricted-egress rule.
 
 To disable restricted egress, set `SANDBOX_COMPUTER_EGRESS=open`, recreate the
 supervisor, and run `sudo bash infra/compose/restrict-computer-egress.sh --remove`.

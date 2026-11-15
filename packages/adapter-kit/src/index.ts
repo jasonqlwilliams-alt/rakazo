@@ -4,4 +4,5 @@ export * from "./interfaces.js";
 export * from "./memory-path.js";
 export * from "./registry.js";
 export * from "./secret-errors.js";
+export * from "./setup-errors.js";
 export * from "./types.js";

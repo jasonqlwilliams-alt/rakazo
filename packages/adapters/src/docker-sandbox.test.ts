@@ -1,5 +1,7 @@
 import type { ProcessEvent } from "@rakazo/adapter-kit";
+import { PermanentSetupError } from "@rakazo/adapter-kit";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ComputerBusyError } from "./computer-lifecycle.js";
 import {
   DockerSandboxProvider,
   MAX_SANDBOX_ERROR_RESPONSE_BYTES,
@@ -160,7 +162,7 @@ describe("Docker sandbox", () => {
     });
   });
 
-  it("translates a 429 computer limit reached error from the supervisor", async () => {
+  it("classifies a 429 space limit as computer contention", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
@@ -169,9 +171,21 @@ describe("Docker sandbox", () => {
     );
     const provider = new DockerSandboxProvider("http://supervisor.test", "test-token");
 
+    const error = await provider
+      .provision({ botId: "bot", homePath: "/tmp/bot" }, context)
+      .catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(ComputerBusyError);
+  });
+
+  it("classifies a 429 without a readable body as computer contention", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("", { status: 429 })),
+    );
+    const provider = new DockerSandboxProvider("http://supervisor.test", "test-token");
     await expect(
       provider.provision({ botId: "bot", homePath: "/tmp/bot" }, context),
-    ).rejects.toThrow("Computer limit reached for space (max: 5)");
+    ).rejects.toThrow(ComputerBusyError);
   });
 
   it("stops a streamed file response at the caller-derived encoded limit", async () => {
@@ -591,5 +605,67 @@ describe("Docker sandbox stopped containers", () => {
     await expect(
       provider.connectScreen(computer, { view: "stream", interactive: false }, context),
     ).resolves.toMatchObject({ url: null });
+  });
+});
+
+describe("provisioning failure classification", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const pinError = "Pinned computer reuse checks failed; creation or replacement is disabled";
+  it.each([500, 409])(
+    "makes a retained pin refusal terminal, including legacy HTTP %s",
+    async (status) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => Response.json({ error: pinError }, { status })),
+      );
+      const provider = new DockerSandboxProvider("http://supervisor.test", "test-token");
+      await expect(
+        provider.provision({ botId: "bot", homePath: "/tmp/bot" }, context),
+      ).rejects.toThrow(PermanentSetupError);
+      await expect(
+        provider.provision({ botId: "bot", homePath: "/tmp/bot" }, context),
+      ).rejects.toThrow(pinError);
+    },
+  );
+  it.each([
+    "Pinned computer image is unavailable; creation or replacement is disabled",
+    "Pinned computer's owned team network is unavailable; creation or replacement is disabled",
+    "Pinned computer network lacks restricted egress; creation or replacement is disabled",
+  ])("preserves a safe retained setup reason: %s", async (reason) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({ code: "PERMANENT_SETUP_FAILURE", error: reason }, { status: 409 }),
+      ),
+    );
+    const provider = new DockerSandboxProvider("http://supervisor.test", "test-token");
+    await expect(
+      provider.provision({ botId: "bot", homePath: "/tmp/bot" }, context),
+    ).rejects.toThrow(reason);
+  });
+  it.each([400, 401, 403, 404, 409, 422])(
+    "makes HTTP %s terminal without exposing response details",
+    async (status) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => Response.json({ error: "private detail" }, { status })),
+      );
+      const provider = new DockerSandboxProvider("http://supervisor.test", "test-token");
+      await expect(
+        provider.provision({ botId: "bot", homePath: "/tmp/bot" }, context),
+      ).rejects.toThrow("Computer setup was refused; check the sandbox configuration.");
+    },
+  );
+  it.each([429, 500, 502, 503])("keeps HTTP %s transient", async (status) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ error: "unavailable" }, { status })),
+    );
+    const provider = new DockerSandboxProvider("http://supervisor.test", "test-token");
+    const error = await provider
+      .provision({ botId: "bot", homePath: "/tmp/bot" }, context)
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(PermanentSetupError);
   });
 });
