@@ -212,7 +212,7 @@ it.each(["published", "isolated"])("wakes its owned team network in %s topology"
   expect(mock.remove).not.toHaveBeenCalled();
 });
 
-it.each(["other-team", "other-owner", "other-name", "missing-labels", "wrong-container-network"])(
+it.each(["other-team", "other-owner", "other-name", "partial-labels", "wrong-container-network"])(
   "refuses a team network with %s before starting the pin",
   async (defect) => {
     vi.stubEnv("SANDBOX_SCREEN_NETWORK", "isolated");
@@ -229,8 +229,8 @@ it.each(["other-team", "other-owner", "other-name", "missing-labels", "wrong-con
       Id: "net-owned",
       Name: computerNetworkNameFor(defect === "other-name" ? "other" : "home"),
       Labels:
-        defect === "missing-labels"
-          ? {}
+        defect === "partial-labels"
+          ? { "rakazo.botId": "home" }
           : {
               "rakazo.botId": defect === "other-team" ? "other" : "home",
               "rakazo.computerOwner":

@@ -58,7 +58,7 @@ import {
   xdotoolCommand,
 } from "./computer-spec.js";
 import { assertComputerHomeWritable } from "./home-ownership.js";
-import { assertRetainedComputer, retainedComputerNetwork } from "./retained-computer.js";
+import { retainedComputerHomePath, validateRetainedComputer } from "./retained-computer.js";
 import {
   assertRequestIdentity,
   attemptComputerControl,
@@ -237,10 +237,6 @@ app.post("/computers", async (c) => {
           networkMode === computerNetworkNameFor(body.botId)
             ? await inspectNetworkIfPresent(networkMode)
             : undefined;
-        const expectedNetwork =
-          networkMode === computerNetworkNameFor(body.botId)
-            ? retainedComputerNetwork(body.botId, networkOwner, teamNetwork)
-            : networkMode;
         if (
           teamNetwork &&
           computerEgressMode === "restricted" &&
@@ -251,17 +247,28 @@ app.post("/computers", async (c) => {
             "Pinned computer network lacks restricted egress; creation or replacement is disabled",
           );
         }
-        assertRetainedComputer(
+        const retained = await validateRetainedComputer({
           info,
-          retainedId,
-          desired.Id,
-          storage.homePath,
-          expectedNetwork,
-          teamNetwork?.Id,
-        );
-        const started = !info.State.Running;
+          pin: retainedId,
+          expectedImage: desired.Id,
+          homePath: retainedComputerHomePath(serviceHomePath, dataDir, runtimeInfo),
+          networkMode,
+          botId: body.botId,
+          spaceId: body.spaceId,
+          owner: networkOwner,
+          network: teamNetwork,
+          inspectOtherContainers: async () => {
+            const containers = await docker.listContainers({ all: true });
+            return Promise.all(
+              containers
+                .filter((container) => container.Id !== retainedId)
+                .map((container) => docker.getContainer(container.Id).inspect()),
+            );
+          },
+        });
+        const started = !retained.State.Running;
         if (started) await existing!.start();
-        return c.json({ id: info.Id, image: COMPUTER_IMAGE, resumed: true, started });
+        return c.json({ id: retained.Id, image: COMPUTER_IMAGE, resumed: true, started });
       }
       if (existing) {
         const info = await existing.inspect();
