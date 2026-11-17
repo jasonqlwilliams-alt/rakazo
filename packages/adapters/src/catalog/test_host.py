@@ -67,8 +67,6 @@ class HostTest(unittest.TestCase):
     def held(self, principal=None):
         packet_id, packet = host.render_packet(self.config, principal or self.principal, "1")
         (self.root / "router/inbox/claimed" / (packet_id + ".md")).write_bytes(packet)
-        held = {"status": "held", "packetId": packet_id, "packetSha256": host.digest(packet), "principal": (principal or self.principal)["key"]}
-        (self.root / "held" / (packet_id + ".json")).write_text(json.dumps(held))
         return packet_id
 
     def audit(self):
@@ -126,6 +124,16 @@ class HostTest(unittest.TestCase):
         self.assertEqual(host.courier(self.config, packet_id)["status"], "dry-run")
         self.assertEqual(sorted(p.relative_to(self.root) for p in self.root.rglob("*")), before)
 
+    def test_claimed_packet_becomes_held_only_on_execution(self):
+        packet_id = self.held()
+        held_path = self.root / "held" / (packet_id + ".json")
+        self.assertFalse(held_path.exists())
+        self.assertEqual(host.courier(self.config, packet_id)["status"], "dry-run")
+        self.assertFalse(held_path.exists())
+        self.assertEqual(host.courier(self.config, packet_id, True)["status"], "copied")
+        self.assertEqual(json.loads(held_path.read_text())["principal"], "seat-a")
+        self.assertEqual((self.root / "vault-a/1-report.txt").read_bytes(), self.data)
+
     def test_copy_hash_audit_and_idempotent_retry(self):
         packet_id = self.held()
         self.assertEqual(host.courier(self.config, packet_id, True)["status"], "copied")
@@ -134,7 +142,10 @@ class HostTest(unittest.TestCase):
         self.assertEqual(list((self.root / "vault-b").iterdir()), [])
         self.assertEqual(host.courier(self.config, packet_id, True)["status"], "already-present")
         records = self.audit()
-        self.assertEqual([r["status"] for r in records], ["copied", "already-present"])
+        self.assertEqual([(r["phase"], r.get("status")) for r in records], [
+            ("intent", None), ("outcome", "copied"),
+            ("intent", None), ("outcome", "already-present"),
+        ])
         self.assertEqual(records[0]["sha256"], self.sha)
         self.assertEqual(records[0]["requestingBot"], "bot-a")
         self.assertEqual(records[0]["source"], str(self.root / "parking/objects/blob"))
@@ -153,7 +164,7 @@ class HostTest(unittest.TestCase):
         with self.assertRaises(host.Refused):
             host.courier(self.config, packet_id, True)
         self.assertEqual(destination.read_bytes(), b"other content")
-        self.assertEqual(self.audit()[0]["status"], "refused")
+        self.assertEqual(self.audit()[-1]["status"], "refused")
 
     def test_source_and_mapping_hash_mismatch(self):
         packet_id = self.held()
@@ -168,6 +179,7 @@ class HostTest(unittest.TestCase):
 
     def test_tampered_packet_or_claimed_identity_refused(self):
         packet_id = self.held()
+        host.held_packet(self.config, packet_id, True)
         held_path = self.root / "held" / (packet_id + ".json")
         record = json.loads(held_path.read_text())
         record["principal"] = "seat-b"
@@ -185,6 +197,7 @@ class HostTest(unittest.TestCase):
 
     def test_expired_or_unheld_packet_refused(self):
         packet_id = self.held()
+        host.held_packet(self.config, packet_id, True)
         held_path = self.root / "held" / (packet_id + ".json")
         held = json.loads(held_path.read_text())
         held["status"] = "new"
@@ -258,8 +271,57 @@ class HostTest(unittest.TestCase):
             return original_hash(handle)
         with patch.object(host, "file_hash", side_effect=corrupt_hash), self.assertRaises(host.Refused):
             host.courier(self.config, packet_id, True)
-        self.assertEqual(self.audit()[0]["status"], "refused")
+        self.assertEqual(self.audit()[-1]["status"], "refused")
         self.assertTrue((self.root / "vault-a/1-report.txt").exists())
+
+    def test_unfinished_intent_reconciles_destination_hash(self):
+        packet_id = self.held()
+        record = {"transactionId": "synthetic-intent", "packetId": packet_id,
+                  "requestingBot": "bot-a", "principal": "seat-a", "sha256": self.sha,
+                  "source": str(self.root / "parking/objects/blob"),
+                  "destination": str(self.root / "vault-a/1-report.txt"), "phase": "intent"}
+        Path(self.config["auditLog"]).write_text(json.dumps(record) + "\n")
+        (self.root / "vault-a/1-report.txt").write_bytes(self.data)
+        self.assertEqual(host.courier(self.config, packet_id, True)["status"], "already-present")
+        self.assertEqual([(r["phase"], r.get("status")) for r in self.audit()],
+                         [("intent", None), ("outcome", "reconciled")])
+        self.assertEqual(self.audit()[-1]["transactionId"], "synthetic-intent")
+        (self.root / "vault-a/1-report.txt").unlink()
+        packet_id = self.held()
+        record["packetId"] = packet_id
+        record["transactionId"] = "synthetic-missing"
+        Path(self.config["auditLog"]).write_text(json.dumps(record) + "\n")
+        self.assertEqual(host.courier(self.config, packet_id, True)["status"], "copied")
+        self.assertEqual([(r["phase"], r.get("status")) for r in self.audit()],
+                         [("intent", None), ("outcome", "interrupted"),
+                          ("intent", None), ("outcome", "copied")])
+
+    def test_partial_outcome_is_reconciled(self):
+        packet_id = self.held()
+        record = {"transactionId": "synthetic-intent", "packetId": packet_id,
+                  "requestingBot": "bot-a", "principal": "seat-a", "sha256": self.sha,
+                  "source": str(self.root / "parking/objects/blob"),
+                  "destination": str(self.root / "vault-a/1-report.txt"), "phase": "intent"}
+        Path(self.config["auditLog"]).write_text(json.dumps(record) + "\n" + '{"phase":"out')
+        (self.root / "vault-a/1-report.txt").write_bytes(self.data)
+        self.assertEqual(host.courier(self.config, packet_id, True)["status"], "already-present")
+        self.assertEqual(self.audit()[-1]["status"], "reconciled")
+
+    def test_intent_is_durable_before_copy(self):
+        packet_id = self.held()
+        actual_transfer = host.transfer
+
+        def inspect_then_transfer(*args):
+            entries = self.audit()
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(entries[0]["phase"], "intent")
+            self.assertEqual(entries[0]["packetId"], packet_id)
+            self.assertEqual(entries[0]["requestingBot"], "bot-a")
+            self.assertFalse((self.root / "vault-a/1-report.txt").exists())
+            return actual_transfer(*args)
+
+        with patch.object(host, "transfer", side_effect=inspect_then_transfer):
+            self.assertEqual(host.courier(self.config, packet_id, True)["status"], "copied")
 
     def test_cli_defaults_dry_run_and_scrubs_errors(self):
         packet_id = self.held()

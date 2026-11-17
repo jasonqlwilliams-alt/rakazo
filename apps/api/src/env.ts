@@ -59,6 +59,7 @@ export interface AppEnv {
   composioApiKey: string | undefined;
   /** Optional integrations.sh-compatible catalog base URL. */
   integrationsCatalogUrl: string | undefined;
+  fileCatalogConfigPath?: string;
   pipedreamClientId: string | undefined;
   pipedreamClientSecret: string | undefined;
   pipedreamProjectId: string | undefined;
@@ -217,6 +218,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
     boxApiUrl: source.BOX_API_URL ?? source.BOX_BASE_URL,
     composioApiKey: source.COMPOSIO_API_KEY,
     integrationsCatalogUrl: optional(source.INTEGRATIONS_CATALOG_URL),
+    fileCatalogConfigPath: optional(source.RAKAZO_FILE_CATALOG_CONFIG),
     pipedreamClientId: optional(source.PIPEDREAM_CLIENT_ID),
     pipedreamClientSecret: optional(source.PIPEDREAM_CLIENT_SECRET),
     pipedreamProjectId: optional(source.PIPEDREAM_PROJECT_ID),

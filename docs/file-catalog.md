@@ -1,13 +1,12 @@
 # Optional file catalog and retrieval courier
 
-This code is built and tested but **inactive**. Nothing registers the connector,
-starts a watcher, or accesses a deployment. Activation needs a separate operator
-decision and private configuration. No hosted service is required.
+The connector is inactive until `RAKAZO_FILE_CATALOG_CONFIG` points to a private
+host configuration file. With that setting, the API registers the connector in
+the run tool stack. No watcher or hosted service is required.
 
 `FileCatalogConnector` in `packages/adapters/src/file-catalog.ts` implements the
 existing `ConnectorProvider` boundary. `FileCatalogProvider` in
 `packages/adapter-kit/src/file-catalog.ts` is the shared, provider-neutral contract.
-An operator can later compose the connector with the existing connector stack.
 There is no frontend integration: the same run tools would serve web, desktop,
 and mobile. This adds no delegated-tool capability or unattended permission.
 
@@ -47,15 +46,16 @@ It contains no original path, parked path, destination or filename.
 copy from the packet itself. The gateway remains the only path to firstmate;
 this code does not message seats, call a webhook, or reopen another inbox.
 
-The router's existing watcher claims the packet. The gateway routes this kind
-to firstmate for a held retrieval. That gateway handling must be arranged at
-activation; no live router registry or watcher is modified by this change.
+The Packet Router claims the packet into the configured `inbox/claimed/` location.
+The firstmate courier accepts one claimed packet ID, verifies its host-signed
+request against the configured requester identity, and durably creates its held
+record on execution. This handoff does not require a separately written record.
 
 ## Private host configuration
 
-Supply a JSON file through `LocalFileCatalogProvider({ configPath, python? })`;
-`python` defaults to `python3`. The same configuration is passed to the courier's
-`--config` option. Locations must be absolute host-native paths. There are no
+Set `RAKAZO_FILE_CATALOG_CONFIG` to the private JSON file on the API host. The
+local adapter uses `python3`; the courier receives the same file through
+`--config`. Locations must be absolute host-native paths. There are no
 hardcoded drive mounts, entity names or deployment paths.
 
 | Field | Meaning |
@@ -65,7 +65,7 @@ hardcoded drive mounts, entity names or deployment paths.
 | `parkingRoot` | Host-native parking directory, readable only by the host adapter/courier |
 | `parkingPathPrefix` | Optional catalog-OS prefix corresponding exactly to `parkingRoot`; needed when the CSV uses a different OS's paths |
 | `routerRoot` | Router root containing the existing `inbox/new` and `inbox/claimed` directories |
-| `heldRoot` | Separate firstmate-owned directory of verified held records, outside the router and all vaults |
+| `heldRoot` | Separate firstmate-owned directory for verified held records, outside the router and all vaults |
 | `auditLog` | Private, append-only JSONL file; its parent must already exist |
 | `requestSigningKey` | Secret random hexadecimal signing key of at least 32 bytes, shared only by the privileged request adapter and courier |
 | `personalRoot` | Captain's personal scope, required only if a personal principal exists |
@@ -90,10 +90,10 @@ errors returned to bots.
 
 ## Triggering the courier
 
-The courier is a one-shot **firstmate host command**, not a bot tool, background
-poller, or automatic router handler. After the gateway delivers a held packet,
-firstmate independently verifies the authenticated requester provenance and
-creates `<packet-id>.json` under `heldRoot` with exactly these fields:
+The courier is a one-shot **firstmate host command**, not a bot tool or background
+poller. Once the router has claimed a packet, firstmate invokes the courier for
+that packet ID. The courier verifies the signed request and creates
+`<packet-id>.json` under `heldRoot` with these fields on execution:
 
 ```json
 {
@@ -104,21 +104,21 @@ creates `<packet-id>.json` under `heldRoot` with exactly these fields:
 }
 ```
 
-This is an authorization record owned by firstmate. Do not create it from the
-packet's `from`, signature, transport receipt, or claimed status alone. A
-transport receipt does not authenticate the sender or approve retrieval.
-The courier checks both this record and the HMAC signature, full requester
-identity, packet ID, kind, target role and 48-hour expiry. It does not scan or
-replay the packet backlog. Firstmate invokes it for exactly one held packet:
+The host-signed request originates from the authenticated run. The courier
+checks its HMAC signature, full requester identity, packet ID, kind, target role
+and 48-hour expiry before holding it. A router transport receipt alone does not
+authenticate the sender. The courier processes exactly one packet and never
+scans or replays the backlog:
 
 ```sh
 python3 -B packages/adapters/src/catalog/host.py --config '<private-config>' courier --packet-id '<packet-id>'
 ```
 
 The command above is a dry-run. It checks the mapping, source hash, and existing
-destination without creating a file or audit log. An approved operator adds
-`--execute` to perform the copy. Execution requires POSIX descriptor-relative
-file operations and `O_NOFOLLOW`; unsupported hosts fail closed. A Windows
+destination without creating a held record, destination file, or audit log. An
+approved operator adds `--execute` to hold the request and perform the copy.
+Execution requires POSIX descriptor-relative file operations and `O_NOFOLLOW`;
+unsupported hosts fail closed. A Windows
 installation can later use a separate POSIX courier host with configured path
 prefix translation. No host translation is inferred from a drive letter.
 
@@ -132,21 +132,22 @@ It never overwrites, moves or deletes a parked file or destination. An existing
 file with the same hash yields `already-present`; a different hash is refused.
 Directory symlinks, leaf symlinks and destination creation races are refused.
 
-Each executed copy attempt appends and syncs one JSONL transaction containing
-transaction ID, packet ID, requesting bot, principal, expected SHA-256, source,
-destination, outcome and time. The audit sink is opened before copying and
+Each executed copy attempt appends and syncs an intent before copying and an
+outcome afterward. Both entries carry transaction ID, packet ID, requesting bot,
+principal, expected SHA-256, source, destination, and time. The audit sink is
 locked across the transaction. A dry-run writes no transaction. Failures during
 copy or verification append `refused`; partial destinations stay for operator
-inspection and are never removed or overwritten automatically. A process or
-machine crash can interrupt the copy or final audit append; re-run the same held
-packet to verify an existing complete copy and log `already-present`, or refuse
-a conflicting partial copy. Firstmate records the router disposition separately;
-this command does not mark packets done, send messages, or delete held records.
+inspection and are never removed or overwritten automatically. On rerun, an
+intent without an outcome is reconciled against the destination hash. A complete
+copy records `reconciled`; a missing copy records `interrupted` before retrying;
+a conflicting destination is refused. Firstmate records the router disposition
+separately; this command does not mark packets done, send messages, or delete
+held records.
 
 These are deliberately reversible implementation choices: explicit per-packet
-host invocation, independent held authorization, filename-only search with
-row-window cursors, generated destination names, and POSIX execution. Activation
-and any broader host support remain separate work.
+host invocation, filename-only search with row-window cursors, generated
+destination names, and POSIX execution. Configuration and any broader host
+support remain separate work.
 
 ## Offline validation
 

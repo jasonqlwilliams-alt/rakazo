@@ -332,19 +332,62 @@ def transfer(config, row, source_relative, destination, execute):
             return "copied"
 
 
-def courier(config, packet_id, execute=False):
-    require(isinstance(packet_id, str) and re.fullmatch(r"pkt-retrieval-[0-9a-f]{32}", packet_id))
-    # A separate, operator-owned held record is necessary even for an authentic packet.
-    held = json.loads(read_relative(config["heldRoot"], packet_id + ".json"))
-    require(set(held) == {"status", "packetId", "packetSha256", "principal"} and held["status"] == "held")
-    require(held["packetId"] == packet_id)
-    matches = [p for p in config["principals"] if p["key"] == held["principal"]]
+def destination_present(destination, name, expected):
+    with directory(destination) as parent:
+        try:
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+        except FileNotFoundError:
+            return False
+        with os.fdopen(fd, "rb") as target:
+            require(stat.S_ISREG(os.fstat(target.fileno()).st_mode) and file_hash(target) == expected,
+                    "Destination conflict")
+        return True
+
+
+def held_packet(config, packet_id, execute):
+    content = read_relative(config["routerRoot"], "inbox/claimed/" + packet_id + ".md")
+    blocks = re.findall(rb"```json\n([^`]+)\n```", content)
+    require(len(blocks) == 1)
+    body = json.loads(blocks[0])
+    require(isinstance(body, dict) and isinstance(body.get("request"), dict))
+    principal_key = body["request"].get("principal")
+    matches = [p for p in config["principals"] if p["key"] == principal_key]
     require(len(matches) == 1)
     principal = matches[0]
-    content = read_relative(config["routerRoot"], "inbox/claimed/" + packet_id + ".md")
-    require(digest(content) == held["packetSha256"])
     payload = parse_packet(config, principal, content)
     require(payload["packetId"] == packet_id)
+    expected = {"status": "held", "packetId": packet_id, "packetSha256": digest(content),
+                "principal": principal["key"]}
+    if execute:
+        with directory(config["heldRoot"]) as parent:
+            staging = packet_id + "." + uuid.uuid4().hex + ".pending"
+            fd = os.open(staging, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                         0o600, dir_fd=parent)
+            try:
+                with os.fdopen(fd, "wb") as target:
+                    target.write(canonical(expected))
+                    target.flush()
+                    os.fsync(target.fileno())
+                try:
+                    os.link(staging, packet_id + ".json", src_dir_fd=parent, dst_dir_fd=parent,
+                            follow_symlinks=False)
+                except FileExistsError:
+                    pass
+                os.fsync(parent)
+            finally:
+                os.unlink(staging, dir_fd=parent)
+    try:
+        held = json.loads(read_relative(config["heldRoot"], packet_id + ".json"))
+    except FileNotFoundError:
+        require(not execute)
+    else:
+        require(held == expected)
+    return principal, payload
+
+
+def courier(config, packet_id, execute=False):
+    require(isinstance(packet_id, str) and re.fullmatch(r"pkt-retrieval-[0-9a-f]{32}", packet_id))
+    principal, payload = held_packet(config, packet_id, execute)
     row = file_record(config, principal, payload["fileId"])
     source = parked_record(config, row)
     destination = destination_root(config, principal)
@@ -352,26 +395,61 @@ def courier(config, packet_id, execute=False):
     if not execute:
         result["status"] = transfer(config, row, source, destination, False)
         return result
-    # One courier transaction at a time per audit log. Open the audit sink BEFORE copying.
     import fcntl
     audit = Path(config["auditLog"])
     with directory(audit.parent) as parent:
-        fd = os.open(audit.name, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=parent)
-        with os.fdopen(fd, "a", encoding="utf-8") as journal:
+        fd = os.open(audit.name, os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=parent)
+        with os.fdopen(fd, "a+", encoding="utf-8") as journal:
             require(stat.S_ISREG(os.fstat(journal.fileno()).st_mode))
             fcntl.flock(journal.fileno(), fcntl.LOCK_EX)
             os.fsync(parent)
-            record = {"transactionId": uuid.uuid4().hex, "packetId": packet_id, "requestingBot": principal["botId"],
-                      "principal": principal["key"], "sha256": row["sha256"].lower(),
-                      "source": str(Path(config["parkingRoot"]) / source), "destination": str(Path(destination) / safe_name(row))}
+            journal.seek(0)
+            content = journal.read()
+            if content and not content.endswith("\n"):
+                end = content.rfind("\n") + 1
+                journal.truncate(end)
+                journal.flush()
+                os.fsync(journal.fileno())
+                content = content[:end]
+            entries = [json.loads(line) for line in content.splitlines() if line.strip()]
+            intents = [entry for entry in entries if entry.get("packetId") == packet_id and entry.get("phase") == "intent"]
+            outcomes = {entry.get("transactionId") for entry in entries if entry.get("phase") == "outcome"}
+            pending = [entry for entry in intents if entry["transactionId"] not in outcomes]
+            require(len(pending) <= 1)
+            expected_record = {
+                "transactionId": uuid.uuid4().hex, "packetId": packet_id,
+                "requestingBot": principal["botId"], "principal": principal["key"],
+                "sha256": row["sha256"].lower(),
+                "source": str(Path(config["parkingRoot"]) / source),
+                "destination": str(Path(destination) / safe_name(row)),
+            }
+            record = pending[0] if pending else expected_record
+
+            def append(phase, status=None):
+                event = {**record, "phase": phase, "utc": datetime.now(timezone.utc).isoformat()}
+                if status is not None:
+                    event["status"] = status
+                journal.write(json.dumps(event, separators=(",", ":")) + "\n")
+                journal.flush()
+                os.fsync(journal.fileno())
+
+            if pending:
+                require(all(record.get(key) == value for key, value in expected_record.items() if key != "transactionId"))
+                try:
+                    if destination_present(destination, safe_name(row), record["sha256"]):
+                        append("outcome", "reconciled")
+                        return {"packetId": packet_id, "status": "already-present"}
+                except Exception:
+                    append("outcome", "refused")
+                    raise
+                append("outcome", "interrupted")
+                record = {**record, "transactionId": uuid.uuid4().hex}
+            append("intent")
             try:
                 result["status"] = transfer(config, row, source, destination, True)
                 return result
             finally:
-                record.update(status=result["status"], utc=datetime.now(timezone.utc).isoformat())
-                journal.write(json.dumps(record, separators=(",", ":")) + "\n")
-                journal.flush()
-                os.fsync(journal.fileno())
+                append("outcome", result["status"])
 
 
 def main():
