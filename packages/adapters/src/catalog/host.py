@@ -99,6 +99,8 @@ def validate_config(config):
     held = Path(config["heldRoot"]).resolve()
     router = Path(config["routerRoot"]).resolve()
     require(not held.is_relative_to(router) and not router.is_relative_to(held))
+    inbox = (router / "inbox").resolve()
+    require(not parking.is_relative_to(inbox) and not inbox.is_relative_to(parking))
     return config
 
 
@@ -393,11 +395,11 @@ def held_packet(config, packet_id, execute):
 def courier(config, packet_id, execute=False):
     require(isinstance(packet_id, str) and re.fullmatch(r"pkt-retrieval-[0-9a-f]{32}", packet_id))
     principal, payload, expired = held_packet(config, packet_id, execute)
-    row = file_record(config, principal, payload["fileId"])
-    source = parked_record(config, row)
     destination = destination_root(config, principal)
     result = {"packetId": packet_id, "status": "refused"}
     if not execute:
+        row = file_record(config, principal, payload["fileId"])
+        source = parked_record(config, row)
         result["status"] = transfer(config, row, source, destination, False)
         return result
     import fcntl
@@ -421,43 +423,55 @@ def courier(config, packet_id, execute=False):
             outcomes = {entry.get("transactionId") for entry in entries if entry.get("phase") == "outcome"}
             pending = [entry for entry in intents if entry["transactionId"] not in outcomes]
             require(len(pending) <= 1)
-            expected_record = {
-                "transactionId": uuid.uuid4().hex, "packetId": packet_id,
-                "requestingBot": principal["botId"], "principal": principal["key"],
-                "sha256": row["sha256"].lower(),
-                "source": str(Path(config["parkingRoot"]) / source),
-                "destination": str(Path(destination) / safe_name(row)),
-            }
-            record = pending[0] if pending else expected_record
+            prior = intents[-1] if intents else None
+            record = pending[0] if pending else None
+            require(record is None or record is prior)
 
-            def append(phase, status=None):
-                event = {**record, "phase": phase, "utc": datetime.now(timezone.utc).isoformat()}
+            def append(entry, phase, status=None):
+                event = {**entry, "phase": phase, "utc": datetime.now(timezone.utc).isoformat()}
                 if status is not None:
                     event["status"] = status
                 journal.write(json.dumps(event, separators=(",", ":")) + "\n")
                 journal.flush()
                 os.fsync(journal.fileno())
 
-            if pending:
-                require(all(record.get(key) == value for key, value in expected_record.items() if key != "transactionId"))
+            if prior:
+                path = Path(prior.get("destination", ""))
+                source_path = Path(prior.get("source", ""))
+                require(prior.get("packetId") == packet_id and prior.get("fileId") == payload["fileId"])
+                require(prior.get("principal") == principal["key"] and prior.get("requestingBot") == principal["botId"])
+                require(isinstance(prior.get("sha256"), str) and re.fullmatch(r"[0-9a-f]{64}", prior["sha256"]))
+                require(path.parent == Path(destination) and path.name.startswith(payload["fileId"] + "-"))
+                require(source_path.is_relative_to(Path(config["parkingRoot"])) and ".." not in source_path.parts)
+            if record:
                 try:
-                    if destination_present(destination, safe_name(row), record["sha256"]):
-                        append("outcome", "reconciled")
+                    if destination_present(destination, path.name, record["sha256"]):
+                        append(record, "outcome", "reconciled")
                         return {"packetId": packet_id, "status": "already-present"}
                 except Exception:
-                    append("outcome", "refused")
+                    append(record, "outcome", "refused")
                     raise
-                append("outcome", "interrupted")
+                append(record, "outcome", "interrupted")
                 require(not expired)
-                record = {**record, "transactionId": uuid.uuid4().hex}
             else:
                 require(not expired)
-            append("intent")
+            row = file_record(config, principal, payload["fileId"])
+            source = parked_record(config, row)
+            record = {
+                "transactionId": uuid.uuid4().hex, "packetId": packet_id,
+                "fileId": payload["fileId"], "requestingBot": principal["botId"],
+                "principal": principal["key"], "sha256": row["sha256"].lower(),
+                "source": str(Path(config["parkingRoot"]) / source),
+                "destination": str(Path(destination) / safe_name(row)),
+            }
+            if prior:
+                require(all(prior.get(key) == value for key, value in record.items() if key != "transactionId"))
+            append(record, "intent")
             try:
                 result["status"] = transfer(config, row, source, destination, True)
                 return result
             finally:
-                append("outcome", result["status"])
+                append(record, "outcome", result["status"])
 
 
 def main():

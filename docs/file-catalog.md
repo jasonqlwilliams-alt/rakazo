@@ -81,6 +81,8 @@ requests are pending. Signed identities prevent reassigning a pending packet
 to a different bot, owner or workspace.
 
 Vaults must be disjoint from parking, each other, and privileged storage.
+The parking root must also be disjoint from the seat-visible Packet Router inbox,
+including when configured roots resolve through symlinks.
 Multiple personal principals may share the one personal root. All root
 junctions resolve from operator configuration; descendants never follow
 symlinks. The configuration and private data must be host-owned and inaccessible
@@ -134,12 +136,13 @@ file with the same hash yields `already-present`; a different hash is refused.
 Directory symlinks, leaf symlinks and destination creation races are refused.
 
 Each executed copy attempt appends and syncs an intent before copying and an
-outcome afterward. Both entries carry transaction ID, packet ID, requesting bot,
+outcome afterward. Both entries carry transaction ID, packet ID, file ID, requesting bot,
 principal, expected SHA-256, source, destination, and time. The audit sink is
 locked across the transaction. A dry-run writes no transaction. Failures during
 copy or verification append `refused`; partial destinations stay for operator
 inspection and are never removed or overwritten automatically. On rerun, an
-intent without an outcome is reconciled against the destination hash, even after
+intent without an outcome is reconciled against its recorded destination and hash
+without depending on the current catalog or undo log, even after
 the packet expires. An expired request can close an existing intent but never
 start another copy. A complete
 copy records `reconciled`; a missing copy records `interrupted` before retrying;

@@ -277,7 +277,7 @@ class HostTest(unittest.TestCase):
 
     def test_unfinished_intent_reconciles_destination_hash(self):
         packet_id = self.held()
-        record = {"transactionId": "synthetic-intent", "packetId": packet_id,
+        record = {"transactionId": "synthetic-intent", "packetId": packet_id, "fileId": "1",
                   "requestingBot": "bot-a", "principal": "seat-a", "sha256": self.sha,
                   "source": str(self.root / "parking/objects/blob"),
                   "destination": str(self.root / "vault-a/1-report.txt"), "phase": "intent"}
@@ -297,9 +297,44 @@ class HostTest(unittest.TestCase):
                          [("intent", None), ("outcome", "interrupted"),
                           ("intent", None), ("outcome", "copied")])
 
+    def test_recovery_uses_intent_after_catalog_refresh(self):
+        packet_id = self.held()
+        record = {"transactionId": "synthetic-intent", "packetId": packet_id, "fileId": "1",
+                  "requestingBot": "bot-a", "principal": "seat-a", "sha256": self.sha,
+                  "source": str(self.root / "parking/objects/blob"),
+                  "destination": str(self.root / "vault-a/1-report.txt"), "phase": "intent"}
+        Path(self.config["auditLog"]).write_text(json.dumps(record) + "\n")
+        (self.root / "vault-a/1-report.txt").write_bytes(self.data)
+        db = sqlite3.connect(self.config["catalog"])
+        with db:
+            db.execute("DELETE FROM files WHERE id=1")
+        db.close()
+        Path(self.config["undoLog"]).unlink()
+        self.assertEqual(host.courier(self.config, packet_id, True)["status"], "already-present")
+        self.assertEqual(self.audit()[-1]["status"], "reconciled")
+        self.assertEqual((self.root / "vault-a/1-report.txt").read_bytes(), self.data)
+
+    def test_recovery_fences_recorded_destination_and_requester(self):
+        packet_id = self.held()
+        record = {"transactionId": "synthetic-intent", "packetId": packet_id, "fileId": "1",
+                  "requestingBot": "bot-a", "principal": "seat-a", "sha256": self.sha,
+                  "source": str(self.root / "parking/objects/blob"),
+                  "destination": str(self.root / "vault-b/1-report.txt"), "phase": "intent"}
+        Path(self.config["auditLog"]).write_text(json.dumps(record) + "\n")
+        (self.root / "vault-b/1-report.txt").write_bytes(self.data)
+        with self.assertRaises(host.Refused):
+            host.courier(self.config, packet_id, True)
+        record["destination"] = str(self.root / "vault-a/1-report.txt")
+        record["requestingBot"] = "bot-b"
+        Path(self.config["auditLog"]).write_text(json.dumps(record) + "\n")
+        with self.assertRaises(host.Refused):
+            host.courier(self.config, packet_id, True)
+        self.assertEqual(list((self.root / "vault-a").iterdir()), [])
+        self.assertEqual((self.root / "vault-b/1-report.txt").read_bytes(), self.data)
+
     def test_partial_outcome_is_reconciled(self):
         packet_id = self.held()
-        record = {"transactionId": "synthetic-intent", "packetId": packet_id,
+        record = {"transactionId": "synthetic-intent", "packetId": packet_id, "fileId": "1",
                   "requestingBot": "bot-a", "principal": "seat-a", "sha256": self.sha,
                   "source": str(self.root / "parking/objects/blob"),
                   "destination": str(self.root / "vault-a/1-report.txt"), "phase": "intent"}
@@ -314,7 +349,7 @@ class HostTest(unittest.TestCase):
             host.held_packet(self.config, packet_id, True)
         records = []
         for packet_id in (completed, missing):
-            records.append({"transactionId": packet_id, "packetId": packet_id,
+            records.append({"transactionId": packet_id, "packetId": packet_id, "fileId": "1",
                             "requestingBot": "bot-a", "principal": "seat-a", "sha256": self.sha,
                             "source": str(self.root / "parking/objects/blob"),
                             "destination": str(self.root / "vault-a/1-report.txt"), "phase": "intent"})
@@ -395,6 +430,20 @@ class HostTest(unittest.TestCase):
         self.config["principals"][1]["vaultRoot"] = str(self.root / "vault-a/nested")
         with self.assertRaises(host.Refused):
             host.validate_config(self.config)
+
+    def test_parking_cannot_overlap_router_inbox(self):
+        original = self.config["parkingRoot"]
+        for path in (self.root / "router/inbox/new", self.root / "router"):
+            self.config["parkingRoot"] = str(path)
+            with self.assertRaises(host.Refused):
+                host.validate_config(self.config)
+        alias = self.root / "inbox-alias"
+        alias.symlink_to(self.root / "router/inbox/claimed", target_is_directory=True)
+        self.config["parkingRoot"] = str(alias)
+        with self.assertRaises(host.Refused):
+            host.validate_config(self.config)
+        self.config["parkingRoot"] = original
+        self.assertIs(host.validate_config(self.config), self.config)
 
 
 if __name__ == "__main__":
