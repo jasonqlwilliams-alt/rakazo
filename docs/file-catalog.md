@@ -85,8 +85,9 @@ requests are pending. Signed identities prevent reassigning a pending packet
 to a different bot, owner or workspace.
 
 Vaults must be disjoint from parking, each other, and privileged storage.
-The parking root must also be disjoint from the seat-visible Packet Router inbox,
-including when configured roots resolve through symlinks.
+The parking root must also be disjoint from the seat-visible Packet Router inbox
+and its `new` and `claimed` paths, including when those paths resolve through
+symlinks.
 Multiple personal principals may share the one personal root. All root
 junctions resolve from operator configuration; descendants never follow
 symlinks. The configuration and private data must be host-owned and inaccessible

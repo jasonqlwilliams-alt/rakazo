@@ -501,6 +501,22 @@ class HostTest(unittest.TestCase):
         self.config["parkingRoot"] = original
         self.assertIs(host.validate_config(self.config), self.config)
 
+    def test_router_inbox_child_aliases_cannot_expose_parking(self):
+        for child, target in (("new", self.root / "parking"),
+                              ("claimed", self.root / "parking/objects")):
+            path = self.root / "router/inbox" / child
+            path.rmdir()
+            path.symlink_to(target, target_is_directory=True)
+            with self.subTest(child=child), self.assertRaises(host.Refused):
+                host.validate_config(self.config)
+            path.unlink()
+            path.mkdir()
+            self.assertIs(host.validate_config(self.config), self.config)
+        alias = self.root / "router-alias"
+        alias.symlink_to(self.root / "router", target_is_directory=True)
+        self.config["routerRoot"] = str(alias)
+        self.assertIs(host.validate_config(self.config), self.config)
+
 
 if __name__ == "__main__":
     unittest.main()

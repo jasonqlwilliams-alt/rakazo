@@ -100,8 +100,9 @@ def validate_config(config):
     held = Path(config["heldRoot"]).resolve()
     router = Path(config["routerRoot"]).resolve()
     require(not held.is_relative_to(router) and not router.is_relative_to(held))
-    inbox = (router / "inbox").resolve()
-    require(not parking.is_relative_to(inbox) and not inbox.is_relative_to(parking))
+    for visible in ("inbox", "inbox/new", "inbox/claimed"):
+        inbox = (router / visible).resolve()
+        require(not parking.is_relative_to(inbox) and not inbox.is_relative_to(parking))
     return config
 
 
