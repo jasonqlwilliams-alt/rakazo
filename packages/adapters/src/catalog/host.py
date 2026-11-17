@@ -36,7 +36,8 @@ def digest(data):
 
 
 def valid_id(value):
-    return isinstance(value, str) and re.fullmatch(r"[1-9][0-9]{0,14}", value) is not None
+    return (isinstance(value, str) and re.fullmatch(r"[1-9][0-9]{0,18}", value) is not None
+            and int(value) <= 9223372036854775807)
 
 
 def original_parts(value):
@@ -137,33 +138,35 @@ def search(config, principal, args):
     query, limit, cursor = args.get("query"), args.get("limit", 10), args.get("cursor", "0")
     require(isinstance(query, str) and 1 <= len(query.strip()) <= 120)
     require(type(limit) is int and 1 <= limit <= 25)
-    require(isinstance(cursor, str) and re.fullmatch(r"0|[1-9][0-9]{0,14}", cursor))
+    require(cursor == "0" or valid_id(cursor))
     after = int(cursor)
     needle = query.strip().casefold()
     with catalog(config) as connection:
-        scanned = 0
-
-        def matches(path):
-            nonlocal scanned
-            scanned += 1
-            require(scanned <= 5000, "Search scan limit reached")
-            return int(visible(path, principal, config) and needle in original_parts(path).name.casefold())
-
-        connection.create_function("catalog_name_match", 1, matches)
         rows = connection.execute(
-            "SELECT id,path,size_bytes,sha256 FROM files WHERE id>? "
-            "AND hash_status='hashed' AND sha256 IS NOT NULL AND catalog_name_match(path)=1 ORDER BY id",
+            "SELECT id,path,size_bytes,sha256,hash_status FROM files WHERE id>? ORDER BY id LIMIT 5000",
             (after,),
         )
         files = []
+        last = None
+        scanned = 0
         for row in rows:
+            last = row["id"]
+            scanned += 1
+            if row["hash_status"] != "hashed" or not isinstance(row["sha256"], str):
+                continue
+            if not visible(row["path"], principal, config):
+                continue
             name = original_parts(row["path"]).name
+            if needle not in name.casefold():
+                continue
             if not re.fullmatch(r"[0-9a-fA-F]{64}", row["sha256"]) or type(row["size_bytes"]) is not int or row["size_bytes"] < 0:
                 continue
             files.append({"id": str(row["id"]), "name": name.encode("utf-8")[:160].decode("utf-8", errors="ignore"), "bytes": row["size_bytes"], "sha256": row["sha256"].lower()})
             if len(files) == limit:
                 break
-    return {"files": files, **({"nextCursor": files[-1]["id"]} if len(files) == limit else {})}
+        more = last is not None and connection.execute("SELECT 1 FROM files WHERE id>? LIMIT 1", (last,)).fetchone() is not None
+    return {"files": files, **({"nextCursor": str(last)} if more else {}),
+            **({"scanTruncated": True} if more and scanned == 5000 else {})}
 
 
 def signature(config, payload):

@@ -23,10 +23,12 @@ held records, nor audit log may be mounted into a seat or team computer.
   SHA-256, with an optional next cursor. No storage paths or file contents leave
   the host. Only hashed records under the requester's configured catalog roots
   appear. Search does not query filenames in the parking area.
-- Search uses keyset pagination over matching rows, with at most 5,000 candidate
-  rows examined per call and a two-second SQLite execution budget. A search that
-  exceeds either bound is refused; an empty page means there are no more matches.
-  Continue using the cursor with the same query; omit it to start a new search.
+- Search uses keyset pagination over catalog rows, with at most 5,000 candidate
+  rows examined per call and a two-second SQLite execution budget. A page cut
+  short by the scan limit returns `scanTruncated: true` and `nextCursor` set to
+  the last row examined. It may contain no matches. Keep following `nextCursor`
+  with the same query until it is absent; omit the cursor to start a new search.
+  A call that exceeds the time budget is refused.
   There is no total count or unbounded listing operation. Names are capped at
   160 UTF-8 bytes.
 - SQLite is opened with `mode=ro&immutable=1` and `query_only`. Immutable mode

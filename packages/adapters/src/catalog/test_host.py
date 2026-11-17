@@ -85,26 +85,45 @@ class HostTest(unittest.TestCase):
         self.assertEqual(Path(self.config["catalog"]).read_bytes(), before)
         self.assertFalse(Path(self.config["catalog"] + "-wal").exists())
 
-    def test_sparse_ids_do_not_create_empty_continuation_pages(self):
+    def test_sparse_large_ids_keep_a_valid_cursor(self):
+        sparse_id = 1000000000000000000
         db = sqlite3.connect(self.config["catalog"])
         with db:
-            db.execute("INSERT INTO files VALUES(1000000000,?,?,?,'hashed')",
-                       ("/synthetic-documents/sparse-report.txt", len(self.data), self.sha))
+            db.execute("INSERT INTO files VALUES(?,?,?,?,'hashed')",
+                       (sparse_id, "/synthetic-documents/sparse-report.txt", len(self.data), self.sha))
+            db.execute("INSERT INTO files VALUES(?,?,?,?,'hashed')",
+                       (sparse_id + 1, "/synthetic-documents/sparse-report-later.txt", len(self.data), self.sha))
         db.close()
         page = host.search(self.config, self.principal, {"query": "sparse-report", "limit": 1})
-        self.assertEqual([item["id"] for item in page["files"]], ["1000000000"])
-        self.assertEqual(host.search(self.config, self.principal,
-                                     {"query": "sparse-report", "cursor": page["nextCursor"]}), {"files": []})
+        self.assertEqual([item["id"] for item in page["files"]], [str(sparse_id)])
+        self.assertEqual(page["nextCursor"], str(sparse_id))
+        page = host.search(self.config, self.principal,
+                           {"query": "sparse-report", "limit": 1, "cursor": page["nextCursor"]})
+        self.assertEqual([item["id"] for item in page["files"]], [str(sparse_id + 1)])
+        self.assertNotIn("nextCursor", page)
+        _, packet = host.render_packet(self.config, self.principal, str(sparse_id))
+        self.assertEqual(host.parse_packet(self.config, self.principal, packet)["fileId"], str(sparse_id))
 
-    def test_search_refuses_when_scan_limit_is_exceeded(self):
+    def test_search_scan_limit_returns_progress_and_reaches_later_match(self):
         db = sqlite3.connect(self.config["catalog"])
         with db:
             db.executemany("INSERT INTO files VALUES(?,?,?,?,?)",
                            ((id, f"/synthetic-documents/other-{id}.txt", 1, self.sha, "hashed")
-                            for id in range(5, 5006)))
+                            for id in range(5, 5007)))
+            db.execute("UPDATE files SET path=? WHERE id=20", ("/synthetic-documents/target-early.txt",))
+            db.execute("INSERT INTO files VALUES(5007,?,?,?,'hashed')",
+                       ("/synthetic-documents/target.txt", len(self.data), self.sha))
         db.close()
-        with self.assertRaises(sqlite3.OperationalError):
-            host.search(self.config, self.principal, {"query": "never-matches"})
+        page = host.search(self.config, self.principal, {"query": "target.txt"})
+        self.assertEqual(page, {"files": [], "nextCursor": "5000", "scanTruncated": True})
+        page = host.search(self.config, self.principal, {"query": "target.txt", "cursor": page["nextCursor"]})
+        self.assertEqual([item["id"] for item in page["files"]], ["5007"])
+        self.assertNotIn("nextCursor", page)
+        self.assertNotIn("scanTruncated", page)
+        page = host.search(self.config, self.principal, {"query": "target"})
+        self.assertEqual([item["id"] for item in page["files"]], ["20"])
+        self.assertEqual(page["nextCursor"], "5000")
+        self.assertTrue(page["scanTruncated"])
 
     def test_broad_visibility_never_lists_parking(self):
         self.principal["catalogRoots"] = ["/"]

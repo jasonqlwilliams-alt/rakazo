@@ -40,6 +40,20 @@ function fixture() {
 }
 
 describe("optional catalog connector", () => {
+  it("returns a bounded empty page with a continuation cursor", async () => {
+    const search = vi.fn<FileCatalogProvider["search"]>().mockResolvedValue({
+      files: [],
+      nextCursor: "1000000000000000000",
+      scanTruncated: true,
+    });
+    const connector = new FileCatalogConnector({ search, request: fixture().request });
+    expect(await execute(connector, "catalog_search", { query: "target" })).toEqual([
+      {
+        type: "result",
+        data: { files: [], nextCursor: "1000000000000000000", scanTruncated: true },
+      },
+    ]);
+  });
   it("registers tools only when the shared host configuration is set", async () => {
     for (const path of [undefined, "  "]) {
       const stack = createConnectorStack(false, undefined, fileCatalogProvidersFromConfig(path));

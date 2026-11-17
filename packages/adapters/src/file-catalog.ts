@@ -12,13 +12,13 @@ import type {
 } from "@rakazo/adapter-kit";
 import { z } from "zod";
 
-const fileId = z.string().regex(/^[1-9][0-9]{0,14}$/);
+const fileId = z.string().regex(/^[1-9][0-9]{0,18}$/);
 const querySchema = z
   .object({
     query: z.string().trim().min(1).max(120),
     cursor: z
       .string()
-      .regex(/^(0|[1-9][0-9]{0,14})$/)
+      .regex(/^(0|[1-9][0-9]{0,18})$/)
       .optional(),
     limit: z.number().int().min(1).max(25).optional(),
   })
@@ -46,8 +46,9 @@ const pageResult = z
       .max(25),
     nextCursor: z
       .string()
-      .regex(/^[1-9][0-9]{0,14}$/)
+      .regex(/^[1-9][0-9]{0,18}$/)
       .optional(),
+    scanTruncated: z.literal(true).optional(),
   })
   .strict();
 
@@ -55,7 +56,7 @@ const tools: ConnectorTool[] = [
   {
     name: "catalog_search",
     description:
-      "Search authorized file names. Returns bounded metadata and a continuation cursor.",
+      "Search authorized file names. Follow nextCursor even on empty pages; scanTruncated marks a scan-limited page.",
     readOnly: true,
     inputSchema: z.toJSONSchema(querySchema),
   },

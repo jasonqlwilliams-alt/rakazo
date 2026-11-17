@@ -8,6 +8,7 @@ export interface FileCatalogQuery {
 export interface FileCatalogPage {
   files: Array<{ id: string; name: string; bytes: number; sha256: string }>;
   nextCursor?: string;
+  scanTruncated?: true;
 }
 
 export interface FileCatalogIdentity {
