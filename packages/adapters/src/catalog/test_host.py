@@ -80,13 +80,31 @@ class HostTest(unittest.TestCase):
         page = host.search(self.config, self.principal, {"query": "report", "limit": 1, "cursor": page["nextCursor"]})
         self.assertEqual([f["id"] for f in page["files"]], ["2"])
         page = host.search(self.config, self.principal, {"query": "report", "cursor": page["nextCursor"]})
-        self.assertEqual(page, {"files": [], "nextCursor": "5002"})
-        page = host.search(self.config, self.principal, {"query": "report", "cursor": page["nextCursor"]})
-        # ID windows advance even across gaps and empty matches.
         self.assertEqual([f["id"] for f in page["files"]], ["10001"])
         self.assertNotIn("nextCursor", page)
         self.assertEqual(Path(self.config["catalog"]).read_bytes(), before)
         self.assertFalse(Path(self.config["catalog"] + "-wal").exists())
+
+    def test_sparse_ids_do_not_create_empty_continuation_pages(self):
+        db = sqlite3.connect(self.config["catalog"])
+        with db:
+            db.execute("INSERT INTO files VALUES(1000000000,?,?,?,'hashed')",
+                       ("/synthetic-documents/sparse-report.txt", len(self.data), self.sha))
+        db.close()
+        page = host.search(self.config, self.principal, {"query": "sparse-report", "limit": 1})
+        self.assertEqual([item["id"] for item in page["files"]], ["1000000000"])
+        self.assertEqual(host.search(self.config, self.principal,
+                                     {"query": "sparse-report", "cursor": page["nextCursor"]}), {"files": []})
+
+    def test_search_refuses_when_scan_limit_is_exceeded(self):
+        db = sqlite3.connect(self.config["catalog"])
+        with db:
+            db.executemany("INSERT INTO files VALUES(?,?,?,?,?)",
+                           ((id, f"/synthetic-documents/other-{id}.txt", 1, self.sha, "hashed")
+                            for id in range(5, 5006)))
+        db.close()
+        with self.assertRaises(sqlite3.OperationalError):
+            host.search(self.config, self.principal, {"query": "never-matches"})
 
     def test_broad_visibility_never_lists_parking(self):
         self.principal["catalogRoots"] = ["/"]
@@ -111,6 +129,7 @@ class HostTest(unittest.TestCase):
         packet = (self.root / "router/inbox/new" / (result["packetId"] + ".md")).read_bytes()
         parsed = host.parse_packet(self.config, self.principal, packet)
         self.assertEqual(parsed["fileId"], "1")
+        self.assertEqual(parsed["sha256"], self.sha)
         self.assertNotIn(str(self.root), packet.decode())
         self.assertNotIn(self.original, packet.decode())
         self.assertIn('role_target: "eleusis"', packet.decode())
@@ -118,6 +137,19 @@ class HostTest(unittest.TestCase):
             host.submit(self.config, self.principal, {"fileId": "3"})
         with self.assertRaises(host.Refused):
             host.submit(self.config, self.principal, {"fileId": "1", "principal": "seat-b"})
+
+    def test_catalog_change_cannot_substitute_requested_hash(self):
+        packet_id = self.held()
+        db = sqlite3.connect(self.config["catalog"])
+        with db:
+            db.execute("UPDATE files SET sha256=? WHERE id=1", ("cd" * 32,))
+        db.close()
+        with self.assertRaises(host.Refused):
+            host.courier(self.config, packet_id)
+        with self.assertRaises(host.Refused):
+            host.courier(self.config, packet_id, True)
+        self.assertEqual(list((self.root / "vault-a").iterdir()), [])
+        self.assertEqual(self.audit(), [])
 
     def test_dry_run_leaves_all_directories_unwritten(self):
         packet_id = self.held()
@@ -326,6 +358,11 @@ class HostTest(unittest.TestCase):
             host.courier(self.config, packet_id, True)
         record["destination"] = str(self.root / "vault-a/1-report.txt")
         record["requestingBot"] = "bot-b"
+        Path(self.config["auditLog"]).write_text(json.dumps(record) + "\n")
+        with self.assertRaises(host.Refused):
+            host.courier(self.config, packet_id, True)
+        record["requestingBot"] = "bot-a"
+        record["sha256"] = "cd" * 32
         Path(self.config["auditLog"]).write_text(json.dumps(record) + "\n")
         with self.assertRaises(host.Refused):
             host.courier(self.config, packet_id, True)

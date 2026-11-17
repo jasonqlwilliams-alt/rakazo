@@ -138,30 +138,32 @@ def search(config, principal, args):
     require(isinstance(query, str) and 1 <= len(query.strip()) <= 120)
     require(type(limit) is int and 1 <= limit <= 25)
     require(isinstance(cursor, str) and re.fullmatch(r"0|[1-9][0-9]{0,14}", cursor))
-    # Scan a fixed row-id window, not an unbounded path LIKE over a multi-GB DB.
-    # A page may be empty with a continuation; visibility filtering happens before output.
-    after, window = int(cursor), 5000
+    after = int(cursor)
+    needle = query.strip().casefold()
     with catalog(config) as connection:
+        scanned = 0
+
+        def matches(path):
+            nonlocal scanned
+            scanned += 1
+            require(scanned <= 5000, "Search scan limit reached")
+            return int(visible(path, principal, config) and needle in original_parts(path).name.casefold())
+
+        connection.create_function("catalog_name_match", 1, matches)
         rows = connection.execute(
-            "SELECT id,path,size_bytes,sha256 FROM files WHERE id>? AND id<=? "
-            "AND hash_status='hashed' AND sha256 IS NOT NULL ORDER BY id LIMIT ?",
-            (after, after + window, window),
+            "SELECT id,path,size_bytes,sha256 FROM files WHERE id>? "
+            "AND hash_status='hashed' AND sha256 IS NOT NULL AND catalog_name_match(path)=1 ORDER BY id",
+            (after,),
         )
-        files, last = [], after + window
+        files = []
         for row in rows:
-            if not visible(row["path"], principal, config):
-                continue
             name = original_parts(row["path"]).name
-            if query.strip().casefold() not in name.casefold():
-                continue
             if not re.fullmatch(r"[0-9a-fA-F]{64}", row["sha256"]) or type(row["size_bytes"]) is not int or row["size_bytes"] < 0:
                 continue
             files.append({"id": str(row["id"]), "name": name.encode("utf-8")[:160].decode("utf-8", errors="ignore"), "bytes": row["size_bytes"], "sha256": row["sha256"].lower()})
             if len(files) == limit:
-                last = row["id"]
                 break
-        more = connection.execute("SELECT 1 FROM files WHERE id>? LIMIT 1", (last,)).fetchone() is not None
-    return {"files": files, **({"nextCursor": str(last)} if more else {})}
+    return {"files": files, **({"nextCursor": files[-1]["id"]} if len(files) == limit else {})}
 
 
 def signature(config, payload):
@@ -169,9 +171,10 @@ def signature(config, payload):
 
 
 def render_packet(config, principal, file_id):
-    file_record(config, principal, file_id)
+    row = file_record(config, principal, file_id)
     packet_id = "pkt-retrieval-" + uuid.uuid4().hex
     payload = {"version": 1, "packetId": packet_id, "principal": principal["key"], "fileId": file_id,
+               "sha256": row["sha256"].lower(),
                "identity": {k: principal[k] for k in ("spaceId", "userId", "botId")},
                "createdAt": datetime.now(timezone.utc).isoformat()}
     envelope = {"type": "continuum-packet", "schema": "packet-router/v1", "kind": "file-retrieval",
@@ -259,9 +262,10 @@ def parse_packet(config, principal, content, allow_expired=False):
     body = json.loads(blocks[0])
     require(set(body) == {"request", "signature"} and isinstance(body["signature"], str))
     payload = body["request"]
-    require(set(payload) == {"version", "packetId", "principal", "fileId", "identity", "createdAt"})
+    require(set(payload) == {"version", "packetId", "principal", "fileId", "sha256", "identity", "createdAt"})
     require(hmac.compare_digest(body["signature"], signature(config, payload)))
     require(payload["version"] == 1 and payload["principal"] == principal["key"])
+    require(isinstance(payload["sha256"], str) and re.fullmatch(r"[0-9a-f]{64}", payload["sha256"]))
     require(payload["identity"] == {k: principal[k] for k in ("spaceId", "userId", "botId")})
     require(header.get("id") == payload["packetId"])
     created = datetime.fromisoformat(payload["createdAt"])
@@ -399,6 +403,7 @@ def courier(config, packet_id, execute=False):
     result = {"packetId": packet_id, "status": "refused"}
     if not execute:
         row = file_record(config, principal, payload["fileId"])
+        require(row["sha256"].lower() == payload["sha256"], "File unavailable")
         source = parked_record(config, row)
         result["status"] = transfer(config, row, source, destination, False)
         return result
@@ -441,6 +446,7 @@ def courier(config, packet_id, execute=False):
                 require(prior.get("packetId") == packet_id and prior.get("fileId") == payload["fileId"])
                 require(prior.get("principal") == principal["key"] and prior.get("requestingBot") == principal["botId"])
                 require(isinstance(prior.get("sha256"), str) and re.fullmatch(r"[0-9a-f]{64}", prior["sha256"]))
+                require(prior["sha256"] == payload["sha256"])
                 require(path.parent == Path(destination) and path.name.startswith(payload["fileId"] + "-"))
                 require(source_path.is_relative_to(Path(config["parkingRoot"])) and ".." not in source_path.parts)
             if record:
@@ -456,6 +462,7 @@ def courier(config, packet_id, execute=False):
             else:
                 require(not expired)
             row = file_record(config, principal, payload["fileId"])
+            require(row["sha256"].lower() == payload["sha256"], "File unavailable")
             source = parked_record(config, row)
             record = {
                 "transactionId": uuid.uuid4().hex, "packetId": packet_id,
