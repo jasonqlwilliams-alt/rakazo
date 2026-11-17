@@ -1,5 +1,6 @@
 export * from "./background-jobs.js";
 export * from "./cloud-agents.js";
+export * from "./file-catalog.js";
 export * from "./interfaces.js";
 export * from "./memory-path.js";
 export * from "./registry.js";
