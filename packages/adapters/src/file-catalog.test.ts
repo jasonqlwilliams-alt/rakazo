@@ -3,7 +3,12 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { join } from "node:path";
 import type { AdapterContext, ConnectorEvent, FileCatalogProvider } from "@rakazo/adapter-kit";
 import { afterAll, describe, expect, it, vi } from "vitest";
-import { FileCatalogConnector, LocalFileCatalogProvider } from "./file-catalog.js";
+import { createConnectorStack } from "./composio-connector.js";
+import {
+  FileCatalogConnector,
+  fileCatalogProvidersFromConfig,
+  LocalFileCatalogProvider,
+} from "./file-catalog.js";
 
 const context: AdapterContext = {
   operationId: "op",
@@ -35,6 +40,22 @@ function fixture() {
 }
 
 describe("optional catalog connector", () => {
+  it("registers tools only when the shared host configuration is set", async () => {
+    for (const path of [undefined, "  "]) {
+      const stack = createConnectorStack(false, undefined, fileCatalogProvidersFromConfig(path));
+      expect((await stack.connector.discoverTools(context)).map((tool) => tool.name)).not.toContain(
+        "catalog_search",
+      );
+    }
+    const stack = createConnectorStack(
+      false,
+      undefined,
+      fileCatalogProvidersFromConfig(" /synthetic/catalog.json "),
+    );
+    expect((await stack.connector.discoverTools(context)).map((tool) => tool.name)).toContain(
+      "catalog_search",
+    );
+  });
   it("declares search as read-only and request as an approval-requiring write", async () => {
     const { connector } = fixture();
     expect(

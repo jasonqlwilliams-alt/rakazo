@@ -240,7 +240,7 @@ def read_relative(root, relative, maximum=65536):
             return data
 
 
-def parse_packet(config, principal, content):
+def parse_packet(config, principal, content, allow_expired=False):
     text = content.decode("utf-8")
     sections = text.split("\n---\n", 1)
     require(len(sections) == 2 and sections[0].startswith("---\n"))
@@ -263,7 +263,9 @@ def parse_packet(config, principal, content):
     require(payload["identity"] == {k: principal[k] for k in ("spaceId", "userId", "botId")})
     require(header.get("id") == payload["packetId"])
     created = datetime.fromisoformat(payload["createdAt"])
-    require(created.tzinfo is not None and 0 <= (datetime.now(timezone.utc) - created).total_seconds() <= 48 * 3600)
+    require(created.tzinfo is not None)
+    age = (datetime.now(timezone.utc) - created).total_seconds()
+    require(0 <= age and (allow_expired or age <= 48 * 3600))
     return payload
 
 
@@ -354,11 +356,13 @@ def held_packet(config, packet_id, execute):
     matches = [p for p in config["principals"] if p["key"] == principal_key]
     require(len(matches) == 1)
     principal = matches[0]
-    payload = parse_packet(config, principal, content)
+    payload = parse_packet(config, principal, content, allow_expired=True)
     require(payload["packetId"] == packet_id)
+    created = datetime.fromisoformat(payload["createdAt"])
+    expired = (datetime.now(timezone.utc) - created).total_seconds() > 48 * 3600
     expected = {"status": "held", "packetId": packet_id, "packetSha256": digest(content),
                 "principal": principal["key"]}
-    if execute:
+    if execute and not expired:
         with directory(config["heldRoot"]) as parent:
             staging = packet_id + "." + uuid.uuid4().hex + ".pending"
             fd = os.open(staging, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
@@ -379,15 +383,16 @@ def held_packet(config, packet_id, execute):
     try:
         held = json.loads(read_relative(config["heldRoot"], packet_id + ".json"))
     except FileNotFoundError:
-        require(not execute)
+        require(not execute and not expired)
     else:
         require(held == expected)
-    return principal, payload
+    require(not expired or execute)
+    return principal, payload, expired
 
 
 def courier(config, packet_id, execute=False):
     require(isinstance(packet_id, str) and re.fullmatch(r"pkt-retrieval-[0-9a-f]{32}", packet_id))
-    principal, payload = held_packet(config, packet_id, execute)
+    principal, payload, expired = held_packet(config, packet_id, execute)
     row = file_record(config, principal, payload["fileId"])
     source = parked_record(config, row)
     destination = destination_root(config, principal)
@@ -443,7 +448,10 @@ def courier(config, packet_id, execute=False):
                     append("outcome", "refused")
                     raise
                 append("outcome", "interrupted")
+                require(not expired)
                 record = {**record, "transactionId": uuid.uuid4().hex}
+            else:
+                require(not expired)
             append("intent")
             try:
                 result["status"] = transfer(config, row, source, destination, True)

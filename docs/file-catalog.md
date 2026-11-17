@@ -1,8 +1,9 @@
 # Optional file catalog and retrieval courier
 
 The connector is inactive until `RAKAZO_FILE_CATALOG_CONFIG` points to a private
-host configuration file. With that setting, the API registers the connector in
-the run tool stack. No watcher or hosted service is required.
+host configuration file. With that setting in both API and worker environments,
+each process registers the connector in its run tool stack. No new watcher or
+hosted service is required.
 
 `FileCatalogConnector` in `packages/adapters/src/file-catalog.ts` implements the
 existing `ConnectorProvider` boundary. `FileCatalogProvider` in
@@ -53,7 +54,7 @@ record on execution. This handoff does not require a separately written record.
 
 ## Private host configuration
 
-Set `RAKAZO_FILE_CATALOG_CONFIG` to the private JSON file on the API host. The
+Set `RAKAZO_FILE_CATALOG_CONFIG` to the private JSON file on each run host. The
 local adapter uses `python3`; the courier receives the same file through
 `--config`. Locations must be absolute host-native paths. There are no
 hardcoded drive mounts, entity names or deployment paths.
@@ -138,7 +139,9 @@ principal, expected SHA-256, source, destination, and time. The audit sink is
 locked across the transaction. A dry-run writes no transaction. Failures during
 copy or verification append `refused`; partial destinations stay for operator
 inspection and are never removed or overwritten automatically. On rerun, an
-intent without an outcome is reconciled against the destination hash. A complete
+intent without an outcome is reconciled against the destination hash, even after
+the packet expires. An expired request can close an existing intent but never
+start another copy. A complete
 copy records `reconciled`; a missing copy records `interrupted` before retrying;
 a conflicting destination is refused. Firstmate records the router disposition
 separately; this command does not mark packets done, send messages, or delete

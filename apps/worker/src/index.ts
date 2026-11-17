@@ -22,6 +22,7 @@ import {
   createWebProvider,
   databaseCapacityBackoffMs,
   ExpoPushProvider,
+  fileCatalogProvidersFromConfig,
   GraphileJobPublisher,
   GraphileJobWorkerHost,
   InMemoryJobQueue,
@@ -163,6 +164,7 @@ async function main() {
     new InstalledConnectorProvider(prisma, secrets, {}, allowPrivateEndpoint),
     ...integrationSettings.providers(),
     mcp,
+    ...fileCatalogProvidersFromConfig(process.env.RAKAZO_FILE_CATALOG_CONFIG),
   ]);
   const connector = stack.destination;
   await connector.start();

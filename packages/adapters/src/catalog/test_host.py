@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -306,6 +307,39 @@ class HostTest(unittest.TestCase):
         (self.root / "vault-a/1-report.txt").write_bytes(self.data)
         self.assertEqual(host.courier(self.config, packet_id, True)["status"], "already-present")
         self.assertEqual(self.audit()[-1]["status"], "reconciled")
+
+    def test_expired_request_only_closes_existing_intents(self):
+        completed, missing, untouched = (self.held() for _ in range(3))
+        for packet_id in (completed, missing, untouched):
+            host.held_packet(self.config, packet_id, True)
+        records = []
+        for packet_id in (completed, missing):
+            records.append({"transactionId": packet_id, "packetId": packet_id,
+                            "requestingBot": "bot-a", "principal": "seat-a", "sha256": self.sha,
+                            "source": str(self.root / "parking/objects/blob"),
+                            "destination": str(self.root / "vault-a/1-report.txt"), "phase": "intent"})
+        Path(self.config["auditLog"]).write_text("".join(json.dumps(record) + "\n" for record in records))
+        destination = self.root / "vault-a/1-report.txt"
+        destination.write_bytes(self.data)
+
+        class ExpiredClock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime.now(tz) + timedelta(hours=49)
+
+        with patch.object(host, "datetime", ExpiredClock):
+            self.assertEqual(host.courier(self.config, completed, True)["status"], "already-present")
+            destination.unlink()
+            with self.assertRaises(host.Refused):
+                host.courier(self.config, missing, True)
+            with self.assertRaises(host.Refused):
+                host.courier(self.config, untouched, True)
+        self.assertFalse(destination.exists())
+        self.assertEqual([(r["phase"], r.get("status")) for r in self.audit() if r["packetId"] == completed],
+                         [("intent", None), ("outcome", "reconciled")])
+        self.assertEqual([(r["phase"], r.get("status")) for r in self.audit() if r["packetId"] == missing],
+                         [("intent", None), ("outcome", "interrupted")])
+        self.assertEqual([r["phase"] for r in self.audit() if r["packetId"] == untouched], [])
 
     def test_intent_is_durable_before_copy(self):
         packet_id = self.held()

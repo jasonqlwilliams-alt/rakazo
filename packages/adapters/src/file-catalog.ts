@@ -161,3 +161,8 @@ export class LocalFileCatalogProvider implements FileCatalogProvider {
     );
   }
 }
+
+export function fileCatalogProvidersFromConfig(configPath?: string): ConnectorProvider[] {
+  const path = configPath?.trim();
+  return path ? [new FileCatalogConnector(new LocalFileCatalogProvider({ configPath: path }))] : [];
+}

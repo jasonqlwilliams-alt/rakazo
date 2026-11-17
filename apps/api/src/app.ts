@@ -37,11 +37,11 @@ import {
   createSecretStore,
   createTicketChangeNotifier,
   createWebProvider,
+  fileCatalogProvidersFromConfig,
   deletePushToken,
   destroyBot,
   EmailEmulator,
   ExpoPushProvider,
-  FileCatalogConnector,
   endSessionPushToken,
   GraphileJobPublisher,
   InMemoryJobQueue,
@@ -53,7 +53,6 @@ import {
   isPipedreamEnabled,
   LocalAgentHomeStore,
   LocalArtifactStore,
-  LocalFileCatalogProvider,
   McpConnector,
   McpOAuthBroker,
   messagingPlatformsFromEnv,
@@ -390,9 +389,7 @@ export async function createApp(
       .providers()
       .filter((provider) => !composioOverride || provider.describe().id !== "composio"),
     mcp,
-    ...(env.fileCatalogConfigPath
-      ? [new FileCatalogConnector(new LocalFileCatalogProvider({ configPath: env.fileCatalogConfigPath }))]
-      : []),
+    ...fileCatalogProvidersFromConfig(env.fileCatalogConfigPath),
   ]);
   const connector = stack.destination;
   await connector.start();
