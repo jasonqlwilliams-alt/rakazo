@@ -134,11 +134,12 @@ The courier resolves the catalog row by ID, finds exactly one matching original
 path in the undo CSV, and verifies that the CSV and catalog hashes and sizes
 agree. Only files beneath the configured parking root can be read. It copies
 into the requester's configured root using a generated `<file-id>-<basename>`
-name. The request cannot choose a filename or subdirectory. It streams a bounded
-number of bytes, verifies SHA-256 before and after copying, and syncs the result.
+name with the basename sanitized and shortened. The request cannot choose a filename
+or subdirectory. It streams a bounded number of bytes, verifies the source hash
+before copying and the destination hash afterward, and syncs the result.
 It never overwrites, moves or deletes a parked file or destination. An existing
 file with the same hash yields `already-present`; a different hash is refused.
-Directory symlinks, leaf symlinks and destination creation races are refused.
+Descendant directory symlinks, leaf symlinks and destination creation races are refused.
 
 Each executed copy attempt appends and syncs an intent before copying and an
 outcome afterward. Both entries carry transaction ID, packet ID, file ID, requesting bot,
@@ -150,7 +151,8 @@ intent without an outcome is reconciled against its recorded destination and has
 without depending on the current catalog or undo log, even after
 the packet expires. An expired request can close an existing intent but never
 start another copy. A complete
-copy records `reconciled`; a missing copy records `interrupted` before retrying;
+copy records `reconciled`; a missing copy records `interrupted` before any
+permitted retry;
 a conflicting destination is refused. Firstmate records the router disposition
 separately; this command does not mark packets done, send messages, or delete
 held records.

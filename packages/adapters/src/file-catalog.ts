@@ -68,7 +68,7 @@ const tools: ConnectorTool[] = [
   },
 ];
 
-/** Optional connector; the composition root must explicitly install it after activation approval. */
+/** Optional connector; composition roots install it only when host configuration is set. */
 export class FileCatalogConnector implements ConnectorProvider {
   constructor(private readonly provider: FileCatalogProvider) {}
 
