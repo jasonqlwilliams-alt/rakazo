@@ -42,6 +42,7 @@ import {
   EmailEmulator,
   ExpoPushProvider,
   endSessionPushToken,
+  fileCatalogProvidersFromConfig,
   GraphileJobPublisher,
   InMemoryJobQueue,
   InMemoryRealtimeFanout,
@@ -388,6 +389,7 @@ export async function createApp(
       .providers()
       .filter((provider) => !composioOverride || provider.describe().id !== "composio"),
     mcp,
+    ...fileCatalogProvidersFromConfig(env.fileCatalogConfigPath),
   ]);
   const connector = stack.destination;
   await connector.start();

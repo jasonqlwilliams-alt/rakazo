@@ -8,6 +8,16 @@ const base = {
 };
 
 describe("loadEnv", () => {
+  it("activates the file catalog only with an explicit config path", () => {
+    expect(loadEnv(base).fileCatalogConfigPath).toBeUndefined();
+    expect(
+      loadEnv({ ...base, RAKAZO_FILE_CATALOG_CONFIG: "  " }).fileCatalogConfigPath,
+    ).toBeUndefined();
+    expect(
+      loadEnv({ ...base, RAKAZO_FILE_CATALOG_CONFIG: "/synthetic/catalog.json" })
+        .fileCatalogConfigPath,
+    ).toBe("/synthetic/catalog.json");
+  });
   it("keeps the ticket board off unless explicitly enabled", () => {
     expect(loadEnv(base).ticketBoardEnabled).toBe(false);
     for (const value of ["false", "1", ""])
